@@ -158,30 +158,6 @@
                                     <property name="can-focus">False</property>
                                     <property name="valign">center</property>
                                     <property name="hexpand">True</property>
-                                    <items>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/AspectVST.so" translatable="yes">Aspect</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/helm.so" translatable="yes">Helm</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Hive.64.so" translatable="yes">Hive</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/DiscoveryPro64.so" translatable="yes">DiscoveryPro64</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/StringVST.so" translatable="yes">StringVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/StringVST_FX.so" translatable="yes">StringVST_FX</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ArchitectVST.so" translatable="yes">ArchitectVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/libsine_synth.so" translatable="yes">Test Process64</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Repro-1.64.so:1968332593" translatable="yes">Repro 1</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Repro-1.64.so:1968332597" translatable="yes">Repro 5</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/RetroMod 106.so" translatable="yes">RetroMod 106</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Axon 2.so" translatable="yes">Axon Drum Machine</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Continua.so" translatable="yes">Continua</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/cadmium.so" translatable="yes">Cadmium</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Granulizer 2.so" translatable="yes">Granulizer 2</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Bazille.64.so" translatable="yes">Bazille</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Diva.64.so" translatable="yes">Diva</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397572658" translatable="yes">Zebra2</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397572659" translatable="yes">Zebralette</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1919243824" translatable="yes">Zebra2 Reverb</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397578034" translatable="yes">Zebrify</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Bliss2.so" translatable="yes">Bliss sampler</item>
-                                    </items>
                                   </object>
                                   <packing>
                                     <property name="left-attach">1</property>
@@ -538,29 +514,6 @@
                                     <property name="visible">True</property>
                                     <property name="can-focus">False</property>
                                     <property name="valign">center</property>
-                                    <items>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/mdaRezFilter.so" translatable="yes">MDA Rez Filter</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/mdaStereo.so" translatable="yes">MDA Stereo</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/MFM2.64.avx.so" translatable="yes">MFM2</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Presswerk.64.so" translatable="yes">Presswerk</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Satin.64.so" translatable="yes">Satin</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ResoundVST.so" translatable="yes">ResoundVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ManifoldVST.so" translatable="yes">ManifoldVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Shift2VST.so" translatable="yes">ShiftVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/SequentVST.so" translatable="yes">SequentVST</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432569393" translatable="yes">Uhbik-F post retro flanger</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432568113" translatable="yes">Uhbik-A ambience processor</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432568881" translatable="yes">Uhbik-D delay</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432569649" translatable="yes">Uhbik-G grains and pitch</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572209" translatable="yes">Uhbik-Q equlizer</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572721" translatable="yes">Uhbik-S freq shifter</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572977" translatable="yes">Uhbik-T trans modern pan &amp; tremolo</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432571953" translatable="yes">Uhbik-P pre-future phaser</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1382232375" translatable="yes">Uhbik Runciter digital filter</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1095583057" translatable="yes">Filterscape 1</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1179866689" translatable="yes">Filterscape VA</item>
-                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1179865398" translatable="yes">Filterscape Q6</item>
-                                    </items>
                                   </object>
                                   <packing>
                                     <property name="left-attach">1</property>

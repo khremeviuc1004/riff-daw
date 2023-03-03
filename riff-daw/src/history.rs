@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use log::*;
 
 use crate::domain::DAWItemLength;
-use crate::{DAWItemPosition, FreedomDAWState, Note, PlayMode, Track, TrackEvent};
+use crate::{DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent};
 use crate::event::{TranslateDirection, TranslationEntityType};
 
 pub trait HistoryAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String>;
-    fn undo(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String>;
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String>;
+    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String>;
 
-    fn get_selected_track_riff_uuid(&self, state: &mut Arc<Mutex<FreedomDAWState>>) -> (Option<String>, Option<String>) {
+    fn get_selected_track_riff_uuid(&self, state: &mut Arc<Mutex<DAWState>>) -> (Option<String>, Option<String>) {
         let mut selected_riff_uuid = None;
         let mut selected_riff_track_uuid = None;
 
@@ -32,13 +32,13 @@ pub trait HistoryAction {
         (selected_riff_uuid, selected_riff_track_uuid)
     }
 
-    fn check_riff_changed_and_playing(&self, riff_uuid: String, state: &mut MutexGuard<FreedomDAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>, riff_changed: bool) {
+    fn check_riff_changed_and_playing(&self, riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>, riff_changed: bool) {
         if riff_changed && playing {
             self.play_riff_set_update_track(riff_uuid, state, track_uuid, play_mode, playing_riff_set)
         }
     }
 
-    fn play_riff_set_update_track(&self, _riff_uuid: String, state: &mut MutexGuard<FreedomDAWState>, track_uuid: String, play_mode: PlayMode, playing_riff_set: Option<String>) {
+    fn play_riff_set_update_track(&self, _riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, play_mode: PlayMode, playing_riff_set: Option<String>) {
         match play_mode {
             PlayMode::Song => {}
             PlayMode::RiffSet => {
@@ -52,7 +52,7 @@ pub trait HistoryAction {
         }
     }
 
-    fn check_playing(&self, riff_uuid: String, state: &mut MutexGuard<FreedomDAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>) {
+    fn check_playing(&self, riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>) {
         if playing {
             self.play_riff_set_update_track(riff_uuid, state, track_uuid, play_mode, playing_riff_set)
         }
@@ -72,7 +72,7 @@ impl HistoryManager {
         }
     }
 
-    pub fn apply(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>, mut action: Box<dyn HistoryAction>) -> Result<(), String> {
+    pub fn apply(&mut self, state: &mut Arc<Mutex<DAWState>>, mut action: Box<dyn HistoryAction>) -> Result<(), String> {
         println!("History - apply: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         if self.head_index >= 0 && !self.history.is_empty() && (self.head_index as usize) != (self.history.len() - 1) {
             // delete everything above the head_index
@@ -86,7 +86,7 @@ impl HistoryManager {
         result
     }
 
-    pub fn undo(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    pub fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         println!("History - undo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // decrement the current top of the history
         if self.history.len() > self.head_index as usize && self.head_index >= 0 {
@@ -105,7 +105,7 @@ impl HistoryManager {
         }
     }
 
-    pub fn redo(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    pub fn redo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         println!("History - redo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // get the current top of the history
         if (self.head_index as usize) < (self.history.len() - 1) {
@@ -164,7 +164,7 @@ unsafe impl Send for RiffAddNoteAction {
 }
 
 impl HistoryAction for RiffAddNoteAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         let (selected_riff_uuid, selected_riff_track_uuid) = self.get_selected_track_riff_uuid(state);
 
         match state.lock() {
@@ -230,7 +230,7 @@ impl HistoryAction for RiffAddNoteAction {
         Ok(())
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         let (selected_riff_uuid, selected_riff_track_uuid) = self.get_selected_track_riff_uuid(state);
 
         match state.lock() {
@@ -314,7 +314,7 @@ impl RiffDeleteNoteAction {
 }
 
 impl HistoryAction for RiffDeleteNoteAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         let (selected_riff_uuid, selected_riff_track_uuid) = self.get_selected_track_riff_uuid(state);
 
         match state.lock() {
@@ -379,7 +379,7 @@ impl HistoryAction for RiffDeleteNoteAction {
         Ok(())
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         let (selected_riff_uuid, selected_riff_track_uuid) = self.get_selected_track_riff_uuid(state);
 
         match state.lock() {
@@ -459,7 +459,7 @@ impl RiffCutSelectedAction {
 }
 
 impl HistoryAction for RiffCutSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
                 let mut state = state;
@@ -529,7 +529,7 @@ impl HistoryAction for RiffCutSelectedAction {
         Ok(())
     }
 
-    fn undo(&mut self, _state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, _state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
 
         Ok(())
     }
@@ -576,7 +576,7 @@ impl RiffTranslateSelectedAction {
 }
 
 impl HistoryAction for RiffTranslateSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
                 let tempo = {
@@ -675,7 +675,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
         Ok(())
     }
 
-    fn undo(&mut self, _state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, _state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
 
         Ok(())
     }
@@ -719,7 +719,7 @@ impl RiffChangeLengthOfSelectedAction {
 }
 
 impl HistoryAction for RiffChangeLengthOfSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
                 let tempo = {
@@ -784,7 +784,7 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
         Ok(())
     }
 
-    fn undo(&mut self, _state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, _state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
 
         Ok(())
     }
@@ -813,7 +813,7 @@ impl RiffPasteSelectedAction {
 }
 
 impl HistoryAction for RiffPasteSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
                 let mut copy_buffer: Vec<TrackEvent> = vec![];
@@ -897,7 +897,7 @@ impl HistoryAction for RiffPasteSelectedAction {
         Ok(())
     }
 
-    fn undo(&mut self, _state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, _state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         Ok(())
     }
 }
@@ -939,7 +939,7 @@ impl RiffQuantiseSelectedAction {
 }
 
 impl HistoryAction for RiffQuantiseSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
                 let mut state = state;
@@ -1035,7 +1035,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
         Ok(())
     }
 
-    fn undo(&mut self, _state: &mut Arc<Mutex<FreedomDAWState>>) -> Result<(), String> {
+    fn undo(&mut self, _state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         Ok(())
     }
 }

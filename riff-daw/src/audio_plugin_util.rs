@@ -9,7 +9,7 @@ use simple_clap_host_helper_lib::{plugin::{instance::process::{AudioBuffers, Out
 use vst::{host::{PluginInstance, PluginLoader}, plugin::Category, plugin::Plugin};
 use vst::api::TimeInfo;
 
-use crate::{domain::{VstHost}, event::AudioPluginHostOutwardEvent};
+use crate::{domain::{VstHost}, event::AudioPluginHostOutwardEvent, constants::{VST24_CHECKER_EXECUTABLE_NAME, CLAP_CHECKER_EXECUTABLE_NAME}};
 
 pub fn create_vst24_audio_plugin(
     vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
@@ -300,13 +300,13 @@ pub fn scan_for_audio_plugins(vst_path: String, clap_path: String) -> (HashMap<S
     let mut instrument_audio_plugins: HashMap<String, String> = HashMap::new();
     let mut effect_audio_plugins: HashMap<String, String> = HashMap::new();
 
-    if let Some(vst24_checker) = find_executable_in_path("vst_checker") {
+    if let Some(vst24_checker) = find_executable_in_path(VST24_CHECKER_EXECUTABLE_NAME) {
         if let Some(vst24_checker) = vst24_checker.to_str() {
             scan_for_audio_plugins_of_type(vst24_checker, vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
         }
     }
     
-    if let Some(clap_checker) = find_executable_in_path("clap_checker") {
+    if let Some(clap_checker) = find_executable_in_path(CLAP_CHECKER_EXECUTABLE_NAME) {
         if let Some(clap_checker) = clap_checker.to_str() {
             scan_for_audio_plugins_of_type(clap_checker, clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
         }

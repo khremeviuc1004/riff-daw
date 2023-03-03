@@ -248,7 +248,7 @@ pub enum TransportChangeType {
 }
 
 #[derive(Clone)]
-pub enum FreedomDAWEvents {
+pub enum DAWEvents {
     NewFile,
     Notification(NotificationType, String),
     OpenFile(PathBuf),

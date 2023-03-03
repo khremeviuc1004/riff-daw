@@ -8,7 +8,7 @@ use log::*;
 use strum_macros::Display;
 use uuid::Uuid;
 
-use crate::{domain::*, event::{FreedomDAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::FreedomDAWState, constants::NOTE_NAMES};
+use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -99,7 +99,7 @@ pub trait CustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 );
     fn as_any(&mut self) -> &mut dyn Any;
 }
@@ -115,18 +115,18 @@ pub trait BeatGridMouseCoordHelper {
     fn get_time(&self, x: f64, beat_width_in_pixels: f64, zoom: f64) -> f64 {
         x / (beat_width_in_pixels * zoom)
     }
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, entity_uuid: String);
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>);
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, entity_uuid: String);
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
 
 }
 
@@ -137,51 +137,51 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         ((127.0 * entity_height_in_pixels) - y) / entity_height_in_pixels
     }
 
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffAddNote(y_index, time, duration), None));
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(y_index, time, duration), None));
     }
 
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffDeleteNote(y_index, time), None));
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDeleteNote(y_index, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
     }
 
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 }
@@ -193,51 +193,51 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
         ((127.0 * entity_height_in_pixels) - y) / entity_height_in_pixels
     }
 
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffAddSample(entity_uuid, time), None));
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddSample(entity_uuid, time), None));
     }
 
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _y_index: i32, time: f64, entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffDeleteSample(entity_uuid, time), None));
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDeleteSample(entity_uuid, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
     }
 
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 }
@@ -249,51 +249,51 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
         y / entity_height_in_pixels
     }
 
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferenceAdd(y_index, time), None));
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceAdd(y_index, time), None));
     }
 
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferenceDelete(y_index, time), None));
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceDelete(y_index, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferenceCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCutSelected(x, y2, x2, y), None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferenceCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCopySelected(x, y2, x2, y), None));
     }
 
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferencePaste, None));
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePaste, None));
     }
 
-    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
-
-    }
-
-    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
         todo!()
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
         todo!()
     }
 }
@@ -371,7 +371,7 @@ pub struct BeatGrid {
     mouse_pointer_position: (f64, f64),
     mouse_pointer_previous_position: (f64, f64),
 
-    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
 
     resize_drawing_area: bool,
 
@@ -390,7 +390,7 @@ pub struct BeatGrid {
 }
 
 impl BeatGrid {
-    pub fn new(zoom_horizontal: f64, zoom_vertical: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) -> BeatGrid {
+    pub fn new(zoom_horizontal: f64, zoom_vertical: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> BeatGrid {
         BeatGrid {
             entity_height_in_pixels,
             beat_width_in_pixels,
@@ -471,7 +471,7 @@ impl BeatGrid {
         beats_per_bar: i32,
         custom_painter: Option<Box<dyn CustomPainter>>,
         mouse_coord_helper: Option<Box<dyn BeatGridMouseCoordHelper>>,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         resize_drawing_area: bool
     ) -> BeatGrid {
         BeatGrid {
@@ -556,7 +556,7 @@ impl BeatGrid {
         custom_painter: Option<Box<dyn CustomPainter>>,
         vertical_scale_painter: Option<Box<dyn CustomPainter>>,
         mouse_coord_helper: Option<Box<dyn BeatGridMouseCoordHelper>>,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         resize_drawing_area: bool
     ) -> BeatGrid {
         BeatGrid {
@@ -917,7 +917,7 @@ impl MouseHandler for BeatGrid {
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                     let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                     self.track_cursor_time_in_beats = snap_position;
-                                    match self.tx_from_ui.send(FreedomDAWEvents::PlayPositionInBeats(snap_position)) {
+                                    match self.tx_from_ui.send(DAWEvents::PlayPositionInBeats(snap_position)) {
                                         Ok(_) => (),
                                         Err(_) => (),
                                     }
@@ -941,7 +941,7 @@ impl MouseHandler for BeatGrid {
                             if segments.len() == 3 {
                                 let riff_set_uuid = *segments.get(1).unwrap();
                                 let track_uuid = *segments.get(2).unwrap();
-                                match self.tx_from_ui.send(FreedomDAWEvents::RiffSetTrackIncrementRiff(riff_set_uuid.to_owned(), track_uuid.to_owned())) {
+                                match self.tx_from_ui.send(DAWEvents::RiffSetTrackIncrementRiff(riff_set_uuid.to_owned(), track_uuid.to_owned())) {
                                     Ok(_) => (),
                                     Err(_) => (),
                                 }
@@ -957,7 +957,7 @@ impl MouseHandler for BeatGrid {
                             Some(mouse_coord_helper) => {
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                 let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
-                                match self.tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::LoopLimitLeftChanged(snap_position), Uuid::new_v4())) {
+                                match self.tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::LoopLimitLeftChanged(snap_position), Uuid::new_v4())) {
                                     Ok(_) => (),
                                     Err(error) => info!("Problem setting loop left - could sender event: {}", error),
                                 }
@@ -1001,12 +1001,12 @@ impl MouseHandler for BeatGrid {
                                 let track_uuid = *segments.get(2).unwrap();
                                 let new_riff_uuid = Uuid::new_v4();
                                 match self.tx_from_ui.send(
-                                    FreedomDAWEvents::TrackChange(TrackChangeType::RiffAdd(new_riff_uuid, "".to_string(), 4.0), Some(track_uuid.to_owned()))) {
+                                    DAWEvents::TrackChange(TrackChangeType::RiffAdd(new_riff_uuid, "".to_string(), 4.0), Some(track_uuid.to_owned()))) {
                                     Ok(_) => (),
                                     Err(_) => (),
                                 }
                                 match self.tx_from_ui.send(
-                                    FreedomDAWEvents::RiffSetTrackSetRiff(riff_set_uuid.to_string(), track_uuid.to_string(), new_riff_uuid.to_string())) {
+                                    DAWEvents::RiffSetTrackSetRiff(riff_set_uuid.to_string(), track_uuid.to_string(), new_riff_uuid.to_string())) {
                                     Ok(_) => (),
                                     Err(_) => (),
                                 }
@@ -1039,7 +1039,7 @@ impl MouseHandler for BeatGrid {
                             if segments.len() == 3 {
                                 let riff_set_uuid = *segments.get(1).unwrap();
                                 let track_uuid = *segments.get(2).unwrap();
-                                match self.tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffSelect(riff_set_uuid.to_owned()), Some(track_uuid.to_owned()))) {
+                                match self.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSelect(riff_set_uuid.to_owned()), Some(track_uuid.to_owned()))) {
                                     Ok(_) => (),
                                     Err(_) => (),
                                 }
@@ -1054,7 +1054,7 @@ impl MouseHandler for BeatGrid {
                         Some(mouse_coord_helper) => {
                             let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                             let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
-                            match self.tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::LoopLimitRightChanged(snap_position), Uuid::new_v4())) {
+                            match self.tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::LoopLimitRightChanged(snap_position), Uuid::new_v4())) {
                                 Ok(_) => (),
                                 Err(error) => info!("Problem setting loop left - could sender event: {}", error),
                             }
@@ -1419,7 +1419,7 @@ impl Grid for BeatGrid {
                         let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels);
                         let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
                         let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels);
-                        let _ = self.tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(true, x, y2 as i32, x2, y as i32), None));
+                        let _ = self.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(true, x, y2 as i32, x2, y as i32), None));
                     },
                     None => (),
                 }
@@ -1438,7 +1438,7 @@ impl Grid for BeatGrid {
                         let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels);
                         let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
                         let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels);
-                        let _ = self.tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(false, x, y2 as i32, x2, y as i32), None));
+                        let _ = self.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(false, x, y2 as i32, x2, y as i32), None));
                     },
                     None => (),
                 }
@@ -1546,12 +1546,12 @@ pub struct BeatGridRuler {
     zoom_vertical: f64,
     zoom_factor: f64,
     beats_per_bar: i32,
-    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     custom_painter: Option<Box<dyn CustomPainter>>,
 }
 
 impl BeatGridRuler {
-    pub fn new(zoom: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) -> Self {
+    pub fn new(zoom: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> Self {
         Self {
             beat_width_in_pixels,
             zoom_horizontal: zoom,
@@ -1779,7 +1779,7 @@ pub struct Piano {
     entity_height_in_pixels: f64,
     white_key_length: f64,
     black_key_length: f64,
-    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
 
     // zoom
     zoom_vertical: f64,
@@ -1794,19 +1794,19 @@ impl MouseHandler for Piano {
         let height = drawing_area.height_request() as f64;
         let note_height_in_pixels = height / 127.0;
         let note_number = 127.0 - y /note_height_in_pixels;
-        let _ = self.tx_from_ui.send(FreedomDAWEvents::PlayNoteImmediate(note_number as i32));
+        let _ = self.tx_from_ui.send(DAWEvents::PlayNoteImmediate(note_number as i32));
     }
 
     fn handle_mouse_release(&mut self, _x: f64, y: f64, drawing_area: &DrawingArea, _mouse_button: MouseButton, _control_key: bool, _shift_key: bool, _alt_key: bool, _data: String) {
         let height = drawing_area.height_request() as f64;
         let note_height_in_pixels = height / 127.0;
         let note_number = 127.0 - y /note_height_in_pixels;
-        let _ = self.tx_from_ui.send(FreedomDAWEvents::StopNoteImmediate(note_number as i32));
+        let _ = self.tx_from_ui.send(DAWEvents::StopNoteImmediate(note_number as i32));
     }
 }
 
 impl Piano {
-    pub fn new(zoom_vertical: f64, entity_height_in_pixels: f64, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) -> Self {
+    pub fn new(zoom_vertical: f64, entity_height_in_pixels: f64, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> Self {
         Self {
             entity_height_in_pixels,
             white_key_length: 100.0,
@@ -1928,14 +1928,14 @@ impl Piano {
 }
 
 pub struct PianoRollCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
     pub original_track_event_copy: Option<TrackEvent>,
     pub dragged_track_event: Option<TrackEvent>,
     pub edit_item_handler: EditItemHandler<Note, Note>,
 }
 
 impl PianoRollCustomPainter {
-    pub fn new_with_edit_item_handler(state: Arc<Mutex<FreedomDAWState>>, edit_item_handler: EditItemHandler<Note, Note>) -> PianoRollCustomPainter {
+    pub fn new_with_edit_item_handler(state: Arc<Mutex<DAWState>>, edit_item_handler: EditItemHandler<Note, Note>) -> PianoRollCustomPainter {
         PianoRollCustomPainter {
             state,
             original_track_event_copy: None,
@@ -1973,7 +1973,7 @@ impl CustomPainter for PianoRollCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
@@ -2080,11 +2080,11 @@ pub struct EditItemHandler<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWI
     pub original_item: Option<T>,
     pub dragged_item: Option<T>,
     pub referenced_item: Option<U>,
-    pub event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<FreedomDAWEvents>)>,
+    pub event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>,
 }
 
 impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone, U: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone> EditItemHandler<T, U> {
-    pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<FreedomDAWEvents>)>) -> Self { 
+    pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self { 
         Self { 
             original_item: None, 
             dragged_item: None,
@@ -2112,7 +2112,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
         canvas_height: f64, 
         drawing_area: &DrawingArea,
         edit_drag_cycle: &EditDragCycle,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         invert_vertically: bool,
         track_uuid: String,
         referencing_item: &U,
@@ -2353,11 +2353,11 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 }
 
 pub struct SampleRollCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
 }
 
 impl SampleRollCustomPainter {
-    pub fn new(state: Arc<Mutex<FreedomDAWState>>) -> Self {
+    pub fn new(state: Arc<Mutex<DAWState>>) -> Self {
         Self {
             state,
         }
@@ -2388,7 +2388,7 @@ impl CustomPainter for SampleRollCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         match self.state.lock() {
             Ok( state) => {
@@ -2448,11 +2448,11 @@ impl CustomPainter for SampleRollCustomPainter {
 }
 
 pub struct RiffSetTrackCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
 }
 
 impl RiffSetTrackCustomPainter {
-    pub fn new(state: Arc<Mutex<FreedomDAWState>>) -> RiffSetTrackCustomPainter {
+    pub fn new(state: Arc<Mutex<DAWState>>) -> RiffSetTrackCustomPainter {
         RiffSetTrackCustomPainter {
             state,
         }
@@ -2483,7 +2483,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         match self.state.lock() {
             Ok( state) => {
@@ -2578,11 +2578,11 @@ impl CustomPainter for RiffSetTrackCustomPainter {
 }
 
 pub struct PianoRollVerticalScaleCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
 }
 
 impl PianoRollVerticalScaleCustomPainter {
-    pub fn new(state: Arc<Mutex<FreedomDAWState>>) -> Self {
+    pub fn new(state: Arc<Mutex<DAWState>>) -> Self {
         Self {
             state,
         }
@@ -2613,7 +2613,7 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
@@ -2648,7 +2648,7 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
 
 
 pub struct TrackGridCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
     show_automation: bool,
     show_note: bool,
     show_note_velocity: bool,
@@ -2659,7 +2659,7 @@ pub struct TrackGridCustomPainter {
 }
 
 impl TrackGridCustomPainter {
-    pub fn new_with_edit_item_handler(state: Arc<Mutex<FreedomDAWState>>, edit_item_handler: EditItemHandler<Riff, RiffReference>) -> TrackGridCustomPainter {
+    pub fn new_with_edit_item_handler(state: Arc<Mutex<DAWState>>, edit_item_handler: EditItemHandler<Riff, RiffReference>) -> TrackGridCustomPainter {
         TrackGridCustomPainter {
             state,
             show_automation: false,
@@ -2713,7 +2713,7 @@ impl CustomPainter for TrackGridCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         match self.state.lock() {
             Ok(mut state) => {
@@ -2907,11 +2907,11 @@ impl CustomPainter for TrackGridCustomPainter {
 }
 
 pub struct AutomationCustomPainter {
-    state: Arc<Mutex<FreedomDAWState>>,
+    state: Arc<Mutex<DAWState>>,
 }
 
 impl AutomationCustomPainter {
-    pub fn new(state: Arc<Mutex<FreedomDAWState>>) -> AutomationCustomPainter {
+    pub fn new(state: Arc<Mutex<DAWState>>) -> AutomationCustomPainter {
         AutomationCustomPainter {
             state,
         }
@@ -3033,7 +3033,7 @@ impl CustomPainter for AutomationCustomPainter {
                     operation_mode: &OperationModeType,
                     drag_started: bool,
                     edit_drag_cycle: &EditDragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         match self.state.lock() {
             Ok(mut state) => {
@@ -3279,51 +3279,51 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         ((127.0 * entity_height_in_pixels) - y) / entity_height_in_pixels
     }
 
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationAdd(time, y_index), None));
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(time, y_index), None));
     }
 
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationDelete(time), None));
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationDelete(time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationCut(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationCut(x, y2, x2, y), None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationCopy(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationCopy(x, y2, x2, y), None));
     }
 
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationPaste, None));
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationPaste, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Up, x, y, x2, y2), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Up, x, y, x2, y2), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Down, x, y, x2, y2), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Down, x, y, x2, y2), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Left, x, y, x2, y2), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Left, x, y, x2, y2), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Right, x, y, x2, y2), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Right, x, y, x2, y2), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationQuantiseSelected(x, y2, x2, y), None));
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationQuantiseSelected(x, y2, x2, y), None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
 
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, default::Default, sync::{Arc, Mutex}, time::Dura
 use std::thread;
 
 use apres::MIDI;
-use constants::TRACK_VIEW_TRACK_PANEL_HEIGHT;
+use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, VST_PATH_ENVIRONMENT_VARIABLE_NAME, CLAP_PATH_ENVIRONMENT_VARIABLE_NAME, DAW_AUTO_SAVE_THREAD_NAME};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use flexi_logger::{Logger, FileSpec, WriteMode};
 use gtk::{Adjustment, ButtonsType, ComboBoxText, DrawingArea, Frame, glib, MessageDialog, MessageType, prelude::{ActionableExt, ActionMapExt, AdjustmentExt, ApplicationExt, Cast, ComboBoxExtManual, ComboBoxTextExt, ContainerExt, DialogExt, EntryExt, GtkWindowExt, LabelExt, ProgressBarExt, ScrolledWindowExt, SpinButtonExt, TextBufferExt, TextViewExt, ToggleToolButtonExt, WidgetExt}, SpinButton, Window, WindowType};
@@ -80,19 +80,19 @@ fn main() {
         flags: 3,
     }));
 
-    let (tx_from_ui, rx_from_ui) = unbounded::<FreedomDAWEvents>();
+    let (tx_from_ui, rx_from_ui) = unbounded::<DAWEvents>();
     let (tx_to_audio, rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
     let (jack_midi_sender, jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
 
     let state = {
         let tx_from_ui = tx_from_ui.clone();
-        Arc::new(Mutex::new (FreedomDAWState::new(tx_from_ui)))
+        Arc::new(Mutex::new (DAWState::new(tx_from_ui)))
     };
 
     let mut audio_plugin_windows: HashMap<String, Window> = HashMap::new();
 
     let lua = Lua::new();
-    let _ = lua.globals().set("state", LuaState {state: state.clone(), tx_from_ui: tx_from_ui.clone()});
+    let _ = lua.globals().set(LUA_GLOBAL_STATE, LuaState {state: state.clone(), tx_from_ui: tx_from_ui.clone()});
 
     gtk::init().expect("Problem starting up GTK3.");
 
@@ -128,8 +128,8 @@ fn main() {
 
     // scan for audio plugins
     {
-        if let Ok(vst_path) = std::env::var("VST_PATH") {
-            if let Ok(clap_path) = std::env::var("CLAP_PATH") {
+        if let Ok(vst_path) = std::env::var(VST_PATH_ENVIRONMENT_VARIABLE_NAME) {
+            if let Ok(clap_path) = std::env::var(CLAP_PATH_ENVIRONMENT_VARIABLE_NAME) {
                 match state.lock() {
                     Ok(mut state) => {
                         if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
@@ -179,7 +179,7 @@ fn main() {
     {
         let state = state.clone();
         let autosave_keep_alive = autosave_keep_alive.clone();
-        let _ = std::thread::Builder::new().name("FDAW autosave".to_string()).spawn(move || {
+        let _ = std::thread::Builder::new().name(DAW_AUTO_SAVE_THREAD_NAME.to_string()).spawn(move || {
             loop {
                 if let Ok(mut state) = state.lock() {
                     if !state.playing() {
@@ -279,8 +279,8 @@ fn main() {
 fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
                                 track_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                                 gui_ref: &mut MainWindow,
-                                tx_from_ui: Sender<FreedomDAWEvents>,
-                                state_arc: Arc<Mutex<FreedomDAWState>>,
+                                tx_from_ui: Sender<DAWEvents>,
+                                state_arc: Arc<Mutex<DAWState>>,
                                 vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
 ) {
     match state_arc.lock() {
@@ -318,21 +318,21 @@ fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
 }
 
 fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
-                              tx_from_ui: Sender<FreedomDAWEvents>,
+                              tx_from_ui: Sender<DAWEvents>,
                               audio_plugin_windows: &mut HashMap<String, Window>,
                               lua: &Lua,
                               gui: &mut MainWindow,
                               vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
                               clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
                               track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                              rx_from_ui: Receiver<FreedomDAWEvents>,
-                              state: &mut Arc<Mutex<FreedomDAWState>>,
+                              rx_from_ui: Receiver<DAWEvents>,
+                              state: &mut Arc<Mutex<DAWState>>,
                               tx_to_audio: Sender<AudioLayerInwardEvent>,
                               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
 ) {
     match rx_from_ui.try_recv() {
         Ok(event) => match event {
-            FreedomDAWEvents::NewFile => {
+            DAWEvents::NewFile => {
                 gui.clear_ui();
                 // history.clear();
                 let state_arc = state.clone();
@@ -412,7 +412,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - New File - could not get lock on state"),
                 }
             },
-            FreedomDAWEvents::OpenFile(path) => {
+            DAWEvents::OpenFile(path) => {
                 gui.clear_ui();
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Loading {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Open");
@@ -517,11 +517,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         *coast = TrackBackgroundProcessorMode::AudioOut;
                     }
 
-                    let _ = tx_from_ui.send(FreedomDAWEvents::UpdateUI);
-                    let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                    let _ = tx_from_ui.send(DAWEvents::UpdateUI);
+                    let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                 });
             },
-            FreedomDAWEvents::Save => {
+            DAWEvents::Save => {
                 gui.ui.dialogue_progress_bar.set_text(Some("Saving..."));
                 gui.ui.progress_dialogue.set_title("Save");
                 gui.ui.progress_dialogue.show_all();
@@ -537,7 +537,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         thread::sleep(Duration::from_millis(1000));
                         match state.lock() {
                             Ok(state) => {
-                                info!("main - FreedomDAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
+                                info!("main - DAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
                                 let mut state = state;
                                 state.save();
                             },
@@ -547,11 +547,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
 
-                        let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     });
                 }
             },
-            FreedomDAWEvents::SaveAs(path) => {
+            DAWEvents::SaveAs(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Saving as {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Save As");
                 gui.ui.progress_dialogue.show_all();
@@ -575,11 +575,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
 
-                        let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     });
                 }
             },
-            FreedomDAWEvents::ImportMidiFile(path) => {
+            DAWEvents::ImportMidiFile(path) => {
                 gui.clear_ui();
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Importing midi file {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Import Midi File");
@@ -766,7 +766,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 tracks.push(TrackType::InstrumentTrack(freedom_daw_track));
 
                                                 if let Some(track_type) = tracks.last_mut() {
-                                                    FreedomDAWState::init_track(
+                                                    DAWState::init_track(
                                                         vst24_plugin_loaders.clone(),
                                                         clap_plugin_loaders.clone(),
                                                         tx_to_audio.clone(),
@@ -793,12 +793,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
 
-                        let _ = tx_from_ui.send(FreedomDAWEvents::UpdateUI);
-                        let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                        let _ = tx_from_ui.send(DAWEvents::UpdateUI);
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     });
                 }
             }
-            FreedomDAWEvents::ExportMidiFile(path) => {
+            DAWEvents::ExportMidiFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting midi file as {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Export Midi File");
                 gui.ui.progress_dialogue.show_all();
@@ -815,8 +815,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 info!("Main - rx_ui processing loop - Export Midi File - attempting to export.");
                                 if !state.export_to_midi_file(path) {
-                                    let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
-                                    let _ = tx_from_ui.send(FreedomDAWEvents::Notification(NotificationType::Error, "Could not export midi file.".to_string()));
+                                    let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                                    let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not export midi file.".to_string()));
                                 }
                             }
                             Err(_) => info!("Main - rx_ui processing loop - Export Midi File - could not get lock on state"),
@@ -824,11 +824,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
-                        let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     });
                 }
             }
-            FreedomDAWEvents::ExportRiffsToMidiFile(path) => {
+            DAWEvents::ExportRiffsToMidiFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting riffs to midi file as {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Export riffs to midi file");
                 gui.ui.progress_dialogue.show_all();
@@ -845,8 +845,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 info!("Main - rx_ui processing loop - Export riffs to midi file - attempting to export.");
                                 if !state.export_riffs_to_midi_file(path) {
-                                    let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
-                                    let _ = tx_from_ui.send(FreedomDAWEvents::Notification(NotificationType::Error, "Could not export riffs to midi file.".to_string()));
+                                    let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                                    let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not export riffs to midi file.".to_string()));
                                 }
                             }
                             Err(_) => info!("Main - rx_ui processing loop - Export riffs to midi file - could not get lock on state"),
@@ -854,11 +854,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
-                        let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     });
                 }
             }
-            FreedomDAWEvents::ExportWaveFile(path) => {
+            DAWEvents::ExportWaveFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting wave file as {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Export Wav File");
                 gui.ui.progress_dialogue.show_all();
@@ -874,7 +874,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }
             }
-            FreedomDAWEvents::UpdateUI => {
+            DAWEvents::UpdateUI => {
                 let state_arc = state.clone();
                 match state.lock() {
                     Ok(mut state) => {
@@ -888,8 +888,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.sample_roll_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::UpdateState => info!("Event: update state"),
-            FreedomDAWEvents::Notification(notification_type, message) => {
+            DAWEvents::UpdateState => info!("Event: update state"),
+            DAWEvents::Notification(notification_type, message) => {
                 let message_type = match notification_type {
                     NotificationType::Info => { MessageType::Info }
                     NotificationType::Warning => { MessageType::Warning }
@@ -909,7 +909,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 message_dialogue.close();
                 message_dialogue.hide();
             }
-            FreedomDAWEvents::AutomationViewShowTypeChange(show_type) => {
+            DAWEvents::AutomationViewShowTypeChange(show_type) => {
                 let type_to_show = match show_type {
                     ShowType::Velocity => AutomationViewMode::NoteVelocities,
                     ShowType::Controller => AutomationViewMode::Controllers,
@@ -923,7 +923,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 gui.ui.automation_drawing_area.queue_draw();
             },
-            FreedomDAWEvents::LoopChange(change_type, uuid) => {
+            DAWEvents::LoopChange(change_type, uuid) => {
                 info!("Event: LoopChange");
                 match change_type {
                     LoopChangeType::LoopOn => {
@@ -1106,24 +1106,24 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     },
                 }
             },
-            FreedomDAWEvents::ProjectChange(_) => info!("Event: ProjectChange"),
-            FreedomDAWEvents::PianoRollSetTrackName(name) => {
+            DAWEvents::ProjectChange(_) => info!("Event: ProjectChange"),
+            DAWEvents::PianoRollSetTrackName(name) => {
                 gui.set_piano_roll_selected_track_name_label(name.as_str());
                 gui.ui.piano_roll_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::PianoRollSetRiffName(name) => {
+            DAWEvents::PianoRollSetRiffName(name) => {
                 gui.set_piano_roll_selected_riff_name_label(name.as_str());
                 gui.ui.piano_roll_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::SampleRollSetTrackName(name) => {
+            DAWEvents::SampleRollSetTrackName(name) => {
                 gui.set_sample_roll_selected_track_name_label(name.as_str());
                 gui.ui.sample_roll_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::SampleRollSetRiffName(name) => {
+            DAWEvents::SampleRollSetRiffName(name) => {
                 gui.set_sample_roll_selected_riff_name_label(name.as_str());
                 gui.ui.sample_roll_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::TrackChange(track_change_type, track_uuid) => match track_change_type {
+            DAWEvents::TrackChange(track_change_type, track_uuid) => match track_change_type {
                 TrackChangeType::Added(track_change_track_type) => {
                     let state_arc = state.clone();
                     let mut track_uuid = None;
@@ -1141,7 +1141,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::InstrumentTrack(track));
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
-                                        FreedomDAWState::init_track(
+                                        DAWState::init_track(
                                             vst24_plugin_loaders,
                                             clap_plugin_loaders,
                                             tx_to_audio,
@@ -1164,7 +1164,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.get_project().song_mut().add_track(TrackType::AudioTrack(track));
                                     info!("Added an audio track to the state.");
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
-                                        FreedomDAWState::init_track(
+                                        DAWState::init_track(
                                             vst24_plugin_loaders,
                                             clap_plugin_loaders,
                                             tx_to_audio,
@@ -1187,7 +1187,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, Some(state.midi_devices()), track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::MidiTrack(track));
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
-                                        FreedomDAWState::init_track(
+                                        DAWState::init_track(
                                             vst24_plugin_loaders,
                                             clap_plugin_loaders,
                                             tx_to_audio.clone(),
@@ -1741,7 +1741,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             error_message.push_str("\n");
                         }
 
-                        let _ = tx_from_ui.send(FreedomDAWEvents::Notification(NotificationType::Error, error_message));
+                        let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, error_message));
                     }
                 },
                 TrackChangeType::RiffLengthChange(riff_uuid, riff_length) => {
@@ -2071,12 +2071,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     for track in state.get_project().song_mut().tracks_mut().iter_mut() {
                                         if track.uuid().to_string() == track_uuid.clone() {
                                             if let TrackType::AudioTrack(_) = track {
-                                                match tx_from_ui.send(FreedomDAWEvents::SampleRollSetTrackName(track.name().to_string())) {
+                                                match tx_from_ui.send(DAWEvents::SampleRollSetTrackName(track.name().to_string())) {
                                                     Ok(_) => (),
                                                     Err(_) => (),
                                                 }
                                             } else {
-                                                match tx_from_ui.send(FreedomDAWEvents::PianoRollSetTrackName(track.name().to_string())) {
+                                                match tx_from_ui.send(DAWEvents::PianoRollSetTrackName(track.name().to_string())) {
                                                     Ok(_) => (),
                                                     Err(_) => (),
                                                 }
@@ -2089,12 +2089,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             };
                                             if let Some(riff) = riff_option {
                                                 if let TrackType::AudioTrack(_) = track {
-                                                    match tx_from_ui.send(FreedomDAWEvents::SampleRollSetRiffName(riff.name().to_string())) {
+                                                    match tx_from_ui.send(DAWEvents::SampleRollSetRiffName(riff.name().to_string())) {
                                                         Ok(_) => (),
                                                         Err(_) => (),
                                                     }
                                                 } else {
-                                                    match tx_from_ui.send(FreedomDAWEvents::PianoRollSetRiffName(riff.name().to_string())) {
+                                                    match tx_from_ui.send(DAWEvents::PianoRollSetRiffName(riff.name().to_string())) {
                                                         Ok(_) => (),
                                                         Err(_) => (),
                                                     }
@@ -3436,7 +3436,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     let mut new_track_type = TrackType::InstrumentTrack(new_track);
 
 
-                                    FreedomDAWState::init_track(
+                                    DAWState::init_track(
                                         vst24_plugin_loaders.clone(),
                                         clap_plugin_loaders.clone(),
                                         tx_to_audio.clone(),
@@ -3707,20 +3707,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
             },
-            FreedomDAWEvents::TrackEffectParameterChange(_, _) => info!("Event: TrackEffectParameterChange"),
-            FreedomDAWEvents::TrackInstrumentParameterChange(_) => info!("Event: TrackInstrumentParameterChange"),
-            FreedomDAWEvents::TrackSelectedPatternChange(_, _) => info!("Event: TrackSelectedPatternChange"),
-            FreedomDAWEvents::TranslateHorizontalChange(_) => info!("Event: TranslateHorizontalChange"),
-            FreedomDAWEvents::TranslateVerticalChange(_) => info!("Event: TranslateVerticalChange"),
-            FreedomDAWEvents::TransportChange(_, _, _) => info!("Event: TransportChange"),
-            FreedomDAWEvents::ViewAutomationChange(show_automation_events) => info!("Event: ViewAutomationChange: {}", show_automation_events),
-            FreedomDAWEvents::ViewNoteChange(show_note_events) => info!("Event: ViewNoteChange: {}", show_note_events),
-            FreedomDAWEvents::ViewPanChange(show_pan_events) => info!("Event: ViewPanChange: {}", show_pan_events),
-            FreedomDAWEvents::ViewVolumeChange(show_volume_events) => info!("Event: ViewVolumeChange: {}", show_volume_events),
-            FreedomDAWEvents::TrackGridOperationModeChange(_) => info!("Event: TrackGridOperationModeChange"),
-            FreedomDAWEvents::PianoRollOperationModeChange(_) => info!("Event: PianoRollOperationModeChange"),
-            FreedomDAWEvents::ControllerOperationModeChange(_) => info!("Event: ControllerOperationModeChange"),
-            FreedomDAWEvents::TransportGotoStart => {
+            DAWEvents::TrackEffectParameterChange(_, _) => info!("Event: TrackEffectParameterChange"),
+            DAWEvents::TrackInstrumentParameterChange(_) => info!("Event: TrackInstrumentParameterChange"),
+            DAWEvents::TrackSelectedPatternChange(_, _) => info!("Event: TrackSelectedPatternChange"),
+            DAWEvents::TranslateHorizontalChange(_) => info!("Event: TranslateHorizontalChange"),
+            DAWEvents::TranslateVerticalChange(_) => info!("Event: TranslateVerticalChange"),
+            DAWEvents::TransportChange(_, _, _) => info!("Event: TransportChange"),
+            DAWEvents::ViewAutomationChange(show_automation_events) => info!("Event: ViewAutomationChange: {}", show_automation_events),
+            DAWEvents::ViewNoteChange(show_note_events) => info!("Event: ViewNoteChange: {}", show_note_events),
+            DAWEvents::ViewPanChange(show_pan_events) => info!("Event: ViewPanChange: {}", show_pan_events),
+            DAWEvents::ViewVolumeChange(show_volume_events) => info!("Event: ViewVolumeChange: {}", show_volume_events),
+            DAWEvents::TrackGridOperationModeChange(_) => info!("Event: TrackGridOperationModeChange"),
+            DAWEvents::PianoRollOperationModeChange(_) => info!("Event: PianoRollOperationModeChange"),
+            DAWEvents::ControllerOperationModeChange(_) => info!("Event: ControllerOperationModeChange"),
+            DAWEvents::TransportGotoStart => {
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
@@ -3772,7 +3772,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::TransportMoveBack => {
+            DAWEvents::TransportMoveBack => {
                 info!("Main - rx_ui processing loop - transport move back - received");
                 match state.lock() {
                     Ok(mut state) => {
@@ -3838,7 +3838,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::TransportStop => {
+            DAWEvents::TransportStop => {
                 // set some sensible defaults
                 let mut bpm = 140.0;
                 let mut sample_rate = 44100.0;
@@ -3875,7 +3875,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(error) => info!("Problem using tx_to_audio to send message to jack layer when stopping play: {}", error),
                 }
             }
-            FreedomDAWEvents::TransportPlay => {
+            DAWEvents::TransportPlay => {
                 match state.lock() {
                     Ok(mut state) => {
 
@@ -3916,7 +3916,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - transport play - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::TransportRecordOn => {
+            DAWEvents::TransportRecordOn => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.set_recording(true);
@@ -3924,7 +3924,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - transport record on - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::TransportRecordOff => {
+            DAWEvents::TransportRecordOff => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.set_recording(false);
@@ -3932,7 +3932,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - transport record off - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::TransportPause => {
+            DAWEvents::TransportPause => {
                 match state.lock() {
                     Ok(state) => {
                         let song = state.project().song();
@@ -3944,7 +3944,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - transport pause - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::TransportMoveForward => {
+            DAWEvents::TransportMoveForward => {
                 info!("Main - rx_ui processing loop - transport move forward - received");
                 match state.lock() {
                     Ok(mut state) => {
@@ -4004,7 +4004,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            FreedomDAWEvents::TransportGotoEnd => {
+            DAWEvents::TransportGotoEnd => {
                 match state.lock() {
                     Ok(state) => {
                         let song = state.project().song();
@@ -4016,7 +4016,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - transport goto end - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::PlayNoteImmediate(note) => {
+            DAWEvents::PlayNoteImmediate(note) => {
                 match state.lock() {
                     Ok(state) => {
                         let track_uuid = state.selected_track();
@@ -4040,7 +4040,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
                 };
             },
-            FreedomDAWEvents::StopNoteImmediate(note) => {
+            DAWEvents::StopNoteImmediate(note) => {
                 match state.lock() {
                     Ok(state) => {
                         let track_uuid = state.selected_track();
@@ -4064,7 +4064,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - stop note immediate - could not get lock on state"),
                 };
             },
-            FreedomDAWEvents::TempoChange(tempo) => {
+            DAWEvents::TempoChange(tempo) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().set_tempo(tempo);
@@ -4097,7 +4097,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - tempo change - could not get lock on state"),
                 };
             },
-            FreedomDAWEvents::Panic => {
+            DAWEvents::Panic => {
                 info!("Sending note off messages to everything...");
                 match state.lock() {
                     Ok(state) => for track in state.project().song().tracks().iter() {
@@ -4113,7 +4113,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => (),
                 }
             },
-            FreedomDAWEvents::MasterChannelChange(channel_change_type) => {
+            DAWEvents::MasterChannelChange(channel_change_type) => {
                 match channel_change_type {
                     MasterChannelChangeType::VolumeChange(volume) => {
                         info!("Master channel volume change: {}", volume);
@@ -4131,8 +4131,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     },
                 }
             },
-            FreedomDAWEvents::PlayPositionInBeats(play_position_in_beats) => {
-                info!("Received FreedomDAWEvents::PlayPositionInBeats");
+            DAWEvents::PlayPositionInBeats(play_position_in_beats) => {
+                info!("Received DAWEvents::PlayPositionInBeats");
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
@@ -4152,7 +4152,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
                 };
             },
-            FreedomDAWEvents::TrimAllNoteDurations => {
+            DAWEvents::TrimAllNoteDurations => {
                 match state.lock() {
                     Ok(mut state) => {
                         {
@@ -4176,7 +4176,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - trim all note durations - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::RiffSetAdd(uuid) => {
+            DAWEvents::RiffSetAdd(uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         let song = state.get_project().song_mut();
@@ -4197,7 +4197,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 gui.ui.riff_sets_box.queue_draw();
             },
-            FreedomDAWEvents::RiffSetDelete(uuid) => {
+            DAWEvents::RiffSetDelete(uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         let song = state.get_project().song_mut();
@@ -4207,7 +4207,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => (),
                 }
             },
-            FreedomDAWEvents::RiffSetCopy(uuid, new_copy_riff_set_uuid) => {
+            DAWEvents::RiffSetCopy(uuid, new_copy_riff_set_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(copy_of_riff_set) = state.get_project().song_mut().riff_set_copy(uuid, new_copy_riff_set_uuid.clone()) {                            
@@ -4219,7 +4219,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 gui.ui.riff_sets_box.queue_draw();
             },
-            FreedomDAWEvents::RiffSetNameChange(uuid, name) => {
+            DAWEvents::RiffSetNameChange(uuid, name) => {
                 match state.lock() {
                     Ok(mut state) => {
                         let song = state.get_project().song_mut();
@@ -4233,7 +4233,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(error) => info!("Could not lock the state when trying to change a riff set name: {}", error),
                 }
             },
-            FreedomDAWEvents::RiffSetPlay(uuid) => {
+            DAWEvents::RiffSetPlay(uuid) => {
                 info!("Main - rx_ui processing loop - riff set play: {}", uuid);
                 match state.lock() {
                     Ok(mut state) => {
@@ -4245,7 +4245,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => info!("Main - rx_ui processing loop - riff set play - could not get lock on state"),
                 };
             }
-            FreedomDAWEvents::RiffSetTrackIncrementRiff(riff_set_uuid, track_uuid) => {
+            DAWEvents::RiffSetTrackIncrementRiff(riff_set_uuid, track_uuid) => {
                 info!("Main - rx_ui processing loop - riff set track incr riff: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4264,7 +4264,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
             }
-            FreedomDAWEvents::RiffSetTrackSetRiff(riff_set_uuid, track_uuid, riff_uuid) => {
+            DAWEvents::RiffSetTrackSetRiff(riff_set_uuid, track_uuid, riff_uuid) => {
                 info!("Main - rx_ui processing loop - riff set track set riff: riff set={}, track={}, riff={}", riff_set_uuid.as_str(), track_uuid.as_str(), riff_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4274,7 +4274,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sets_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequencePlay(riff_sequence_uuid) => {
+            DAWEvents::RiffSequencePlay(riff_sequence_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.play_riff_sequence(tx_to_audio, riff_sequence_uuid);
@@ -4283,7 +4283,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceAdd(riff_sequence_uuid) => {
+            DAWEvents::RiffSequenceAdd(riff_sequence_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().add_riff_sequence(RiffSequence::new_with_uuid(riff_sequence_uuid));
@@ -4293,7 +4293,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceDelete(riff_sequence_uuid) => {
+            DAWEvents::RiffSequenceDelete(riff_sequence_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().remove_riff_sequence(riff_sequence_uuid);
@@ -4303,7 +4303,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceNameChange(riff_sequence_uuid, name) => {
+            DAWEvents::RiffSequenceNameChange(riff_sequence_uuid, name) => {
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
@@ -4315,7 +4315,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid) => {
+            DAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence move left: {}", riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4325,7 +4325,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceMoveRight(riff_sequence_uuid) => {
+            DAWEvents::RiffSequenceMoveRight(riff_sequence_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence move right: {}", riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4335,7 +4335,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid, riff_set_reference_uuid) => {
+            DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid, riff_set_reference_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence - riff set add: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4347,7 +4347,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceRiffSetDelete(riff_sequence_uuid, riff_set_reference_uuid) => {
+            DAWEvents::RiffSequenceRiffSetDelete(riff_sequence_uuid, riff_set_reference_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence - riff sequence delete: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4359,7 +4359,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceRiffSetMoveLeft(riff_sequence_uuid, riff_set_reference_uuid) => {
+            DAWEvents::RiffSequenceRiffSetMoveLeft(riff_sequence_uuid, riff_set_reference_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence - riff set reference move left: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4371,7 +4371,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceRiffSetMoveRight(riff_sequence_uuid, riff_set_uuid) => {
+            DAWEvents::RiffSequenceRiffSetMoveRight(riff_sequence_uuid, riff_set_uuid) => {
                 info!("Main - rx_ui processing loop - riff sequence - riff set reference move right: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4383,7 +4383,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementPlay(riff_arrangement_uuid) => {
+            DAWEvents::RiffArrangementPlay(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid);
@@ -4392,7 +4392,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementAdd(riff_arrangement_uuid) => {
+            DAWEvents::RiffArrangementAdd(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().add_riff_arrangement(RiffArrangement::new_with_uuid(riff_arrangement_uuid));
@@ -4401,7 +4401,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementDelete(riff_arrangement_uuid) => {
+            DAWEvents::RiffArrangementDelete(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().remove_riff_arrangement(riff_arrangement_uuid);
@@ -4410,7 +4410,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementNameChange(riff_arrangement_uuid, name) => {
+            DAWEvents::RiffArrangementNameChange(riff_arrangement_uuid, name) => {
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
@@ -4421,7 +4421,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid) => {
+            DAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement move left: {}", riff_arrangement_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4431,7 +4431,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid) => {
+            DAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement move right: {}", riff_arrangement_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4441,7 +4441,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid, riff_set_uuid) => {
+            DAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid, riff_set_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff set add: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4453,7 +4453,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSetDelete(riff_arrangement_uuid, item_uuid) => {
+            DAWEvents::RiffArrangementRiffSetDelete(riff_arrangement_uuid, item_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff arrangement delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4465,7 +4465,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSetMoveLeft(riff_arrangement_uuid, item_uuid) => {
+            DAWEvents::RiffArrangementRiffSetMoveLeft(riff_arrangement_uuid, item_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff set move left: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4477,7 +4477,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSetMoveRight(riff_arrangement_uuid, item_uuid) => {
+            DAWEvents::RiffArrangementRiffSetMoveRight(riff_arrangement_uuid, item_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff set move right: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4489,7 +4489,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid, riff_sequence_uuid) => {
+            DAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid, riff_sequence_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff sequence add: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4501,7 +4501,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, item_uuid) => {
+            DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, item_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff sequence delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4513,7 +4513,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid) => {
+            DAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff sequence move left: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4525,7 +4525,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid) => {
+            DAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid) => {
                 info!("Main - rx_ui processing loop - riff arrangement - riff sequence move right: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4537,7 +4537,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            FreedomDAWEvents::Shutdown => {
+            DAWEvents::Shutdown => {
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Coast;
                 }
@@ -4555,7 +4555,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => {}
                 }
             }
-            FreedomDAWEvents::Undo => {
+            DAWEvents::Undo => {
                 match history_manager.lock() {
                     Ok(mut history_manager) => {
                         let _ = history_manager.undo(&mut state.clone());
@@ -4572,7 +4572,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.riff_sets_box.queue_draw();
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::Redo => {
+            DAWEvents::Redo => {
                 match history_manager.lock() {
                     Ok(mut history_manager) => {
                         let _ = history_manager.redo(&mut state.clone());
@@ -4589,13 +4589,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.riff_sets_box.queue_draw();
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::PreviewSample(file_name) => {
+            DAWEvents::PreviewSample(file_name) => {
                 match tx_to_audio.send(AudioLayerInwardEvent::PreviewSample(file_name)) {
                     Ok(_) => {}
                     Err(_) => {}
                 }
             }
-            FreedomDAWEvents::SampleAdd(file_name) => {
+            DAWEvents::SampleAdd(file_name) => {
                 match state.lock() {
                     Ok(mut state) => {
                         // create the sample object and store it
@@ -4619,8 +4619,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => {}
                 }
             }
-            FreedomDAWEvents::SampleDelete(_uuid) => {}
-            FreedomDAWEvents::RunLuaScript(script) => {
+            DAWEvents::SampleDelete(_uuid) => {}
+            DAWEvents::RunLuaScript(script) => {
                 match lua.load(script.as_str()).eval::<MultiValue>() {
                     Ok(values) => {
                         if let Some(console_output_text_buffer) = gui.ui.scripting_console_output_text_view.buffer() {
@@ -4657,10 +4657,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
             }
-            FreedomDAWEvents::HideProgressDialogue => {
+            DAWEvents::HideProgressDialogue => {
                 gui.ui.progress_dialogue.hide();
             }
-            FreedomDAWEvents::TrackDetails(track_uuid, show) => {
+            DAWEvents::TrackDetails(track_uuid, show) => {
                 if let Some((_, dialogue)) = gui.track_details_dialogues.iter().find(|(dialogue_track_uuid, _dialogue)| dialogue_track_uuid.to_string() == track_uuid) {
                     if show {
                         dialogue.track_details_dialogue.show_all();
@@ -4670,7 +4670,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
             }
-            FreedomDAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid) => {
+            DAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid) => {
                 // get the current track cursor position and convert it to beats
                 let edit_cursor_position_in_beats = match &gui.track_grid {
                     Some(track_grid) => match track_grid.lock() {
@@ -4682,7 +4682,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 DAWUtils::copy_riff_set_to_position(uuid, edit_cursor_position_in_beats, state.clone());
             }
-            FreedomDAWEvents::RiffSequenceCopySelectedToTrackViewCursorPosition(uuid) => {
+            DAWEvents::RiffSequenceCopySelectedToTrackViewCursorPosition(uuid) => {
                 // get the current track cursor position and convert it to beats
                 let edit_cursor_position_in_beats = match &gui.track_grid {
                     Some(track_grid) => match track_grid.lock() {
@@ -4694,7 +4694,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 DAWUtils::copy_riff_sequence_to_position(uuid, edit_cursor_position_in_beats, state.clone());
             }
-            FreedomDAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(uuid) => {
+            DAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(uuid) => {
                 // get the current track cursor position and convert it to beats
                 let edit_cursor_position_in_beats = match &gui.track_grid {
                     Some(track_grid) => match track_grid.lock() {
@@ -4706,7 +4706,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 DAWUtils::copy_riff_arrangement_to_position(uuid, edit_cursor_position_in_beats, state.clone());
             }
-            FreedomDAWEvents::RiffArrangementCopy(uuid) => {
+            DAWEvents::RiffArrangementCopy(uuid) => {
                 if let Ok(mut state) = state.lock() {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement(uuid) {
                         let mut new_riff_arrangement = riff_arrangement.clone();
@@ -4719,15 +4719,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.get_project().song_mut().add_riff_arrangement(new_riff_arrangement);
                     }
                 }
-                let _ = tx_from_ui.send(FreedomDAWEvents::UpdateUI);
+                let _ = tx_from_ui.send(DAWEvents::UpdateUI);
             }
-            FreedomDAWEvents::AutomationEditTypeChange(automation_edit_type) => {
+            DAWEvents::AutomationEditTypeChange(automation_edit_type) => {
                 if let Ok(mut state) = state.lock() {
                     state.set_automation_edit_type(automation_edit_type);
                     gui.ui.automation_drawing_area.queue_draw();
                 }
             }
-            FreedomDAWEvents::RiffSetMoveToPosition(riff_set_uuid, to_position_in_container) => {
+            DAWEvents::RiffSetMoveToPosition(riff_set_uuid, to_position_in_container) => {
                 info!("Main - rx_ui processing loop - riff set move to position: {}", riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4737,7 +4737,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sets_box.queue_draw();
             }
-            FreedomDAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid, riff_set_uuid, to_position_in_container) => {
+            DAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid, riff_set_uuid, to_position_in_container) => {
                 info!("Main - rx_ui processing loop - riff sequence riff set move to position: {}", riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
@@ -4747,7 +4747,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            FreedomDAWEvents::TrackGridVerticalScaleChanged(vertical_scale) => {
+            DAWEvents::TrackGridVerticalScaleChanged(vertical_scale) => {
                 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.top_level_vbox.children().iter_mut() {
@@ -4763,7 +4763,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
     }
 }
 
-fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<FreedomDAWState>>) {
+fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
         Ok(mut state) => {
             match state.automation_view_mode() {
@@ -4780,7 +4780,7 @@ fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<FreedomDAWStat
     }
 }
 
-fn handle_automation_instrument_add(time: f64, value: i32, state: &mut FreedomDAWState) {
+fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -4830,7 +4830,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut FreedomDA
     }
 }
 
-fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut FreedomDAWState) {
+fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = {
         if let Some(track_type) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
@@ -4882,7 +4882,7 @@ fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut Free
     }
 }
 
-fn handle_automation_effect_add(time: f64, value: i32, state: &mut FreedomDAWState) {
+fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -4943,7 +4943,7 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut FreedomDAWSta
     }
 }
 
-fn handle_automation_controller_add(time: f64, value: i32, state: &mut FreedomDAWState) {
+fn handle_automation_controller_add(time: f64, value: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -4983,7 +4983,7 @@ fn handle_automation_controller_add(time: f64, value: i32, state: &mut FreedomDA
     }
 }
 
-fn handle_automation_delete(time: f64, state: &Arc<Mutex<FreedomDAWState>>) {
+fn handle_automation_delete(time: f64, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
         Ok(mut state) => {
             match state.automation_view_mode() {
@@ -5000,7 +5000,7 @@ fn handle_automation_delete(time: f64, state: &Arc<Mutex<FreedomDAWState>>) {
     }
 }
 
-fn handle_automation_instrument_delete(time: f64, state: &mut FreedomDAWState) {
+fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5054,7 +5054,7 @@ fn handle_automation_instrument_delete(time: f64, state: &mut FreedomDAWState) {
     }
 }
 
-fn handle_automation_note_expression_delete(time: f64, state: &mut FreedomDAWState) {
+fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = {
         if let Some(track_type) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
@@ -5099,7 +5099,7 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut FreedomDAWSta
     }
 }
 
-fn handle_automation_effect_delete(time: f64, state: &mut FreedomDAWState) {
+fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5164,7 +5164,7 @@ fn handle_automation_effect_delete(time: f64, state: &mut FreedomDAWState) {
     }
 }
 
-fn handle_automation_controller_delete(time: f64, state: &mut FreedomDAWState) {
+fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5210,7 +5210,7 @@ fn handle_automation_controller_delete(time: f64, state: &mut FreedomDAWState) {
     }
 }
 
-fn handle_automation_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &Arc<Mutex<FreedomDAWState>>) {
+fn handle_automation_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
         Ok(mut state) => {
             match state.automation_view_mode() {
@@ -5227,7 +5227,7 @@ fn handle_automation_cut(time_left: f64, _value_top: i32, time_right: f64, _valu
     }
 }
 
-fn handle_automation_instrument_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut FreedomDAWState) {
+fn handle_automation_instrument_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5280,7 +5280,7 @@ fn handle_automation_instrument_cut(time_left: f64, _value_top: i32, time_right:
     }
 }
 
-fn handle_automation_note_expression_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut FreedomDAWState) {
+fn handle_automation_note_expression_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = {
         if let Some(track_type) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
@@ -5326,7 +5326,7 @@ fn handle_automation_note_expression_cut(time_left: f64, _value_top: i32, time_r
     }
 }
 
-fn handle_automation_effect_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut FreedomDAWState) {
+fn handle_automation_effect_cut(time_left: f64, _value_top: i32, time_right: f64, _value_bottom: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5390,7 +5390,7 @@ fn handle_automation_effect_cut(time_left: f64, _value_top: i32, time_right: f64
     }
 }
 
-fn handle_automation_controller_cut(time_left: f64, value_top: i32, time_right: f64, value_bottom: i32, state: &mut FreedomDAWState) {
+fn handle_automation_controller_cut(time_left: f64, value_top: i32, time_right: f64, value_bottom: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = {
@@ -5452,9 +5452,9 @@ fn do_progress_dialogue_pulse(gui: &mut MainWindow, progress_bar_pulse_delay_cou
     }
 }
 
-fn process_jack_events(tx_from_ui: &Sender<FreedomDAWEvents>,
+fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        jack_midi_receiver: &Receiver<AudioLayerOutwardEvent>,
-                       state: &mut Arc<Mutex<FreedomDAWState>>,
+                       state: &mut Arc<Mutex<DAWState>>,
                        tx_to_audio: &Sender<AudioLayerInwardEvent>,
                        rx_to_audio: &Receiver<AudioLayerInwardEvent>,
                        jack_midi_sender: &Sender<AudioLayerOutwardEvent>,
@@ -5691,25 +5691,25 @@ fn process_jack_events(tx_from_ui: &Sender<FreedomDAWEvents>,
                     let command_byte = mmc_sysex_bytes[4];
                     match command_byte {
                         1 => {
-                            match tx_from_ui.send(FreedomDAWEvents::TransportStop) {
+                            match tx_from_ui.send(DAWEvents::TransportStop) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
                         }
                         2 => {
-                            match tx_from_ui.send(FreedomDAWEvents::TransportPlay) {
+                            match tx_from_ui.send(DAWEvents::TransportPlay) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
                         }
                         4 => {
-                            match tx_from_ui.send(FreedomDAWEvents::TransportMoveForward) {
+                            match tx_from_ui.send(DAWEvents::TransportMoveForward) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
                         }
                         5 => {
-                            match tx_from_ui.send(FreedomDAWEvents::TransportMoveBack) {
+                            match tx_from_ui.send(DAWEvents::TransportMoveBack) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
@@ -5772,7 +5772,7 @@ fn process_jack_events(tx_from_ui: &Sender<FreedomDAWEvents>,
                                 };
 
                                 if let Some(track) = state.project().song().tracks().get(track_index as usize) {
-                                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(track_change_type, Some(track.uuid().to_string()))) {
+                                    match tx_from_ui.send(DAWEvents::TrackChange(track_change_type, Some(track.uuid().to_string()))) {
                                         Ok(_) => {}
                                         Err(_) => {}
                                     }
@@ -5844,7 +5844,7 @@ fn process_jack_events(tx_from_ui: &Sender<FreedomDAWEvents>,
 
 fn process_track_background_processor_events(
     vst_audio_plugin_windows: &mut HashMap<String, Window>,
-    state: &mut Arc<Mutex<FreedomDAWState>>,
+    state: &mut Arc<Mutex<DAWState>>,
     gui: &mut MainWindow,
 ) {
     match state.lock() {

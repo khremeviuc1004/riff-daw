@@ -5,7 +5,7 @@ use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_M
 use vst::event::*;
 
 use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength};
-use crate::FreedomDAWState;
+use crate::DAWState;
 
 pub struct DAWUtils;
 
@@ -727,7 +727,7 @@ impl DAWUtils {
         )
     }
 
-    pub fn copy_riff_set_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<FreedomDAWState>>) -> f64 {
+    pub fn copy_riff_set_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
         match state.lock() {
             Ok(mut state) => {
                 // find the riff set
@@ -744,8 +744,8 @@ impl DAWUtils {
                             }
                         }
                     }
-                    let (product, unique_riff_lengths) = FreedomDAWState::get_length_product(riff_lengths);
-                    let lowest_common_factor_in_beats = FreedomDAWState::get_lowest_common_factor(unique_riff_lengths, product);
+                    let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                    let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
                     for track_type in state.get_project().song_mut().tracks_mut().iter_mut() {
                         if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
                             if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
@@ -773,7 +773,7 @@ impl DAWUtils {
         }
     }
 
-    pub fn copy_riff_sequence_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<FreedomDAWState>>) -> f64 {
+    pub fn copy_riff_sequence_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
         let mut riff_set_references = vec![];
         match state.lock() {
             Ok(state) => {
@@ -794,7 +794,7 @@ impl DAWUtils {
         running_position_in_beats
     }
 
-    pub fn copy_riff_arrangement_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<FreedomDAWState>>) {
+    pub fn copy_riff_arrangement_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) {
         struct ArrangementElement {
             uuid: String,
             element_type: RiffItemType,

@@ -16,12 +16,12 @@ use indexmap::IndexMap;
 use log::*;
 use uuid::Uuid;
 
-use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT};
+use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff};
-use crate::event::{AutomationChangeData, CurrentView, FreedomDAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType};
+use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler};
-use crate::state::FreedomDAWState;
+use crate::state::DAWState;
 use crate::utils::DAWUtils;
 
 
@@ -572,22 +572,21 @@ pub struct MainWindow {
     pub widgets: Vec<Widget>,
 
     pub riff_set_view_riff_set_beat_grids: Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>, // outer key = riff set uuid, inner key = track_uuid
-    pub tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    pub tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
 }
 
 impl MainWindow {
 
     pub fn new(
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>
     ) -> MainWindow {
-        let app_id = "au.com.pwcu.FreedomDAW";
         let application = gtk::Application::new(
-            Some(app_id),
+            Some(GTK_APPLICATION_ID),
             Default::default(),
         );
 
-        let glade_src = include_str!("freedom_daw_4.glade");
+        let glade_src = include_str!("daw.glade");
         let ui = Ui::from_string(glade_src).unwrap();
 
         let wnd_main: ApplicationWindow = ui.wnd_main.clone();
@@ -828,12 +827,12 @@ impl MainWindow {
                     if let Some(recent_info) = recent_info {
                         let mut path = std::path::PathBuf::new();
                         if let Some(file_name) = recent_info.uri_display() {
-                            window.set_title(format!("FreedomDAW - {}", file_name.as_str()).as_str());
+                            window.set_title(format!("DAW - {}", file_name.as_str()).as_str());
                             path.set_file_name(&file_name);
                             {
                                 let tx_from_ui = tx_from_ui.clone();
                                 std::thread::spawn(move || {
-                                    if let Err(error) = tx_from_ui.send(FreedomDAWEvents::OpenFile(path)) {
+                                    if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
                                         info!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
                                     }
                                 });
@@ -851,7 +850,7 @@ impl MainWindow {
             ui.song_tempo_spinner.connect_value_changed(move |tempo_spinner| {
                 let tempo_value = tempo_spinner.value();
                 if let Ok(tempo) = tempo_value.to_value().get() {
-                    match tx_from_ui.send(FreedomDAWEvents::TempoChange(tempo)) {
+                    match tx_from_ui.send(DAWEvents::TempoChange(tempo)) {
                         Ok(_) => info!(""),
                         Err(_) => info!("Couldn't send tempo change from ui - failed to send with sender."),
                     }
@@ -1298,8 +1297,8 @@ impl MainWindow {
         &mut self,
         track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>,
         general_track_type: GeneralTrackType,
         midi_devices: Option<Vec<String>>,
         volume: f32,
@@ -1345,7 +1344,7 @@ impl MainWindow {
         self.add_riff_arrangement_track_panel(track_name, track_uuid, tx_from_ui, general_track_type, entry_buffer, track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
     }
 
-    fn navigate_to_riff_sets_and_activate(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<FreedomDAWEvents>, state_arc: &Arc<Mutex<FreedomDAWState>>, item_box: Box, inner_box_widget_name: String) {
+    fn navigate_to_riff_sets_and_activate(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<DAWEvents>, state_arc: &Arc<Mutex<DAWState>>, item_box: Box, inner_box_widget_name: String) {
         for riff_sequences_box_child in item_box.children().iter() {
             if let Some(frame) = riff_sequences_box_child.dynamic_cast_ref::<Frame>() {
                 for frame_child in frame.children().iter() {
@@ -1381,7 +1380,7 @@ impl MainWindow {
         }
     }
 
-    fn activate_riff_set_drawing_areas(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<FreedomDAWEvents>, state_arc: Arc<Mutex<FreedomDAWState>>, riff_sets_box: Box) {
+    fn activate_riff_set_drawing_areas(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<DAWEvents>, state_arc: Arc<Mutex<DAWState>>, riff_sets_box: Box) {
         for riff_sets_box_child in riff_sets_box.children().iter() {
             if let Some(riff_set_box) = riff_sets_box_child.dynamic_cast_ref::<Box>() {
                 let riff_set_uuid = riff_set_box.widget_name().to_string();
@@ -1401,7 +1400,7 @@ impl MainWindow {
         }
     }
 
-    fn activate_riff_set_drawing_areas_for_sequences_and_arrangements(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<FreedomDAWEvents>, state_arc: Arc<Mutex<FreedomDAWState>>, riff_sets_box: Box) {
+    fn activate_riff_set_drawing_areas_for_sequences_and_arrangements(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<DAWEvents>, state_arc: Arc<Mutex<DAWState>>, riff_sets_box: Box) {
         for riff_sets_box_child in riff_sets_box.children().iter() {
             if let Some(riff_set_frame) = riff_sets_box_child.dynamic_cast_ref::<Frame>() {
                 let riff_set_uuid = riff_set_frame.widget_name().to_string();
@@ -1439,7 +1438,7 @@ impl MainWindow {
         }
     }
 
-    pub fn add_track_panel(&mut self, track_name: &str, track_uuid: Uuid, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    pub fn add_track_panel(&mut self, track_name: &str, track_uuid: Uuid, tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                            general_track_type: GeneralTrackType,
     ) -> (EntryBuffer, ToggleButton, ToggleButton)
     {
@@ -1481,7 +1480,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.delete_button.connect_clicked(move |_delete_button| {
-                 match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
+                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
@@ -1492,7 +1491,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_name_text_ctrl.connect_changed(move |entry| {
                 let name = entry.text().to_string();
-                let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::TrackNameChanged(name), Some(track_uuid.to_string())));
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackNameChanged(name), Some(track_uuid.to_string())));
             });
         }
 
@@ -1500,13 +1499,13 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.solo_toggle_btn.connect_clicked(move |solo_toggle_btn| {
                 if solo_toggle_btn.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::SoloOn, Some(track_uuid.to_string()))) {
+                    match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::SoloOn, Some(track_uuid.to_string()))) {
                         Err(_) => info!("Failed to send message via tx when ui has changed solo for track."),
                         _ => (),
                     }
                 }
                 else {
-                    let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::SoloOff, Some(track_uuid.to_string())));
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::SoloOff, Some(track_uuid.to_string())));
                 }
             });
         }
@@ -1515,13 +1514,13 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.mute_toggle_btn.connect_clicked(move |mute_toggle_btn| {
                 if mute_toggle_btn.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Mute, Some(track_uuid.to_string()))) {
+                    match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Mute, Some(track_uuid.to_string()))) {
                         Err(_) => info!("Failed to send message via tx when ui has changed mute for track."),
                         _ => (),
                     }
                 }
                 else {
-                    let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Unmute, Some(track_uuid.to_string())));
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Unmute, Some(track_uuid.to_string())));
                 }
             });
         }
@@ -1530,13 +1529,13 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.record_toggle_btn.connect_clicked(move |record_toggle_btn| {
                 if record_toggle_btn.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Record(true), Some(track_uuid.to_string()))) {
+                    match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Record(true), Some(track_uuid.to_string()))) {
                         Err(_) => info!("Failed to send message via tx when ui has changed record state for track."),
                         _ => (),
                     }
                 }
                 else {
-                    let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Record(false), Some(track_uuid.to_string())));
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Record(false), Some(track_uuid.to_string())));
                 }
             });
         }
@@ -1558,7 +1557,7 @@ impl MainWindow {
                 }
 
                 // notify that the track has been selected
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
@@ -1569,7 +1568,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1579,7 +1578,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
@@ -1589,7 +1588,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_panel_copy_track_button.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::CopyTrack, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::CopyTrack, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when copying track"),
                     _ => (),
                 }
@@ -1604,7 +1603,7 @@ impl MainWindow {
     pub fn add_riff_set_track_panel(&mut self,
         _track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         general_track_type: GeneralTrackType,
         entry_buffer: EntryBuffer,
         track_mute_toggle_state: ToggleButton,
@@ -1652,7 +1651,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.delete_button.connect_clicked(move |_delete_button| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
@@ -1662,7 +1661,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
@@ -1686,7 +1685,7 @@ impl MainWindow {
                 }
 
                 // notify that the track has been selected
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
@@ -1697,7 +1696,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1705,7 +1704,7 @@ impl MainWindow {
         }
     }
 
-    pub fn add_riff_sequences_track_panel(&mut self, _track_name: &str, track_uuid: Uuid, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    pub fn add_riff_sequences_track_panel(&mut self, _track_name: &str, track_uuid: Uuid, tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                                           general_track_type: GeneralTrackType,
                                           entry_buffer: EntryBuffer,
                                           track_mute_toggle_state: ToggleButton,
@@ -1754,7 +1753,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.delete_button.connect_clicked(move |_delete_button| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
@@ -1764,7 +1763,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
@@ -1788,7 +1787,7 @@ impl MainWindow {
                 }
 
                 // notify that the track has been selected
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
@@ -1799,7 +1798,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1810,7 +1809,7 @@ impl MainWindow {
     pub fn add_riff_arrangement_track_panel(&mut self,
         _track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         general_track_type: GeneralTrackType,
         entry_buffer: EntryBuffer,
         track_mute_toggle_state: ToggleButton,
@@ -1860,7 +1859,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.delete_button.connect_clicked(move |_delete_button| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
@@ -1870,7 +1869,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
@@ -1894,7 +1893,7 @@ impl MainWindow {
                 }
 
                 // notify that the track has been selected
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
@@ -1905,7 +1904,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1917,7 +1916,7 @@ impl MainWindow {
         &mut self,
         track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         volume: f32,
         pan: f32,
         general_track_type: GeneralTrackType,
@@ -2018,13 +2017,13 @@ impl MainWindow {
             mixer_blade.mixer_blade_volume_scale.connect_change_value(move |_a, _b, volume| {
                 match general_track_type {
                     GeneralTrackType::MasterTrack => {
-                        match tx_from_ui.send(FreedomDAWEvents::MasterChannelChange(MasterChannelChangeType::VolumeChange(volume / 100.0))) {
+                        match tx_from_ui.send(DAWEvents::MasterChannelChange(MasterChannelChangeType::VolumeChange(volume / 100.0))) {
                             Ok(_) => {},
                             Err(_) => {},
                         }
                     }
                     _ => {
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Volume(None, (volume / 100.0) as f32), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Volume(None, (volume / 100.0) as f32), Some(track_uuid.to_string()))) {
                             Ok(_) => {},
                             Err(_) => {},
                         }
@@ -2041,13 +2040,13 @@ impl MainWindow {
             mixer_blade.mixer_blade_track_pan_scale.connect_change_value(move |_a, _b, pan| {
                 match general_track_type {
                     GeneralTrackType::MasterTrack => {
-                        match tx_from_ui.send(FreedomDAWEvents::MasterChannelChange(MasterChannelChangeType::PanChange(pan / 50.0))) {
+                        match tx_from_ui.send(DAWEvents::MasterChannelChange(MasterChannelChangeType::PanChange(pan / 50.0))) {
                             Ok(_) => {},
                             Err(_) => {},
                         }
                     }
                     _ => {
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Pan(None, (pan / 50.0) as f32), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Pan(None, (pan / 50.0) as f32), Some(track_uuid.to_string()))) {
                             Ok(_) => {},
                             Err(_) => {},
                         }
@@ -2065,7 +2064,7 @@ impl MainWindow {
             mixer_blade.mixer_blade_track_instrument_show_ui_btn.connect_clicked(move |_| {
                 match general_track_type {
                     GeneralTrackType::InstrumentTrack => {
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.clone()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.clone()))) {
                             Ok(_) => {},
                             Err(_) => {},
                         }
@@ -2078,7 +2077,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             mixer_blade.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -2090,10 +2089,10 @@ impl MainWindow {
         &mut self,
         track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         general_track_type: GeneralTrackType,
         midi_devices: Option<Vec<String>>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        state_arc: Arc<Mutex<DAWState>>,
     ) {
         let track_details_dialogue_glade_src = include_str!("track_details_dialogue.glade");
 
@@ -2150,7 +2149,7 @@ impl MainWindow {
                     Some(active_id) => {
                         info!("Selected riff: id={:?}, text={:?}",
                         active_id.to_value(), track_riff_choice.active_text().unwrap().to_value());
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffSelect(active_id.to_string()), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSelect(active_id.to_string()), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a riff has been selected."),
                             _ => (),
                         }
@@ -2167,7 +2166,7 @@ impl MainWindow {
                     Some(active_id) => {
                         info!("Selected midi channel: id={:?}, text={:?}",
                              active_id.to_value(), track_midi_channel_choice.active_text().unwrap().to_value());
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::MidiOutputChannelChanged(active_id.to_string().parse::<i32>().unwrap()), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::MidiOutputChannelChanged(active_id.to_string().parse::<i32>().unwrap()), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a track midi channel has been selected."),
                             _ => (),
                         }
@@ -2184,7 +2183,7 @@ impl MainWindow {
                     Some(active_id) => {
                         info!("Selected midi device: id={:?}, text={:?}",
                                  active_id.to_value(), track_midi_device_choice.active_text().unwrap().to_value());
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::MidiOutputDeviceChanged(active_id.to_string()), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::MidiOutputDeviceChanged(active_id.to_string()), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a track midi device has been selected."),
                             _ => (),
                         }
@@ -2205,7 +2204,7 @@ impl MainWindow {
         //             // track_riff_choice.
         //             match tx_from_ui.try_lock() {
         //                 Ok(tx) => {
-        //                     match tx.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffNameChange(id.to_string(), new_text), Some(track_uuid.to_string()))) {
+        //                     match tx.send(DAWEvents::TrackChange(TrackChangeType::RiffNameChange(id.to_string(), new_text), Some(track_uuid.to_string()))) {
         //                         Err(_) => info!("Problem sending message with tx from ui lock when a riff has had a name change."),
         //                         _ => (),
         //                     }
@@ -2225,7 +2224,7 @@ impl MainWindow {
                 //             selected_riff_index, track_riff_length_choice.active_id().unwrap().to_value(), track_riff_length_choice.active_text().unwrap().to_value());
                 //         match tx_from_ui.try_lock() {
                 //             Ok(tx) => {
-                //                 match tx.send(FreedomDAWEvents::TrackChange(TrackChangeType::RIFF_LENGTH_CHANGED(1.0), None, Some(track_number - 1))) {
+                //                 match tx.send(DAWEvents::TrackChange(TrackChangeType::RIFF_LENGTH_CHANGED(1.0), None, Some(track_number - 1))) {
                 //                     Err(_) => info!("Problem sending message with tx from ui lock when riff length has changed."),
                 //                     _ => (),
                 //                 }
@@ -2242,7 +2241,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_details_dialogue.track_detail_track_colour_button.connect_color_set(move |track_detail_track_colour_button| {
                 let selected_colour = track_detail_track_colour_button.rgba();
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when the track colour has been changed."),
                     _ => (),
                 }
@@ -2256,7 +2255,7 @@ impl MainWindow {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
                         let selected_colour = track_detail_riff_colour_button.rgba();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffColourChanged(active_id.to_string(),selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffColourChanged(active_id.to_string(),selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a riff colour has been changed."),
                             _ => (),
                         }
@@ -2522,7 +2521,7 @@ impl MainWindow {
                                 riff_name = track_riff_choice_entry.text().to_string();
                             }
 
-                            match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffAdd(uuid, riff_name.clone(), riff_length), Some(track_uuid.to_string()))) {
+                            match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAdd(uuid, riff_name.clone(), riff_length), Some(track_uuid.to_string()))) {
                                 Err(_) => info!("Problem sending message with tx from ui lock when a riff has been added"),
                                 _ => {
                                     track_riff_choice.append( Some(id.as_str()), &riff_name);
@@ -2557,7 +2556,7 @@ impl MainWindow {
                     if let Some(text) = track_riff_choice.active_text() {
                         riff_name.push_str(text.as_str());
                     }
-                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffCopy(uuid_to_copy.to_string(), uuid, riff_name.clone()), Some(track_uuid.to_string()))) {
+                    match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopy(uuid_to_copy.to_string(), uuid, riff_name.clone()), Some(track_uuid.to_string()))) {
                         Err(_) => info!("Problem sending message with tx from ui lock when a riff has been copied"),
                         _ => {
                             track_riff_choice.append( Some(id.as_str()), riff_name.as_str());
@@ -2580,7 +2579,7 @@ impl MainWindow {
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
             track_details_dialogue.track_delete_riff_btn.connect_clicked(move |_| {
                 if let Some(riff_uuid) = track_riff_choice.active_id() {
-                    match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffDelete(riff_uuid.to_string()), Some(track_uuid.to_string()))) {
+                    match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDelete(riff_uuid.to_string()), Some(track_uuid.to_string()))) {
                         Err(_) => info!("Problem sending message with tx from ui lock when a riff has been deleted"),
                         _ => {},
                     }
@@ -2603,7 +2602,7 @@ impl MainWindow {
                     DAWUtils::get_snap_quantise_value_in_beats_from_choice_text("1.0", 4.0)
                 };
                 match track_riff_choice.active_id() {
-                    Some(riff_uuid) => match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffLengthChange(riff_uuid.to_string(), riff_length), Some(track_uuid.to_string()))) {
+                    Some(riff_uuid) => match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffLengthChange(riff_uuid.to_string(), riff_length), Some(track_uuid.to_string()))) {
                         Err(_) => info!("Problem sending message with tx from ui lock when nominating to edit a riff"),
                         _ => (),
                     },
@@ -2626,7 +2625,7 @@ impl MainWindow {
                     let selected_riff_uuid = selected_riff_uuid_non_null.as_ptr();
 
                     unsafe {
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffNameChange((*selected_riff_uuid).clone(), track_details_riff_choice_entry.text().to_string()), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffNameChange((*selected_riff_uuid).clone(), track_details_riff_choice_entry.text().to_string()), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when changing a riff name"),
                             _ => (),
                         }
@@ -2667,7 +2666,7 @@ impl MainWindow {
                         let file = instrument_shared_library_file.to_string();
                         info!("Selected instrument: id={:?}, text={:?}", file.as_str(), track_instrument_choice.active_text().unwrap().to_string());
 
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::InstrumentChanged(file), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::InstrumentChanged(file), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a a track instrument has been selected."),
                             _ => (),
                         }
@@ -2701,7 +2700,7 @@ impl MainWindow {
                         ]);
                         track_effects_list.show_all();
 
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::EffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when a track effect is being added"),
                             _ => (),
                         }
@@ -2730,7 +2729,7 @@ impl MainWindow {
                 for tree_iterator in tree_iterator_list {
                     if let Some((model, iter)) = selection.selected() {
                         if let Ok(effect_uuid) = model.value(&iter, 2).get::<String>() {
-                            match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::EffectDeleted(effect_uuid), Some(track_uuid.to_string()))) {
+                            match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectDeleted(effect_uuid), Some(track_uuid.to_string()))) {
                                 Ok(_) => {
                                     track_effects_list_store.remove(&tree_iterator);
                                     track_effects_list.set_model(Some(&track_effects_list_store));
@@ -2746,7 +2745,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_details_dialogue.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
@@ -2781,7 +2780,7 @@ impl MainWindow {
                         model.value(&iter, 2).get::<String>().expect("Tree view selection, column 2"),
                     );
                     if let Ok(effect_uuid) = model.value(&iter, 2).get::<String>() {
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
                             Err(_) => info!("Problem sending message with tx from ui lock when toggling effect window visibility"),
                             _ => (),
                         }
@@ -2793,7 +2792,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             track_details_dialogue.track_detail_close_button.connect_clicked(move |_| {
-                match tx_from_ui.send(FreedomDAWEvents::TrackDetails(track_uuid.to_string(), false)) {
+                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), false)) {
                     Err(_) => info!("Problem sending message with tx from ui lock when requesting hide track details"),
                     _ => (),
                 }
@@ -2807,7 +2806,7 @@ impl MainWindow {
         &mut self,
         _track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         _general_track_type: GeneralTrackType,
     ) -> TrackMidiRoutingDialogue {
         let track_midi_routing_dialogue_glade_src = include_str!("track_midi_routing_dialogue.glade");
@@ -2846,7 +2845,7 @@ impl MainWindow {
         &mut self,
         _track_name: &str,
         track_uuid: Uuid,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         _general_track_type: GeneralTrackType,
     ) -> TrackAudioRoutingDialogue {
         let track_audio_routing_dialogue_glade_src = include_str!("track_audio_routing_dialogue.glade");
@@ -2883,15 +2882,15 @@ impl MainWindow {
 
     pub fn setup_menus(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        _state: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        _state: Arc<Mutex<DAWState>>,
     ) {
         {
             let tx_from_ui = tx_from_ui.clone();
             let window = self.ui.wnd_main.clone();
             self.ui.menu_item_new.connect_button_press_event(move |_, _| {
-                window.set_title("FreedomDAW - New");
-                let _ = tx_from_ui.send(FreedomDAWEvents::NewFile);
+                window.set_title("DAW - New");
+                let _ = tx_from_ui.send(DAWEvents::NewFile);
                 Inhibit(true)
             });
         }
@@ -2900,10 +2899,10 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_open.connect_button_press_event(move |_, _|{
-                let dialog = FileChooserDialog::new(Some("FreedomDAW project file"),     Some(&window), FileChooserAction::Open);
+                let dialog = FileChooserDialog::new(Some("DAW project file"),     Some(&window), FileChooserAction::Open);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/json");
-                filter.set_name(Some("FreedomDAW project file"));
+                filter.set_name(Some("DAW project file"));
                 filter.add_pattern("*.fdaw");
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk::ResponseType::Cancel);
@@ -2912,9 +2911,9 @@ impl MainWindow {
                 if result == gtk::ResponseType::Ok {
                     if let Some(filename) = dialog.filename() {
                         if let Some(filename_display) = filename.to_str() {
-                            window.set_title(format!("FreedomDAW - {}", filename_display).as_str());
+                            window.set_title(format!("DAW - {}", filename_display).as_str());
                         }
-                        let _ = tx_from_ui.send(FreedomDAWEvents::OpenFile(filename));
+                        let _ = tx_from_ui.send(DAWEvents::OpenFile(filename));
                     }
                 }
                 dialog.hide();
@@ -2927,7 +2926,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_save.connect_button_press_event(move |_, _| {
                 info!("Menu item save clicked!");
-                let _ = tx_from_ui.send(FreedomDAWEvents::Save);
+                let _ = tx_from_ui.send(DAWEvents::Save);
                 Inhibit(true)
             });
         }
@@ -2937,10 +2936,10 @@ impl MainWindow {
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_save_as.connect_button_press_event(move |_menu_item, _btn| {
                 info!("Menu item save as clicked!");
-                let dialog = FileChooserDialog::new(Some("FreedomDAW save as project file"),     Some(&window), FileChooserAction::Save);
+                let dialog = FileChooserDialog::new(Some("DAW save as project file"),     Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/json");
-                filter.set_name(Some("FreedomDAW project file"));
+                filter.set_name(Some("DAW project file"));
                 filter.add_pattern("*.fdaw");
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk::ResponseType::Cancel);
@@ -2949,9 +2948,9 @@ impl MainWindow {
                 if result == gtk::ResponseType::Ok {
                     if let Some(filename) = dialog.filename() {
                         if let Some(filename_display) = filename.to_str() {
-                            window.set_title(format!("FreedomDAW - {}", filename_display).as_str());
+                            window.set_title(format!("DAW - {}", filename_display).as_str());
                         }
-                        let _ = tx_from_ui.send(FreedomDAWEvents::SaveAs(filename));
+                        let _ = tx_from_ui.send(DAWEvents::SaveAs(filename));
                     }
                 }
                 dialog.hide();
@@ -2967,7 +2966,7 @@ impl MainWindow {
                 let dialog = FileChooserDialog::new(Some("Import midi file"),     Some(&window), FileChooserAction::Open);
                 let filter = FileFilter::new();
                 filter.add_mime_type("audio/midi");
-                filter.set_name(Some("FreedomDAW project file"));
+                filter.set_name(Some("DAW project file"));
                 filter.add_pattern("*.mid");
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk::ResponseType::Cancel);
@@ -2975,7 +2974,7 @@ impl MainWindow {
                 let result = dialog.run();
                 if result == gtk::ResponseType::Ok {
                     let filename = dialog.filename();
-                    let _ = tx_from_ui.send(FreedomDAWEvents::ImportMidiFile(filename.unwrap()));
+                    let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename.unwrap()));
                 }
                 dialog.hide();
 
@@ -2998,7 +2997,7 @@ impl MainWindow {
                 let result = dialog.run();
                 if result == gtk::ResponseType::Ok {
                     let filename = dialog.filename();
-                    let _ = tx_from_ui.send(FreedomDAWEvents::ExportMidiFile(filename.unwrap()));
+                    let _ = tx_from_ui.send(DAWEvents::ExportMidiFile(filename.unwrap()));
                 }
                 dialog.hide();
 
@@ -3021,7 +3020,7 @@ impl MainWindow {
                 let result = dialog.run();
                 if result == gtk::ResponseType::Ok {
                     let filename = dialog.filename();
-                    let _ = tx_from_ui.send(FreedomDAWEvents::ExportRiffsToMidiFile(filename.unwrap()));
+                    let _ = tx_from_ui.send(DAWEvents::ExportRiffsToMidiFile(filename.unwrap()));
                 }
                 dialog.hide();
 
@@ -3044,7 +3043,7 @@ impl MainWindow {
                 let result = dialog.run();
                 if result == gtk::ResponseType::Ok {
                     let filename = dialog.filename();
-                    let _ = tx_from_ui.send(FreedomDAWEvents::ExportWaveFile(filename.unwrap()));
+                    let _ = tx_from_ui.send(DAWEvents::ExportWaveFile(filename.unwrap()));
                 }
                 dialog.hide();
 
@@ -3087,7 +3086,7 @@ impl MainWindow {
 
     pub fn setup_main_tool_bar(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) {
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -3098,13 +3097,13 @@ impl MainWindow {
                     info!("ui.toolbar_add_track.connect_clicked: sending track add msg...");
                     match track_type.to_string().as_str() {
                         "audio_track" => {
-                            let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::AudioTrack), None));
+                            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::AudioTrack), None));
                         },
                         "midi_track" => {
-                            let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::MidiTrack), None));
+                            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::MidiTrack), None));
                         },
                         "instrument_track" => {
-                            let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::InstrumentTrack), None));
+                            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::InstrumentTrack), None));
                         },
                         _ => {}
                     }
@@ -3116,23 +3115,23 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.toolbar_undo.connect_clicked(move |_|{
-                let _ = tx_from_ui.send(FreedomDAWEvents::Undo);
+                let _ = tx_from_ui.send(DAWEvents::Undo);
             });
         }
 
         {
             let tx_from_ui = tx_from_ui;
             self.ui.toolbar_redo.connect_clicked(move |_|{
-                let _ = tx_from_ui.send(FreedomDAWEvents::Redo);
-                let _ = tx_from_ui.send(FreedomDAWEvents::Redo);
+                let _ = tx_from_ui.send(DAWEvents::Redo);
+                let _ = tx_from_ui.send(DAWEvents::Redo);
             });
         }
     }
 
     pub fn setup_loops(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        _state: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        _state: Arc<Mutex<DAWState>>,
     ) {
         {
             let loop_combobox_text = self.ui.loop_combobox_text.clone();
@@ -3165,7 +3164,7 @@ impl MainWindow {
                                 loop_name = loop_combobox_text_entry.text().to_string();
                             }
 
-                            match tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::Added(loop_name.clone()), uuid)) {
+                            match tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::Added(loop_name.clone()), uuid)) {
                                 Err(_) => info!("Problem sending message with tx from ui lock when a loop has been added"),
                                 _ => {
                                     loop_combobox_text.append( Some(id.as_str()), &loop_name);
@@ -3195,7 +3194,7 @@ impl MainWindow {
                 if let Some(id) = loop_combobox_text.active_id() {
                     match Uuid::parse_str(id.as_str()) {
                         Ok(uuid) => {
-                            let _ = tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::Deleted, uuid));
+                            let _ = tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::Deleted, uuid));
                             if let Some(active_index) = loop_combobox_text.active() {
                                 gtk::prelude::ComboBoxTextExt::remove(&loop_combobox_text, active_index as i32);
                             }
@@ -3218,7 +3217,7 @@ impl MainWindow {
                 if let Some(id) = combo.active_id() {
                     match Uuid::parse_str(id.as_str()) {
                         Ok(uuid) => {
-                            let _ = tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::ActiveLoopChanged(Some(uuid)), uuid));
+                            let _ = tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::ActiveLoopChanged(Some(uuid)), uuid));
                             info!("ui.toolbar_loop_combo.connect_changed: sent loop select msg.");
                         },
                         Err(error) => info!("Could not parse loop uuid from combobox: {}", error),
@@ -3246,7 +3245,7 @@ impl MainWindow {
                     unsafe {
                         match Uuid::parse_str((*selected_loop_uuid).to_string().as_str()) {
                             Ok(uuid) => {
-                                match tx_from_ui.send(FreedomDAWEvents::LoopChange(LoopChangeType::NameChanged(loop_combobox_text_entry.text().to_string()), uuid)) {
+                                match tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::NameChanged(loop_combobox_text_entry.text().to_string()), uuid)) {
                                     Err(_) => info!("Problem sending message with tx from ui lock when changing a loop name"),
                                     _ => (),
                                 }
@@ -3287,7 +3286,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.panic_btn.connect_clicked(move |_| {
                 info!("ui.toolbar_panic_btn.connect_clicked: sending panic msg...");
-                match tx_from_ui.send(FreedomDAWEvents::Panic) {
+                match tx_from_ui.send(DAWEvents::Panic) {
                     Ok(_) => (),
                     Err(error) => info!("Problem sending panic message: {}", error),
                 }
@@ -3297,11 +3296,11 @@ impl MainWindow {
 
     pub fn setup_track_grid(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>,
     ) {
-        let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<FreedomDAWEvents>| {
-            let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+        let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
         });
         let track_grid_custom_painter = TrackGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(event_sender));
         let track_grid = BeatGrid::new_with_custom(
@@ -3678,7 +3677,7 @@ impl MainWindow {
                 match track_grid.lock() {
                     Ok(mut grid) => {
                         grid.set_vertical_zoom(scale);
-                        let _ = tx_from_ui.send(FreedomDAWEvents::TrackGridVerticalScaleChanged(scale));
+                        let _ = tx_from_ui.send(DAWEvents::TrackGridVerticalScaleChanged(scale));
                     }
                     Err(_) => (),
                 }
@@ -3867,8 +3866,8 @@ impl MainWindow {
 
     pub fn setup_automation_grid(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>
     ) {
         let state = state;
         let automation_custom_painter = AutomationCustomPainter::new(state);
@@ -4180,7 +4179,7 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible_child(&automation_grid_edit_note_velocity_box);
                 automation_edit_panel_stack.set_visible(false);
 
-                match tx_from_ui.send(FreedomDAWEvents::AutomationViewShowTypeChange(ShowType::Velocity)) {
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::Velocity)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4195,7 +4194,7 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible_child(&automation_grid_edit_note_expression_box);
                 automation_edit_panel_stack.set_visible(true);
 
-                match tx_from_ui.send(FreedomDAWEvents::AutomationViewShowTypeChange(ShowType::NoteExpression)) {
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::NoteExpression)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4210,7 +4209,7 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible_child(&automation_grid_edit_controllers_box);
                 automation_edit_panel_stack.set_visible(true);
 
-                match tx_from_ui.send(FreedomDAWEvents::AutomationViewShowTypeChange(ShowType::Controller)) {
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::Controller)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4225,7 +4224,7 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible_child(&automation_grid_edit_instrument_parameters_box);
                 automation_edit_panel_stack.set_visible(true);
 
-                match tx_from_ui.send(FreedomDAWEvents::AutomationViewShowTypeChange(ShowType::InstrumentParameter)) {
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::InstrumentParameter)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4240,7 +4239,7 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible_child(&automation_grid_edit_effect_parameters_box);
                 automation_edit_panel_stack.set_visible(true);
 
-                match tx_from_ui.send(FreedomDAWEvents::AutomationViewShowTypeChange(ShowType::EffectParameter)) {
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::EffectParameter)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4250,7 +4249,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.automation_grid_edit_track.connect_clicked(move |_|{
-                match tx_from_ui.send(FreedomDAWEvents::AutomationEditTypeChange(AutomationEditType::Track)) {
+                match tx_from_ui.send(DAWEvents::AutomationEditTypeChange(AutomationEditType::Track)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4260,7 +4259,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.automation_grid_edit_riff.connect_clicked(move |_|{
-                match tx_from_ui.send(FreedomDAWEvents::AutomationEditTypeChange(AutomationEditType::Riff)) {
+                match tx_from_ui.send(DAWEvents::AutomationEditTypeChange(AutomationEditType::Riff)) {
                     Ok(_) => (),
                     Err(error) => info!("Error: {}", error),
                 }
@@ -4273,7 +4272,7 @@ impl MainWindow {
                 match automation_controller_combobox.active_id() {
                     Some(controller_type_text) => {
                         let controller_type: i32 = controller_type_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(controller_type)), None)) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(controller_type)), None)) {
                             Ok(_) => (),
                             Err(_) => (),
                         }
@@ -4289,7 +4288,7 @@ impl MainWindow {
                 match automation_instrument_parameters_combobox.active_id() {
                     Some(instrument_parameter_index_text) => {
                         let instrument_parameter_index: i32 = instrument_parameter_index_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(instrument_parameter_index)), None)) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(instrument_parameter_index)), None)) {
                             Ok(_) => (),
                             Err(_) => (),
                         }
@@ -4305,7 +4304,7 @@ impl MainWindow {
                 match automation_effect_parameters_combobox.active_id() {
                     Some(effect_parameter_index_text) => {
                         let effect_parameter_index: i32 = effect_parameter_index_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(effect_parameter_index)), None)) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTypeChange(AutomationChangeData::ParameterType(effect_parameter_index)), None)) {
                             Ok(_) => (),
                             Err(_) => (),
                         }
@@ -4321,7 +4320,7 @@ impl MainWindow {
                 match automation_effects_combobox.active_id() {
                     Some(effect_uuid_text) => {
                         let effect_uuid = effect_uuid_text.as_str().to_string();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::EffectSelected(effect_uuid), None)) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectSelected(effect_uuid), None)) {
                             Ok(_) => (),
                             Err(_) => (),
                         }
@@ -4338,7 +4337,7 @@ impl MainWindow {
                 match automation_note_expression_type_combobox.active_id() {
                     Some(note_expression_type_text) => {
                         let note_expression_type = NoteExpressionType::from_str(note_expression_type_text.as_str()).unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(
+                        match tx_from_ui.send(DAWEvents::TrackChange(
                             TrackChangeType::AutomationTypeChange(AutomationChangeData::NoteExpression(NoteExpressionData::Type(note_expression_type))), None)) {
                             Ok(_) => (),
                             Err(_) => (),
@@ -4355,7 +4354,7 @@ impl MainWindow {
                 match automation_note_expression_id_combobox.active_id() {
                     Some(note_expression_id_text) => {
                         let note_expression_id: i32 = note_expression_id_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(
+                        match tx_from_ui.send(DAWEvents::TrackChange(
                             TrackChangeType::AutomationTypeChange(AutomationChangeData::NoteExpression(NoteExpressionData::NoteId(note_expression_id))), None)) {
                             Ok(_) => (),
                             Err(_) => (),
@@ -4372,7 +4371,7 @@ impl MainWindow {
                 match automation_note_expression_port_index_combobox.active_id() {
                     Some(automation_note_expression_port_index_text) => {
                         let automation_note_expression_port_index: i32 = automation_note_expression_port_index_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(
+                        match tx_from_ui.send(DAWEvents::TrackChange(
                             TrackChangeType::AutomationTypeChange(AutomationChangeData::NoteExpression(NoteExpressionData::PortIndex(automation_note_expression_port_index))), None)) {
                             Ok(_) => (),
                             Err(_) => (),
@@ -4389,7 +4388,7 @@ impl MainWindow {
                 match automation_note_expression_channel_combobox.active_id() {
                     Some(automation_note_expression_channel_text) => {
                         let automation_note_expression_channel: i32 = automation_note_expression_channel_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(
+                        match tx_from_ui.send(DAWEvents::TrackChange(
                             TrackChangeType::AutomationTypeChange(AutomationChangeData::NoteExpression(NoteExpressionData::Channel(automation_note_expression_channel))), None)) {
                             Ok(_) => (),
                             Err(_) => (),
@@ -4406,7 +4405,7 @@ impl MainWindow {
                 match automation_note_expression_key_combobox.active_id() {
                     Some(automation_note_expression_key_text) => {
                         let automation_note_expression_key: i32 = automation_note_expression_key_text.as_str().parse().unwrap();
-                        match tx_from_ui.send(FreedomDAWEvents::TrackChange(
+                        match tx_from_ui.send(DAWEvents::TrackChange(
                             TrackChangeType::AutomationTypeChange(AutomationChangeData::NoteExpression(NoteExpressionData::Key(automation_note_expression_key))), None)) {
                             Ok(_) => (),
                             Err(_) => (),
@@ -4489,7 +4488,7 @@ impl MainWindow {
 
     pub fn setup_piano(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) -> Arc<Mutex<Piano>> {
         let tx_from_ui = tx_from_ui;
         let piano = Piano::new(1.0, self.ui.piano_roll_piano_keyboard_drawing_area.height_request() as f64 / 127.0, tx_from_ui);
@@ -4565,13 +4564,13 @@ impl MainWindow {
     pub fn setup_piano_roll(
         &mut self,
         piano: Arc<Mutex<Piano>>,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>
     ) {
         {
             let state = state;
-            let event_sender = std::boxed::Box::new(|original_note: Note, changed_note: Note, track_uuid: String, tx_from_ui: Sender<FreedomDAWEvents>| {
-                    let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RiffEventChange(TrackEvent::Note(original_note), TrackEvent::Note(changed_note)), Some(track_uuid)));
+            let event_sender = std::boxed::Box::new(|original_note: Note, changed_note: Note, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventChange(TrackEvent::Note(original_note), TrackEvent::Note(changed_note)), Some(track_uuid)));
             });
             let piano_roll_custom_painter: PianoRollCustomPainter = PianoRollCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(event_sender));
             let piano_roll_custom_vertical_scale_painter = PianoRollVerticalScaleCustomPainter::new(state);
@@ -5131,7 +5130,7 @@ impl MainWindow {
 
     pub fn setup_sample_library(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) {
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -5141,7 +5140,7 @@ impl MainWindow {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
                             info!("Sample library file choose: selected file name={:?}", file_name);
-                            match tx_from_ui.send(FreedomDAWEvents::PreviewSample(file_name.to_str().unwrap().to_string())) {
+                            match tx_from_ui.send(DAWEvents::PreviewSample(file_name.to_str().unwrap().to_string())) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
@@ -5161,7 +5160,7 @@ impl MainWindow {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
                             info!("Sample library file choose: selected file name={:?}", file_name);
-                            match tx_from_ui.send(FreedomDAWEvents::SampleAdd(file_name.to_str().unwrap().to_string())) {
+                            match tx_from_ui.send(DAWEvents::SampleAdd(file_name.to_str().unwrap().to_string())) {
                                 Ok(_) => {}
                                 Err(_) => {}
                             }
@@ -5194,7 +5193,7 @@ impl MainWindow {
 
     pub fn setup_scripting_view(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) {
         {
             let scripting_script_text_view = self.ui.scripting_script_text_view.clone();
@@ -5232,7 +5231,7 @@ impl MainWindow {
                     if script.len() > 0 {
                         info!("Scripting - running: selected file name={:?}", file_name);
 
-                        match tx_from_ui.send(FreedomDAWEvents::RunLuaScript(script.to_string())) {
+                        match tx_from_ui.send(DAWEvents::RunLuaScript(script.to_string())) {
                             Ok(_) => {}
                             Err(_) => {}
                         }
@@ -5260,7 +5259,7 @@ impl MainWindow {
                             console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_input_text.as_str());
                         }
 
-                        match tx_from_ui.send(FreedomDAWEvents::RunLuaScript(script.to_string())) {
+                        match tx_from_ui.send(DAWEvents::RunLuaScript(script.to_string())) {
                             Ok(_) => {}
                             Err(_) => {}
                         }
@@ -5310,9 +5309,9 @@ impl MainWindow {
             let scripting_script_name_label = self.ui.scripting_script_name_label.clone();
             let window = self.ui.get_wnd_main().clone();
             self.ui.scripting_save_script_as_btn.connect_clicked(move |_| {
-                let dialog = FileChooserDialog::new(Some("FreedomDAW save as script file"), Some(&window), FileChooserAction::Save);
+                let dialog = FileChooserDialog::new(Some("DAW save as script file"), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
-                filter.set_name(Some("FreedomDAW Lua script file"));
+                filter.set_name(Some("DAW Lua script file"));
                 filter.add_pattern("*.lua");
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk::ResponseType::Cancel);
@@ -5390,8 +5389,8 @@ impl MainWindow {
 
     pub fn setup_sample_roll(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>
     ) {
         let sample_roll_available_samples_list_store = ListStore::new(&[String::static_type(), String::static_type()]);
         self.ui.sample_roll_available_samples.set_model(Some(&sample_roll_available_samples_list_store));
@@ -5818,8 +5817,8 @@ impl MainWindow {
     }
 
     pub fn setup_riff_set_rif_ref(
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>,
         drawing_area: &DrawingArea,
     ) -> Arc<Mutex<BeatGrid>> {
         let state_arc = state_arc;
@@ -5880,8 +5879,8 @@ impl MainWindow {
 
     pub fn setup_riff_sets_view(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>
     ) {
         {
             let riff_sets_box = self.ui.riff_sets_box.clone();
@@ -5917,7 +5916,7 @@ impl MainWindow {
                         None,
                     );
 
-                    match tx_from_ui.send(FreedomDAWEvents::RiffSetAdd(riff_set_uuid)) {
+                    match tx_from_ui.send(DAWEvents::RiffSetAdd(riff_set_uuid)) {
                         Ok(_) => (),
                         Err(error) => info!("Failed to send add riff set event: {}", error),
                     }
@@ -5940,12 +5939,12 @@ impl MainWindow {
     }
 
     pub fn add_riff_set_blade(
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         riff_sets_box: Box,
         riff_set_heads_box: Box,
         riff_set_uuid: String,
         track_uuids: Vec<String>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        state_arc: Arc<Mutex<DAWState>>,
         riff_set_name: String,
         riff_set_type: RiffSetType,
         selected_track_style_provider: CssProvider,
@@ -6048,20 +6047,20 @@ impl MainWindow {
 
                 match riff_set_type.clone() {
                     RiffSetType::RiffSet => {
-                        match tx_from_ui.send(FreedomDAWEvents::RiffSetDelete(riff_set_uuid)) {
+                        match tx_from_ui.send(DAWEvents::RiffSetDelete(riff_set_uuid)) {
                             Ok(_) => (),
                             Err(error) => info!("Failed to send delete riff set event: {}", error),
                         }
                     }
                     RiffSetType::RiffSequence(riff_set_sequence_uuid) => {
-                        let event_to_send = FreedomDAWEvents::RiffSequenceRiffSetDelete(riff_set_sequence_uuid, riff_set_instance_id.clone());
+                        let event_to_send = DAWEvents::RiffSequenceRiffSetDelete(riff_set_sequence_uuid, riff_set_instance_id.clone());
                         match tx_from_ui.send(event_to_send) {
                             Ok(_) => (),
                             Err(error) => info!("Failed to send delete riff set from riff sequence event: {}", error),
                         }
                     }
                     RiffSetType::RiffArrangement(riff_set_arrangement_uuid) => {
-                        let event_to_send = FreedomDAWEvents::RiffArrangementRiffSetDelete(riff_set_arrangement_uuid, riff_set_instance_id.clone());
+                        let event_to_send = DAWEvents::RiffArrangementRiffSetDelete(riff_set_arrangement_uuid, riff_set_instance_id.clone());
                         match tx_from_ui.send(event_to_send) {
                             Ok(_) => (),
                             Err(error) => info!("Failed to send delete riff set from riff arrangement event: {}", error),
@@ -6086,7 +6085,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffSetPlay(uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffSetPlay(uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send play riff set event: {}", error),
                 }
@@ -6108,7 +6107,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid)) {
                     Err(error) => info!("Failed to send riff sets view copy selected riff set contents to track view cursor position event: {}", error),
                     _ => (),
                 }
@@ -6124,7 +6123,7 @@ impl MainWindow {
                 let uuid = blade_head.widget_name().to_string();
 
                 if event_key.keyval() == gdk::keys::constants::Return {
-                    match tx_from_ui.send(FreedomDAWEvents::RiffSetNameChange(uuid, name)) {
+                    match tx_from_ui.send(DAWEvents::RiffSetNameChange(uuid, name)) {
                         Ok(_) => (),
                         Err(error) => info!("Failed to send riff set name change: {}", error),
                     }
@@ -6178,7 +6177,7 @@ impl MainWindow {
                                 riff_sets_box.set_child_position(copy_blade, position + 1);
                             }
 
-                            match tx_from_ui.send(FreedomDAWEvents::RiffSetCopy(riff_set_uuid, riff_set_uuid_for_copy)) {
+                            match tx_from_ui.send(DAWEvents::RiffSetCopy(riff_set_uuid, riff_set_uuid_for_copy)) {
                                 Ok(_) => (),
                                 Err(error) => info!("Failed to send copy riff set event: {}", error),
                             }
@@ -6199,8 +6198,8 @@ impl MainWindow {
 
     pub fn setup_riff_sequences_view(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>
     ) {
         {
             let riff_sequences_box = self.ui.riff_sequences_box.clone();
@@ -6265,8 +6264,8 @@ impl MainWindow {
 
     fn add_riff_sequence_blade(
         riff_sequences_box: Box,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
         riff_sequence_uuid: Option<String>,
         send_riff_sequence_add_message: bool,
@@ -6316,7 +6315,7 @@ impl MainWindow {
         }
 
         if send_riff_sequence_add_message {
-            match tx_from_ui.send(FreedomDAWEvents::RiffSequenceAdd(uuid)) {
+            match tx_from_ui.send(DAWEvents::RiffSequenceAdd(uuid)) {
                 Ok(_) => {}
                 Err(_) => {}
             }
@@ -6331,7 +6330,7 @@ impl MainWindow {
                 let uuid = blade.widget_name().to_string();
 
                 if let Ok(name) = name.to_value().get() {
-                    match tx_from_ui.send(FreedomDAWEvents::RiffSequenceNameChange(uuid, name)) {
+                    match tx_from_ui.send(DAWEvents::RiffSequenceNameChange(uuid, name)) {
                         Ok(_) => (),
                         Err(error) => info!("Failed to send riff sequence name change: {}", error),
                     }
@@ -6395,7 +6394,7 @@ impl MainWindow {
                                 None,
                             );
 
-                            match tx_from_ui.send(FreedomDAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid.to_string(), riff_set_reference_uuid)) {
+                            match tx_from_ui.send(DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid.to_string(), riff_set_reference_uuid)) {
                                 Ok(_) => (),
                                 Err(error) => info!("Failed to send riff sequence add riff set: {}", error),
                             }
@@ -6422,8 +6421,8 @@ impl MainWindow {
                 }
 
                 let event_to_send = match riff_sequence_type.clone() {
-                    RiffSequenceType::RiffSequence => FreedomDAWEvents::RiffSequenceDelete(riff_sequence_uuid),
-                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => FreedomDAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, riff_sequence_uuid),
+                    RiffSequenceType::RiffSequence => DAWEvents::RiffSequenceDelete(riff_sequence_uuid),
+                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, riff_sequence_uuid),
                 };
 
                 match tx_from_ui.send(event_to_send) {
@@ -6450,8 +6449,8 @@ impl MainWindow {
                 }
 
                 let event_to_send = match riff_sequence_type.clone() {
-                    RiffSequenceType::RiffSequence => FreedomDAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid),
-                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => FreedomDAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid),
+                    RiffSequenceType::RiffSequence => DAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid),
+                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => DAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid),
                 };
 
                 match tx_from_ui.send(event_to_send) {
@@ -6477,8 +6476,8 @@ impl MainWindow {
                 }
 
                 let event_to_send = match riff_sequence_type.clone() {
-                    RiffSequenceType::RiffSequence => FreedomDAWEvents::RiffSequenceMoveRight(riff_sequence_uuid),
-                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => FreedomDAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid),
+                    RiffSequenceType::RiffSequence => DAWEvents::RiffSequenceMoveRight(riff_sequence_uuid),
+                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => DAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid),
                 };
 
                 match tx_from_ui.send(event_to_send) {
@@ -6503,7 +6502,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffSequencePlay(riff_sequence_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffSequencePlay(riff_sequence_uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send riff sequence play: {}", error),
                 }
@@ -6525,7 +6524,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffSequenceCopySelectedToTrackViewCursorPosition(riff_sequence_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffSequenceCopySelectedToTrackViewCursorPosition(riff_sequence_uuid)) {
                     Err(error) => info!("Failed to send riff sets view copy selected riff sequence contents to track view cursor position event: {}", error),
                     _ => (),
                 }
@@ -6537,8 +6536,8 @@ impl MainWindow {
 
     pub fn setup_riff_arrangements_view(
         &mut self,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>
     ) {
         {
             let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
@@ -6614,8 +6613,8 @@ impl MainWindow {
 
     fn add_riff_arrangement_blade(
         riff_arrangements_box: Box,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
         riff_sequences_data: Option<Vec<(String, String)>>,
         riff_arrangement_uuid: Option<String>,
@@ -6643,7 +6642,7 @@ impl MainWindow {
         // MainWindow::setup_riff_view_drag_and_drop(riff_arrangement_blade.riff_set_box.clone(), tx_from_ui.clone());
 
         if send_riff_arrangement_add_message {
-            match tx_from_ui.send(FreedomDAWEvents::RiffArrangementAdd(uuid)) {
+            match tx_from_ui.send(DAWEvents::RiffArrangementAdd(uuid)) {
                 Ok(_) => {}
                 Err(_) => {}
             }
@@ -6658,7 +6657,7 @@ impl MainWindow {
                 let uuid = blade.widget_name().to_string();
 
                 if let Ok(name) = name.to_value().get() {
-                    match tx_from_ui.send(FreedomDAWEvents::RiffArrangementNameChange(uuid, name)) {
+                    match tx_from_ui.send(DAWEvents::RiffArrangementNameChange(uuid, name)) {
                         Ok(_) => (),
                         Err(error) => info!("Failed to send riff arrangement name change: {}", error),
                     }
@@ -6747,7 +6746,7 @@ impl MainWindow {
                             riff_set_blade_head.riff_set_blade.set_margin_top(36);
                             riff_set_blade_head.riff_set_blade.set_margin_bottom(14);
 
-                            match tx_from_ui.send(FreedomDAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_set_uuid.to_string())) {
+                            match tx_from_ui.send(DAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_set_uuid.to_string())) {
                                 Ok(_) => (),
                                 Err(error) => info!("Failed to send riff arrangement add riff set: {}", error),
                             }
@@ -6821,7 +6820,7 @@ impl MainWindow {
                                 }
                             }
 
-                            match tx_from_ui.send(FreedomDAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_sequence_uuid.to_string())) {
+                            match tx_from_ui.send(DAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_sequence_uuid.to_string())) {
                                 Ok(_) => (),
                                 Err(error) => info!("Failed to send riff arrangement add riff sequence: {}", error),
                             }
@@ -6846,7 +6845,7 @@ impl MainWindow {
                     riff_arrangements_box.remove(riff_arrangement_blade);
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementDelete(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementDelete(riff_arrangement_uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send riff arrangement delete riff arrangement: {}", error),
                 }
@@ -6868,7 +6867,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send riff arrangement move left riff arrangement: {}", error),
                 }
@@ -6890,7 +6889,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send riff arrangement move right riff arrangement: {}", error),
                 }
@@ -6912,7 +6911,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementPlay(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementPlay(riff_arrangement_uuid)) {
                     Ok(_) => (),
                     Err(error) => info!("Failed to send riff arrangement play: {}", error),
                 }
@@ -6934,7 +6933,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementCopy(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementCopy(riff_arrangement_uuid)) {
                     Err(error) => info!("Failed to send riff arrangements view copy selected riff arrangement event: {}", error),
                     _ => (),
                 }
@@ -6956,7 +6955,7 @@ impl MainWindow {
                     }
                 }
 
-                match tx_from_ui.send(FreedomDAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(riff_arrangement_uuid)) {
+                match tx_from_ui.send(DAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(riff_arrangement_uuid)) {
                     Err(error) => info!("Failed to send riff arrangements view copy selected riff arrangement contents to track view cursor position event: {}", error),
                     _ => (),
                 }
@@ -6970,20 +6969,20 @@ impl MainWindow {
         riff_arrangement_blade
     }
 
-    pub fn start(&self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
+    pub fn start(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let css_provider = CssProvider::new();
-        let freedom_daw_style = include_bytes!("freedom_daw_4_style.css");
+        let freedom_daw_style = include_bytes!("daw_style.css");
         css_provider.load_from_data(freedom_daw_style).expect("Couldn't load CSS");
         gtk::StyleContext::add_provider_for_screen(
             &gdk::Screen::default().expect("Error adding css provider."),
             &css_provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
-        glib::set_application_name("FreedomDAW");
-        self.ui.wnd_main.set_wmclass("FreedomDAW", "FreedomDAW");
+        glib::set_application_name("DAW");
+        self.ui.wnd_main.set_wmclass("DAW", "DAW");
         {
             self.ui.wnd_main.connect_delete_event(move |_, _| {
-                match tx_from_ui.send(FreedomDAWEvents::Shutdown) {
+                match tx_from_ui.send(DAWEvents::Shutdown) {
                     Ok(_) => {}
                     Err(_) => {}
                 }
@@ -7037,12 +7036,12 @@ impl MainWindow {
 
     pub fn setup_transport(
         main_window: &mut MainWindow,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>) {
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_goto_start_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportGotoStart) {
+                    match tx_from_ui.send(DAWEvents::TransportGotoStart) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7053,7 +7052,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_move_back_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportMoveBack) {
+                    match tx_from_ui.send(DAWEvents::TransportMoveBack) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7064,7 +7063,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_stop_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportStop) {
+                    match tx_from_ui.send(DAWEvents::TransportStop) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7075,7 +7074,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_play_button.connect_clicked(move |button| {
                 if button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportPlay) {
+                    match tx_from_ui.send(DAWEvents::TransportPlay) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7086,13 +7085,13 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_record_button.connect_clicked(move |button| {
                 if button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportRecordOn) {
+                    match tx_from_ui.send(DAWEvents::TransportRecordOn) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
                 }
                 else {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportRecordOff) {
+                    match tx_from_ui.send(DAWEvents::TransportRecordOff) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7108,7 +7107,7 @@ impl MainWindow {
                 else {
                     LoopChangeType::LoopOff
                 };
-                match tx_from_ui.send(FreedomDAWEvents::LoopChange(loop_change, Uuid::new_v4())) {
+                match tx_from_ui.send(DAWEvents::LoopChange(loop_change, Uuid::new_v4())) {
                     Ok(_) => (),
                     Err(error) => info!("Problem sending loop on/off change: {:?}", error),
                 }
@@ -7118,7 +7117,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_pause_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportPause) {
+                    match tx_from_ui.send(DAWEvents::TransportPause) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7129,7 +7128,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_move_forward_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportMoveForward) {
+                    match tx_from_ui.send(DAWEvents::TransportMoveForward) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7140,7 +7139,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui;
             main_window.ui.transport_goto_end_button.connect_clicked(move |button| {
                 if button.is_active() && button.is_active() {
-                    match tx_from_ui.send(FreedomDAWEvents::TransportGotoEnd) {
+                    match tx_from_ui.send(DAWEvents::TransportGotoEnd) {
                         Ok(_) => (),
                         Err(error) => info!("{:?}", error),
                     }
@@ -7149,7 +7148,7 @@ impl MainWindow {
         }
     }
 
-    pub fn update_ui_from_state(&mut self, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, state: &mut FreedomDAWState, state_arc: Arc<Mutex<FreedomDAWState>>) {
+    pub fn update_ui_from_state(&mut self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, state: &mut DAWState, state_arc: Arc<Mutex<DAWState>>) {
         let midi_input_devices: Vec<String> = state.midi_devices();
         let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
 
@@ -7668,7 +7667,7 @@ impl MainWindow {
 
     pub fn update_available_riff_sets(
         &mut self,
-        state: &FreedomDAWState,
+        state: &DAWState,
     ) {
         // get the available riff sets
         let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
@@ -7682,7 +7681,7 @@ impl MainWindow {
 
     pub fn update_available_riff_sets_in_riff_seq_blades(
         &mut self,
-        state: &FreedomDAWState,
+        state: &DAWState,
         riff_sets: &Vec<(String, String)>,
     ) {
         // update the riff seq blades - riff sets combobox
@@ -7695,7 +7694,7 @@ impl MainWindow {
 
     pub fn update_available_items_in_blade_combobox(
         &mut self,
-        _state: &FreedomDAWState,
+        _state: &DAWState,
         items: &Vec<(String, String)>,
         blade: Frame,
         combo_box_widget_name: &str,
@@ -7724,7 +7723,7 @@ impl MainWindow {
 
     pub fn update_available_riff_sets_in_riff_arrangement_blades(
         &mut self,
-        state: &FreedomDAWState,
+        state: &DAWState,
         riff_sets: &Vec<(String, String)>,
     ) {
         // update the riff arr blades
@@ -7759,7 +7758,7 @@ impl MainWindow {
 
     pub fn update_available_riff_sequences_in_riff_arrangement_blades(
         &mut self,
-        state: &FreedomDAWState,
+        state: &DAWState,
     ) {
         // get the available riff sequences
         let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
@@ -7776,9 +7775,9 @@ impl MainWindow {
         &mut self,
         riff_arrangement: &RiffArrangement,
         ui: Ui,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
-        state: &FreedomDAWState,
-        state_arc: Arc<Mutex<FreedomDAWState>>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: &DAWState,
+        state_arc: Arc<Mutex<DAWState>>,
         track_uuids: Vec<String>,
         riff_sets: Vec<(String, String)>,
         riff_sequences: Vec<(String, String)>,
@@ -7866,7 +7865,7 @@ impl MainWindow {
         }
     }
 
-    pub fn update_automation_effect_parameters_combo(&mut self, state: &mut FreedomDAWState, track_uuid: String, effect_uuid: String) {
+    pub fn update_automation_effect_parameters_combo(&mut self, state: &mut DAWState, track_uuid: String, effect_uuid: String) {
         let plugins_params = state.audio_plugin_parameters();
         if let Some(selected_effect_uuid) = state.selected_effect_plugin_uuid() {
             if *selected_effect_uuid == effect_uuid {
@@ -7890,7 +7889,7 @@ impl MainWindow {
         }
     }
 
-    pub fn update_automation_ui_from_state(&mut self, state: &mut FreedomDAWState) {
+    pub fn update_automation_ui_from_state(&mut self, state: &mut DAWState) {
         // update the automation view
         // get the selected track
         let plugins_params = state.audio_plugin_parameters();
@@ -8085,7 +8084,7 @@ impl MainWindow {
         // }
    }
    
-   pub fn setup_track_midi_routing_panel(track_midi_routing_panel: TrackMidiRoutingPanel, midi_routing: crate::domain::TrackEventRouting, routing_description: String, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, track_midi_routing_scrolled_box: Box, track_uuid: Uuid) {
+   pub fn setup_track_midi_routing_panel(track_midi_routing_panel: TrackMidiRoutingPanel, midi_routing: crate::domain::TrackEventRouting, routing_description: String, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, track_midi_routing_scrolled_box: Box, track_uuid: Uuid) {
        track_midi_routing_panel.track_midi_routing_panel.set_widget_name(midi_routing.uuid().as_str());
        track_midi_routing_panel.track_midi_routing_send_to_track_label.set_text(routing_description.as_str());
        track_midi_routing_panel.track_midi_routing_midi_channel_combobox_text.set_active(Some((midi_routing.channel - 1) as u32));
@@ -8103,7 +8102,7 @@ impl MainWindow {
                track_midi_routing_scrolled_box.remove(&track_midi_routing_frame);
                track_midi_routing_scrolled_box.queue_draw();
    
-               match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RemoveMidiRouting(route_uuid), Some(track_uuid.to_string()))) {
+               match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RemoveMidiRouting(route_uuid), Some(track_uuid.to_string()))) {
                    Err(_) => info!("Problem sending message with tx from ui lock when removing a midi routing."),
                    _ => (),
                }
@@ -8120,7 +8119,7 @@ impl MainWindow {
                if let Some(midi_channel) = midi_channel_combobox.active_id() {
                    if let Some(start_note) = track_midi_routing_note_from_combobox_text.active_id() {
                        if let Some(end_note) = track_midi_routing_note_to_combobox_text.active_id() {
-                           match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
+                           match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
                                route_uuid, 
                                midi_channel.as_str().parse::<i32>().unwrap(), 
                                start_note.as_str().parse::<i32>().unwrap(), 
@@ -8145,7 +8144,7 @@ impl MainWindow {
                if let Some(midi_channel) = midi_channel_combobox.active_id() {
                    if let Some(start_note) = note_from_combobox.active_id() {
                        if let Some(end_note) = track_midi_routing_note_to_combobox_text.active_id() {
-                           match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
+                           match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
                                route_uuid, 
                                midi_channel.as_str().parse::<i32>().unwrap(), 
                                start_note.as_str().parse::<i32>().unwrap(), 
@@ -8170,7 +8169,7 @@ impl MainWindow {
                if let Some(midi_channel) = midi_channel_combobox.active_id() {
                    if let Some(start_note) = track_midi_routing_note_from_combobox_text.active_id() {
                        if let Some(end_note) = note_to_combobox.active_id() {
-                           match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
+                           match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateMidiRouting(
                                route_uuid, 
                                midi_channel.as_str().parse::<i32>().unwrap(), 
                                start_note.as_str().parse::<i32>().unwrap(), 
@@ -8184,13 +8183,13 @@ impl MainWindow {
                }
            });
        }
-       match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RouteMidiTo(midi_routing), Some(track_uuid.to_string()))) {
+       match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RouteMidiTo(midi_routing), Some(track_uuid.to_string()))) {
            Err(_) => info!("Problem sending message with tx from ui lock when routing midi to a track and plugin has been selected."),
            _ => (),
        }
    }
       
-   pub fn setup_track_audio_routing_panel(track_audio_routing_panel: TrackAudioRoutingPanel, audio_routing: crate::domain::AudioRouting, routing_description: String, tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>, track_audio_routing_scrolled_box: Box, track_uuid: Uuid) {
+   pub fn setup_track_audio_routing_panel(track_audio_routing_panel: TrackAudioRoutingPanel, audio_routing: crate::domain::AudioRouting, routing_description: String, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, track_audio_routing_scrolled_box: Box, track_uuid: Uuid) {
        track_audio_routing_panel.track_audio_routing_panel.set_widget_name(audio_routing.uuid().as_str());
        track_audio_routing_panel.track_audio_routing_send_to_track_label.set_text(routing_description.as_str());
 
@@ -8220,7 +8219,7 @@ impl MainWindow {
                track_audio_routing_scrolled_box.remove(&track_audio_routing_frame);
                track_audio_routing_scrolled_box.queue_draw();
    
-               match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RemoveAudioRouting(route_uuid), Some(track_uuid.to_string()))) {
+               match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RemoveAudioRouting(route_uuid), Some(track_uuid.to_string()))) {
                    Err(_) => info!("Problem sending message with tx from ui lock when removing an audio routing."),
                    _ => (),
                }
@@ -8236,7 +8235,7 @@ impl MainWindow {
    
                 if let Some(_left_channel_input_index) = left_channel_input_index_combobox.active_id() {
                     if let Some(_right_channel_input_index) = track_audio_routing_right_channel_input_index_combobox_text.active_id() {
-                        // match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::UpdateAudioRouting(
+                        // match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateAudioRouting(
                         //     route_uuid, 
                         //     left_channel_input_index.as_str().parse::<i32>().unwrap(), 
                         //     right_channel_input_index.as_str().parse::<i32>().unwrap()
@@ -8257,7 +8256,7 @@ impl MainWindow {
    
                 if let Some(_left_channel_input_index) = track_audio_routing_left_channel_input_index_combobox_text.active_id() {
                     if let Some(_right_channel_input_index) = right_channel_input_index_combobox.active_id() {
-                        // match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::UpdateAudioRouting(
+                        // match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateAudioRouting(
                         //     route_uuid, 
                         //     left_channel_input_index.as_str().parse::<i32>().unwrap(), 
                         //     right_channel_input_index.as_str().parse::<i32>().unwrap()
@@ -8269,7 +8268,7 @@ impl MainWindow {
                 }
            });
        }
-       match tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::RouteAudioTo(audio_routing), Some(track_uuid.to_string()))) {
+       match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RouteAudioTo(audio_routing), Some(track_uuid.to_string()))) {
            Err(_) => info!("Problem sending message with tx from ui lock when routing audio to a track and plugin has been selected."),
            _ => (),
        }
@@ -8281,7 +8280,7 @@ impl MainWindow {
         riff_set_horizontal_adjustment: Adjustment,
         riff_sets_view_port: Viewport,
         riff_set_type: RiffSetType,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) {
         riff_set_heads_box.drag_dest_set(
             DestDefaults::ALL, 
@@ -8332,13 +8331,13 @@ impl MainWindow {
 
                                             match &riff_set_type {
                                                 RiffSetType::RiffSet => {
-                                                    let _ = tx_from_ui.send(FreedomDAWEvents::RiffSetMoveToPosition(riff_set_uuid.to_string(), drop_zone_child_position as usize));
+                                                    let _ = tx_from_ui.send(DAWEvents::RiffSetMoveToPosition(riff_set_uuid.to_string(), drop_zone_child_position as usize));
                                                 }
                                                 RiffSetType::RiffSequence(riff_sequence_uuid) => {
-                                                    let _ = tx_from_ui.send(FreedomDAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid.clone(), riff_set_uuid.to_string(), drop_zone_child_position as usize));
+                                                    let _ = tx_from_ui.send(DAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid.clone(), riff_set_uuid.to_string(), drop_zone_child_position as usize));
                                                 }
                                                 RiffSetType::RiffArrangement(_) => {
-                                                    // let _ = tx_from_ui.send(FreedomDAWEvents::RiffSetMoveToPosition(riff_set_uuid.to_string(), drop_zone_child_position as usize));
+                                                    // let _ = tx_from_ui.send(DAWEvents::RiffSetMoveToPosition(riff_set_uuid.to_string(), drop_zone_child_position as usize));
                                                 }
                                             }
                                             break;
@@ -8360,7 +8359,7 @@ impl MainWindow {
         item_box: Box, 
         horizontal_adjustment: Adjustment,
         view_port: Viewport,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ){
         item_box.drag_dest_set(
             DestDefaults::ALL, 
@@ -8401,7 +8400,7 @@ impl MainWindow {
                         for child in item_box.children().iter() {
                             if child.widget_name() == track_uuid {
                                 item_box.set_child_position(child, drop_zone_child_position);
-                                // let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::TrackMoveToPosition(drop_zone_child_position as usize), Some(track_uuid.to_string())));
+                                // let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackMoveToPosition(drop_zone_child_position as usize), Some(track_uuid.to_string())));
                                 break;
                             }
                         }
@@ -8416,7 +8415,7 @@ impl MainWindow {
         vertical_box: Box, 
         vertical_adjustment: Adjustment,
         view_port: Viewport,
-        tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ){
         vertical_box.drag_dest_set(
             DestDefaults::ALL, 
@@ -8458,7 +8457,7 @@ impl MainWindow {
                         for child in vertical_box.children().iter() {
                             if child.widget_name() == track_uuid {
                                 // top_level_vbox.set_child_position(child, drop_zone_child_position);
-                                let _ = tx_from_ui.send(FreedomDAWEvents::TrackChange(TrackChangeType::TrackMoveToPosition(drop_zone_child_position as usize), Some(track_uuid.to_string())));
+                                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackMoveToPosition(drop_zone_child_position as usize), Some(track_uuid.to_string())));
                                 break;
                             }
                         }

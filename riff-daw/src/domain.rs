@@ -17,7 +17,7 @@ use thread_priority::*;
 use uuid::Uuid;
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
-use crate::{audio_plugin_util::*, constants::{CLAP, VST24}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
+use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
 
 extern {
     fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
@@ -6091,7 +6091,7 @@ impl<T> MidiConsumerDetails<T> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct FreedomDAWConfiguration {
+pub struct DAWConfiguration {
     pub audio: AudioConfiguration,
     pub scanned_vst_instrument_plugins: ScannedVstPlugins,
     pub scanned_vst_effect_plugins: ScannedVstPlugins,
@@ -6099,7 +6099,7 @@ pub struct FreedomDAWConfiguration {
     pub midi_output_connections: MidiOutputConnections,
 }
 
-impl FreedomDAWConfiguration {
+impl DAWConfiguration {
     pub fn new() -> Self {
         Self {
             audio: AudioConfiguration::new(),
@@ -6110,14 +6110,14 @@ impl FreedomDAWConfiguration {
         }
     }
 
-    pub fn load_config() -> FreedomDAWConfiguration {
+    pub fn load_config() -> DAWConfiguration {
         if let Some(mut config_path) = dirs::config_dir() {
-            config_path.push("freedomdaw.conf");
+            config_path.push(CONFIGURATION_FILE_NAME);
             if let Ok(mut file) = std::fs::File::open(config_path) {
                 let mut json_text = String::new();
 
                 if let Ok(_) = file.read_to_string(&mut json_text) {
-                    let result: std::result::Result<FreedomDAWConfiguration, serde_json::Error> = serde_json::from_str(&json_text);
+                    let result: std::result::Result<DAWConfiguration, serde_json::Error> = serde_json::from_str(&json_text);
                     if let Ok(config) = result {
                         return config
                     }
@@ -6125,13 +6125,13 @@ impl FreedomDAWConfiguration {
             }
         }
 
-        FreedomDAWConfiguration::new()
+        DAWConfiguration::new()
     }
 
     pub fn save(&self) {
         info!("Entering save configuration...");
         if let Some(mut config_path) = dirs::config_dir() {
-            config_path.push("freedomdaw.conf");
+            config_path.push(CONFIGURATION_FILE_NAME);
 
             match serde_json::to_string_pretty(self) {
                 Ok(json_text) => {
@@ -6180,7 +6180,7 @@ impl ScannedVstPlugins {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MidiInputConnections {
-    pub midi_input_connections: HashMap<String, String>, // from=name, to=name (FreedomDAW input port)
+    pub midi_input_connections: HashMap<String, String>, // from=name, to=name (DAW input port)
 }
 
 impl MidiInputConnections {
@@ -6193,7 +6193,7 @@ impl MidiInputConnections {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MidiOutputConnections {
-    pub midi_output_connections: HashMap<String, String>, // from=name (FreedomDAW audio output port), to=name
+    pub midi_output_connections: HashMap<String, String>, // from=name (DAW audio output port), to=name
 }
 
 impl MidiOutputConnections {
@@ -6388,9 +6388,9 @@ mod tests {
 
     #[test]
     fn serialise_configuration() {
-        match serde_json::to_string_pretty(&FreedomDAWConfiguration::new()) {
-            Ok(json_text) => info!("FreedomDAWConfiguration serialise success: {}", json_text),
-            Err(error) => info!("FreedomDAWConfiguration serialise failure: {}",error)
+        match serde_json::to_string_pretty(&DAWConfiguration::new()) {
+            Ok(json_text) => info!("DAWConfiguration serialise success: {}", json_text),
+            Err(error) => info!("DAWConfiguration serialise failure: {}",error)
         }
     }
 

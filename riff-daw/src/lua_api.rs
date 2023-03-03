@@ -2,13 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{UserData, UserDataMethods};
 
-use crate::{FreedomDAWEvents, FreedomDAWState, GeneralTrackType, TrackChangeType};
-use crate::FreedomDAWEvents::TrackChange;
+use crate::{DAWEvents, DAWState, GeneralTrackType, TrackChangeType};
+use crate::DAWEvents::TrackChange;
 use crate::Track;
 
 pub struct LuaState {
-    pub state: Arc<Mutex<FreedomDAWState>>,
-    pub tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>,
+    pub state: Arc<Mutex<DAWState>>,
+    pub tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
 }
 
 impl LuaState {

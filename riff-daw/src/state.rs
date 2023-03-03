@@ -17,7 +17,7 @@ use uuid::Uuid;
 use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
-use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, FreedomDAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
+use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
 use crate::TrackType;
 
 extern {
@@ -32,14 +32,14 @@ pub enum AutomationViewMode {
     NoteExpression,
 }
 
-pub struct FreedomDAWState {
-    pub configuration: FreedomDAWConfiguration,
+pub struct DAWState {
+    pub configuration: DAWConfiguration,
     project: Project,
     selected_track: Option<String>,
     selected_riff_uuid_map: HashMap<String, String>,
     selected_riff_ref_uuid: Option<String>,
     current_file_path: Option<String>,
-    sender: crossbeam_channel::Sender<FreedomDAWEvents>,
+    sender: crossbeam_channel::Sender<DAWEvents>,
     pub instrument_track_senders: HashMap<String, Sender<TrackBackgroundProcessorInwardEvent>>,
     pub instrument_track_receivers: HashMap<String, Receiver<TrackBackgroundProcessorOutwardEvent>>,
     pub audio_plugin_parameters: HashMap<String, HashMap<String, Vec<PluginParameterDetail>>>,
@@ -75,10 +75,10 @@ pub struct FreedomDAWState {
     pub dirty: bool,
 }
 
-impl FreedomDAWState {
-    pub fn new(sender: crossbeam_channel::Sender<FreedomDAWEvents>) -> Self {
+impl DAWState {
+    pub fn new(sender: crossbeam_channel::Sender<DAWEvents>) -> Self {
         Self {
-            configuration: FreedomDAWConfiguration::load_config(),
+            configuration: DAWConfiguration::load_config(),
             project: Project::new(),
             current_file_path: None,
             sender,
@@ -444,7 +444,7 @@ impl FreedomDAWState {
             index += 1;
         }
 
-        // self.sender.send(FreedomDAWEvents::UpdateUI);
+        // self.sender.send(DAWEvents::UpdateUI);
     }
 
     pub fn send_to_track_background_processor(&self, track_hash: String, message: TrackBackgroundProcessorInwardEvent) {
@@ -1076,9 +1076,9 @@ impl FreedomDAWState {
                 }
             }
 
-            let (product, unique_riff_lengths) = FreedomDAWState::get_length_product(riff_lengths);
+            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
 
-            lowest_common_factor_in_beats = FreedomDAWState::get_lowest_common_factor(unique_riff_lengths, product);
+            lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
 
             for track in self.project().song().tracks().iter() {
                 let mut riff_refs = vec![];
@@ -1158,9 +1158,9 @@ impl FreedomDAWState {
                 }
             }
 
-            let (product, unique_riff_lengths) = FreedomDAWState::get_length_product(riff_lengths);
+            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
 
-            lowest_common_factor_in_beats = FreedomDAWState::get_lowest_common_factor(unique_riff_lengths, product);
+            lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
 
             for track in self.project().song().tracks().iter() {
                 if track.uuid().to_string() == track_uuid {
@@ -1365,9 +1365,9 @@ impl FreedomDAWState {
             }
         }
 
-        let (product, unique_riff_lengths) = FreedomDAWState::get_length_product(riff_lengths);
+        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
 
-        let lowest_common_factor_in_beats = FreedomDAWState::get_lowest_common_factor(unique_riff_lengths, product);
+        let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
 
         for (track_uuid, riff_ref) in riff_set.riff_refs() {
             if let None = track_running_position.get(&track_uuid.clone()) {
@@ -1556,16 +1556,16 @@ impl FreedomDAWState {
         vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) {
         let (jack_client, _status) =
-            Client::new("FreedomDAW", ClientOptions::NO_START_SERVER).unwrap();
+            Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
         let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender.clone(), coast, vst_host_time_info);
         let notifications = JackNotificationHandler::new(jack_midi_sender);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
         // these should come from configuration and be selected from a menu and dialogue
-        let _ = jack_async_client.as_client().connect_ports_by_name("FreedomDAW:out_l", "system:playback_9");
-        let _ = jack_async_client.as_client().connect_ports_by_name("FreedomDAW:out_r", "system:playback_10");
-        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "FreedomDAW:midi_control_in");
-        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "FreedomDAW:midi_in");
+        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_l", "system:playback_9");
+        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_r", "system:playback_10");
+        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "DAW:midi_control_in");
+        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in");
 
         self.set_jack_client(jack_async_client);
     }
@@ -1582,7 +1582,7 @@ impl FreedomDAWState {
                 Ok((_client, _notification_handler, mut process_handler)) => {
                     let consumers = process_handler.get_all_audio_consumers();
                     let (jack_client, _status) =
-                        Client::new("FreedomDAW", ClientOptions::NO_START_SERVER).unwrap();
+                        Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
                     let audio = Audio::new_with_consumers(
                         &jack_client,
                         rx_to_audio,
@@ -1620,7 +1620,7 @@ impl FreedomDAWState {
     pub fn jack_midi_connection_add(&mut self, track_uuid: String, to_name: String) {
         info!("Jack midi connection added: track={}, to={}", track_uuid.as_str(), to_name.as_str());
         if let Some(jack_client) = self.jack_client.get(0) {
-            let _ = jack_client.as_client().connect_ports_by_name(format!("FreedomDAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+            let _ = jack_client.as_client().connect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
         }
         self.jack_connections.insert(track_uuid, to_name);
     }
@@ -1628,7 +1628,7 @@ impl FreedomDAWState {
     pub fn jack_midi_connection_remove(&mut self, track_uuid: String, to_name: String) {
         info!("Jack midi connection removed: track={}, to={}", track_uuid.as_str(), to_name.as_str());
         if let Some(jack_client) = self.jack_client.get(0) {
-            let _ = jack_client.as_client().disconnect_ports_by_name(format!("FreedomDAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+            let _ = jack_client.as_client().disconnect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
         }
         self.jack_connections.remove(&track_uuid);
     }
@@ -1643,7 +1643,7 @@ impl FreedomDAWState {
 
     pub fn midi_devices(&mut self) -> Vec<String> {
         if let Some(client) = self.jack_client() {
-            client.ports(None, Some("8 bit raw midi"), PortFlags::IS_INPUT).iter().filter(|port_name| !port_name.starts_with("FreedomDAW")).map(|port_name| port_name.to_string()).collect()
+            client.ports(None, Some("8 bit raw midi"), PortFlags::IS_INPUT).iter().filter(|port_name| !port_name.starts_with("DAW")).map(|port_name| port_name.to_string()).collect()
         } else {
             vec![]
         }
@@ -1653,7 +1653,7 @@ impl FreedomDAWState {
                                path: std::path::PathBuf,
                                tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                                track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                               tx_from_ui: crossbeam_channel::Sender<FreedomDAWEvents>
+                               tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) {
         let number_of_blocks = self.play_song(tx_to_audio);
         let track_render_audio_consumers = self.track_render_audio_consumers.clone();
@@ -1714,7 +1714,7 @@ impl FreedomDAWState {
                 *coast = TrackBackgroundProcessorMode::AudioOut;
             }
 
-            let _ = tx_from_ui.send(FreedomDAWEvents::HideProgressDialogue);
+            let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
         });
     }
 
@@ -2052,18 +2052,18 @@ impl FreedomDAWState {
 
 #[cfg(test)]
 mod tests {
-    use crate::FreedomDAWState;
+    use crate::DAWState;
 
     extern crate factor;
 
     #[test]
     fn get_length_product() {
         let riff_lengths = vec![1, 1, 2, 2, 3, 3, 5, 5];
-        let (product, unique_lengths) = FreedomDAWState::get_length_product(riff_lengths);
+        let (product, unique_lengths) = DAWState::get_length_product(riff_lengths);
 
         assert_eq!(30, product);
 
-        let found_length = FreedomDAWState::get_lowest_common_factor(unique_lengths, product);
+        let found_length = DAWState::get_lowest_common_factor(unique_lengths, product);
 
         assert_eq!(30, found_length);
     }
@@ -2071,11 +2071,11 @@ mod tests {
     #[test]
     fn get_length_product_2() {
         let riff_lengths = vec![4, 8, 12, 16, 24];
-        let (product, unique_lengths) = FreedomDAWState::get_length_product(riff_lengths);
+        let (product, unique_lengths) = DAWState::get_length_product(riff_lengths);
 
         assert_eq!(147456, product);
 
-        let found_length = FreedomDAWState::get_lowest_common_factor(unique_lengths, product);
+        let found_length = DAWState::get_lowest_common_factor(unique_lengths, product);
 
         assert_eq!(48, found_length);
     }

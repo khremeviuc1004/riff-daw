@@ -1,0 +1,790 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.38.2 -->
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkImage" id="add_image2">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-add</property>
+  </object>
+  <object class="GtkImage" id="add_image3">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-open</property>
+  </object>
+  <object class="GtkImage" id="copy_image">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-copy</property>
+  </object>
+  <object class="GtkImage" id="delete_image">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-delete</property>
+  </object>
+  <object class="GtkImage" id="delete_image2">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-delete</property>
+  </object>
+  <object class="GtkImage" id="open_image">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-open</property>
+  </object>
+  <object class="GtkImage" id="save_image">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-save</property>
+  </object>
+  <object class="GtkImage" id="save_image2">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-save</property>
+  </object>
+  <object class="GtkDialog" id="track_details_dialogue">
+    <property name="width-request">470</property>
+    <property name="height-request">600</property>
+    <property name="can-focus">False</property>
+    <property name="title" translatable="yes">Track Details</property>
+    <property name="resizable">False</property>
+    <property name="type-hint">dialog</property>
+    <property name="deletable">False</property>
+    <child internal-child="vbox">
+      <object class="GtkBox" id="track_details_panel">
+        <property name="can-focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child internal-child="action_area">
+          <object class="GtkButtonBox">
+            <property name="can-focus">False</property>
+            <property name="layout-style">end</property>
+            <child>
+              <placeholder/>
+            </child>
+            <child>
+              <object class="GtkButton" id="track_detail_close_button">
+                <property name="label">gtk-close</property>
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="receives-default">True</property>
+                <property name="use-stock">True</property>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="visible">True</property>
+            <property name="can-focus">True</property>
+            <property name="shadow-type">in</property>
+            <child>
+              <object class="GtkViewport">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="orientation">vertical</property>
+                    <child>
+                      <object class="GtkStack">
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <child>
+                              <!-- n-columns=5 n-rows=12 -->
+                              <object class="GtkGrid">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="row-spacing">2</property>
+                                <property name="column-spacing">2</property>
+                                <child>
+                                  <object class="GtkButton" id="track_delete_riff_btn">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Delete the selected riff</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">delete_image</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">2</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Riff</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="track_instrument_label">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Instrument</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_instrument_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                    <property name="hexpand">True</property>
+                                    <items>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/AspectVST.so" translatable="yes">Aspect</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/helm.so" translatable="yes">Helm</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Hive.64.so" translatable="yes">Hive</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/DiscoveryPro64.so" translatable="yes">DiscoveryPro64</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/StringVST.so" translatable="yes">StringVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/StringVST_FX.so" translatable="yes">StringVST_FX</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ArchitectVST.so" translatable="yes">ArchitectVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/libsine_synth.so" translatable="yes">Test Process64</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Repro-1.64.so:1968332593" translatable="yes">Repro 1</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Repro-1.64.so:1968332597" translatable="yes">Repro 5</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/RetroMod 106.so" translatable="yes">RetroMod 106</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Axon 2.so" translatable="yes">Axon Drum Machine</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Continua.so" translatable="yes">Continua</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/cadmium.so" translatable="yes">Cadmium</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Granulizer 2.so" translatable="yes">Granulizer 2</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Bazille.64.so" translatable="yes">Bazille</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Diva.64.so" translatable="yes">Diva</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397572658" translatable="yes">Zebra2</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397572659" translatable="yes">Zebralette</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1919243824" translatable="yes">Zebra2 Reverb</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Zebra2.64.so:1397578034" translatable="yes">Zebrify</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Bliss2.so" translatable="yes">Bliss sampler</item>
+                                    </items>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_instrument_window_visibility_toggle_btn">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Toggle the visibility of the instrument plugin window</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">open_image</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">2</property>
+                                    <property name="top-attach">2</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Riff Length</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_riff_length_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                    <property name="hexpand">True</property>
+                                    <property name="active">10</property>
+                                    <items>
+                                      <item id="10" translatable="yes">10</item>
+                                      <item id="9" translatable="yes">9</item>
+                                      <item id="8" translatable="yes">8</item>
+                                      <item id="7" translatable="yes">7</item>
+                                      <item id="6" translatable="yes">6</item>
+                                      <item id="5" translatable="yes">5</item>
+                                      <item id="4" translatable="yes">4</item>
+                                      <item id="3" translatable="yes">3</item>
+                                      <item id="2" translatable="yes">2</item>
+                                      <item id="1_5" translatable="yes">1.5</item>
+                                      <item id="1" translatable="yes">1</item>
+                                      <item id="1_2_dot" translatable="yes">1/2.</item>
+                                      <item id="1_2" translatable="yes">1/2</item>
+                                      <item id="1_4_dot" translatable="yes">1/4.</item>
+                                      <item id="1_4" translatable="yes">1/4</item>
+                                      <item id="1_8_dot" translatable="yes">1/8.</item>
+                                      <item id="1_8" translatable="yes">1/8</item>
+                                      <item id="1_16_dot" translatable="yes">1/16.</item>
+                                      <item id="1_16" translatable="yes">1/16</item>
+                                      <item id="1_32_dot" translatable="yes">1/32.</item>
+                                      <item id="1_32" translatable="yes">1/32</item>
+                                      <item id="1_64_dot" translatable="yes">1/64.</item>
+                                      <item id="1_64" translatable="yes">1/64</item>
+                                    </items>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_details_riff_save_length">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Save the updated riff length</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">save_image2</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">2</property>
+                                    <property name="top-attach">1</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="track_midi_device_label">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Midi Device</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">3</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="track_midi_channel_label">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Midi Channel</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">4</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_midi_device_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">3</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_midi_channel_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                    <property name="active-id">0</property>
+                                    <items>
+                                      <item id="0" translatable="yes">1</item>
+                                      <item id="1" translatable="yes">2</item>
+                                      <item id="2" translatable="yes">3</item>
+                                      <item id="3" translatable="yes">4</item>
+                                      <item id="4" translatable="yes">5</item>
+                                      <item id="5" translatable="yes">6</item>
+                                      <item id="6" translatable="yes">7</item>
+                                      <item id="7" translatable="yes">8</item>
+                                      <item id="8" translatable="yes">9</item>
+                                      <item id="9" translatable="yes">10</item>
+                                      <item id="10" translatable="yes">11</item>
+                                      <item id="11" translatable="yes">12</item>
+                                      <item id="12" translatable="yes">13</item>
+                                      <item id="13" translatable="yes">14</item>
+                                      <item id="14" translatable="yes">15</item>
+                                      <item id="15" translatable="yes">16</item>
+                                    </items>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">4</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Track</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">5</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkColorButton" id="track_detail_track_colour_button">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Select the track colour</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">5</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Riff</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">6</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkColorButton" id="track_detail_riff_colour_button">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Selct the riff colour (overrides the track colour for the selected riff)</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">6</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_copy_riff_btn">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Copy the seleted riff</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">copy_image</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">3</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_riff_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                    <property name="hexpand">True</property>
+                                    <property name="has-entry">True</property>
+                                    <child internal-child="entry">
+                                      <object class="GtkEntry" id="track_details_riff_choice_entry">
+                                        <property name="can-focus">True</property>
+                                        <property name="truncate-multiline">True</property>
+                                        <property name="populate-all">True</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_details_riff_save_name_btn">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="no-show-all">True</property>
+                                    <property name="tooltip-text" translatable="yes">Save the updated riff name</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">save_image</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">4</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Send midi to</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">7</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_send_midi_to_track_open_dialogue_button">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="halign">start</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="stock">gtk-open</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">7</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="track_effects_btns_label">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Effects</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">11</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <child>
+                                      <object class="GtkButton" id="track_effect_window_visibility_toggle_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">True</property>
+                                        <property name="receives-default">True</property>
+                                        <property name="tooltip-text" translatable="yes">Toggle the visibility of the selcted effect plugin window</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <property name="image">add_image3</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">0</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_effect_delete_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">True</property>
+                                        <property name="receives-default">True</property>
+                                        <property name="tooltip-text" translatable="yes">Delete of the selcted effect plugin</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <property name="image">delete_image2</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">1</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">11</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="track_effects_choice_label">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Add Effect</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">10</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkComboBoxText" id="track_effects_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="valign">center</property>
+                                    <items>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/mdaRezFilter.so" translatable="yes">MDA Rez Filter</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/mdaStereo.so" translatable="yes">MDA Stereo</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/MFM2.64.avx.so" translatable="yes">MFM2</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Presswerk.64.so" translatable="yes">Presswerk</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Satin.64.so" translatable="yes">Satin</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ResoundVST.so" translatable="yes">ResoundVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/ManifoldVST.so" translatable="yes">ManifoldVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Shift2VST.so" translatable="yes">ShiftVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/SequentVST.so" translatable="yes">SequentVST</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432569393" translatable="yes">Uhbik-F post retro flanger</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432568113" translatable="yes">Uhbik-A ambience processor</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432568881" translatable="yes">Uhbik-D delay</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432569649" translatable="yes">Uhbik-G grains and pitch</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572209" translatable="yes">Uhbik-Q equlizer</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572721" translatable="yes">Uhbik-S freq shifter</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432572977" translatable="yes">Uhbik-T trans modern pan &amp; tremolo</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1432571953" translatable="yes">Uhbik-P pre-future phaser</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Uhbik.64.so:1382232375" translatable="yes">Uhbik Runciter digital filter</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1095583057" translatable="yes">Filterscape 1</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1179866689" translatable="yes">Filterscape VA</item>
+                                      <item id="/home/kevin/Desktop/Data/Personal/Tracks/Music/Linux_VST/Filterscape.64.so:1179865398" translatable="yes">Filterscape Q6</item>
+                                    </items>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">10</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_add_effect_button">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Add an effect plugin</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="image">add_image2</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">2</property>
+                                    <property name="top-attach">10</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="margin-top">5</property>
+                                    <property name="margin-bottom">5</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">9</property>
+                                    <property name="width">5</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Send audio to</property>
+                                    <property name="xalign">0.05000000074505806</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">0</property>
+                                    <property name="top-attach">8</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_send_audio_to_track_open_dialogue_button">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="halign">start</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="stock">gtk-open</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">1</property>
+                                    <property name="top-attach">8</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                                <child>
+                                  <placeholder/>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="padding">2</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="name">page0</property>
+                            <property name="title" translatable="yes">page0</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow" id="track_effects_scroll_window">
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="shadow-type">in</property>
+                        <child>
+                          <object class="GtkViewport">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <child>
+                              <object class="GtkTreeView" id="track_effect_list">
+                                <property name="visible">True</property>
+                                <property name="can-focus">True</property>
+                                <property name="enable-grid-lines">both</property>
+                                <property name="activate-on-single-click">True</property>
+                                <child internal-child="selection">
+                                  <object class="GtkTreeSelection"/>
+                                </child>
+                                <child>
+                                  <object class="GtkTreeViewColumn" id="vst_effect_name">
+                                    <property name="title" translatable="yes">Name</property>
+                                    <child>
+                                      <object class="GtkCellRendererText"/>
+                                      <attributes>
+                                        <attribute name="text">0</attribute>
+                                        <attribute name="background-rgba">4</attribute>
+                                        <attribute name="foreground-rgba">3</attribute>
+                                      </attributes>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                        <property name="position">3</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <action-widgets>
+      <action-widget response="-5">track_detail_close_button</action-widget>
+    </action-widgets>
+  </object>
+</interface>

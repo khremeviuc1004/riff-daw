@@ -1,0 +1,397 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'FreedomDAW4'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=FreedomDAW4",
+                    "--package=FreedomDAW4"
+                ],
+                "filter": {
+                    "name": "FreedomDAW4",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'FreedomDAW4'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=FreedomDAW4",
+                    "--package=FreedomDAW4"
+                ],
+                "filter": {
+                    "name": "FreedomDAW4",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'vst'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "vst",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'dimension_expander'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=dimension_expander",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "dimension_expander",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'dimension_expander'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=dimension_expander",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "dimension_expander",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'simple_host'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=simple_host",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "simple_host",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'simple_host'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=simple_host",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "simple_host",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'sine_synth'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=sine_synth",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "sine_synth",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'sine_synth'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=sine_synth",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "sine_synth",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'fwd_midi'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=fwd_midi",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "fwd_midi",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'fwd_midi'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=fwd_midi",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "fwd_midi",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'gain_effect'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=gain_effect",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "gain_effect",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'gain_effect'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=gain_effect",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "gain_effect",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'transfer_and_smooth'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=transfer_and_smooth",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "transfer_and_smooth",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'transfer_and_smooth'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=transfer_and_smooth",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "transfer_and_smooth",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'ladder_filter'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=ladder_filter",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "ladder_filter",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'ladder_filter'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=ladder_filter",
+                    "--package=vst"
+                ],
+                "filter": {
+                    "name": "ladder_filter",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'VstHost'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=VstHost",
+                    "--package=VstHost"
+                ],
+                "filter": {
+                    "name": "VstHost",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'VstHost'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=VstHost",
+                    "--package=VstHost"
+                ],
+                "filter": {
+                    "name": "VstHost",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'vsttest'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=vsttest",
+                    "--package=vsttest"
+                ],
+                "filter": {
+                    "name": "vsttest",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'vsttest'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=vsttest",
+                    "--package=vsttest"
+                ],
+                "filter": {
+                    "name": "vsttest",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -1,0 +1,48 @@
+[package]
+name = "riff-daw"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gladis = "1.0.1"
+gdk = "0.14.3"
+gtk = "0.14.3"
+gio = "0.14.3"
+serde = { version = "1.0.132", features = ["derive"] }
+serde_json = { version = "1.0.73", features = ["preserve_order"] }
+cairo-rs = "0.14.9"
+jack = "0.10.0"
+rb = "0.3.2"
+vst = { path = "../lib/vst-rs" }
+simple-clap-host-helper-lib = { path = "../lib/simple-clap-host-helper-lib" }
+raw-window-handle = "0.4.2"
+winit = "0.26.1"
+ipc-channel = "0.15.0"
+uuid = { version = "0.8.2", features = ["serde", "v4"] }
+thread-priority = "0.7.0"
+base64 = "0.13.0"
+regex = "1.5.5"
+apres = "0.3.1"
+itertools = "0.10.2"
+flexi_logger = {version = "0.25.1", features=["async"]}
+log = "0.4.17"
+factor = "0.4.0"
+wav_io = "0.1.8"
+mlua = { versiorn = "0.8.3", features = ["lua54", "vendored", "macros"] }
+sndfile = "0.1.1"
+samplerate-rs = "0.1.0"
+crossbeam = "0.8.2"
+crossbeam-channel = "0.5.6"
+crossbeam-utils = "0.8.11"
+indexmap = "1.9.1"
+dirs = "4.0.0"
+rust-lzma = "0.5.1"
+chrono = "0.4.23"
+parking_lot = "0.12.1"
+# clap-sys = "0.3.0"
+clap-sys = { git = "https://github.com/robbert-vdh/clap-sys.git", rev = "f217cca4f41d4997bf23b06477765a809fa07c34" }
+libc = "0.2.137"
+libloading = "0.7.4"
+anyhow = "1.0.58"
+strum = "0.24.1"
+strum_macros = "0.24.1"

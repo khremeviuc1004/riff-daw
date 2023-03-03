@@ -1,0 +1,6 @@
+[submodule "lib/vst-rs"]
+	path = lib/vst-rs
+	url = https://github.com/khremeviuc1004/vst-rs.git
+[submodule "lib/simple-clap-host-helper-lib"]
+	path = lib/simple-clap-host-helper-lib
+	url = https://github.com/khremeviuc1004/simple-clap-host-helper-lib.git

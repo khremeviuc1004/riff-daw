@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.38.2 -->
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkFrame" id="track_midi_routing_panel">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="label-xalign">0</property>
+    <property name="shadow-type">none</property>
+    <child>
+      <!-- n-columns=5 n-rows=3 -->
+      <object class="GtkGrid">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Midi Channel</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="track_midi_routing_midi_channel_combobox_text">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="active">0</property>
+            <items>
+              <item id="0" translatable="yes">1</item>
+              <item id="1" translatable="yes">2</item>
+              <item id="2" translatable="yes">3</item>
+              <item id="3" translatable="yes">4</item>
+              <item id="4" translatable="yes">5</item>
+              <item id="5" translatable="yes">6</item>
+              <item id="6" translatable="yes">7</item>
+              <item id="7" translatable="yes">8</item>
+              <item id="8" translatable="yes">9</item>
+              <item id="9" translatable="yes">10</item>
+              <item id="10" translatable="yes">11</item>
+              <item id="11" translatable="yes">12</item>
+              <item id="12" translatable="yes">13</item>
+              <item id="13" translatable="yes">14</item>
+              <item id="14" translatable="yes">15</item>
+              <item id="15" translatable="yes">16</item>
+            </items>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Track</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel" id="track_midi_routing_send_to_track_label">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">0</property>
+            <property name="width">3</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Note Range From</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="track_midi_routing_note_from_combobox_text">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="active">0</property>
+            <items>
+              <item id="0" translatable="yes">C-2</item>
+              <item id="1" translatable="yes">C#/Db-2</item>
+              <item id="2" translatable="yes">D-2</item>
+              <item id="3" translatable="yes">D#/Eb-2</item>
+              <item id="4" translatable="yes">E-2</item>
+              <item id="5" translatable="yes">F-2</item>
+              <item id="6" translatable="yes">F#/Gb-2</item>
+              <item id="7" translatable="yes">G-2</item>
+              <item id="8" translatable="yes">G#/Ab-2</item>
+              <item id="9" translatable="yes">A-2</item>
+              <item id="10" translatable="yes">A#/Bb-2</item>
+              <item id="11" translatable="yes">B-2</item>
+              <item id="12" translatable="yes">C-1</item>
+              <item id="13" translatable="yes">C#/Db-1</item>
+              <item id="14" translatable="yes">D-1</item>
+              <item id="15" translatable="yes">D#/Eb-1</item>
+              <item id="16" translatable="yes">E-1</item>
+              <item id="17" translatable="yes">F-1</item>
+              <item id="18" translatable="yes">F#/Gb-1</item>
+              <item id="19" translatable="yes">G-1</item>
+              <item id="20" translatable="yes">G#/Ab-1</item>
+              <item id="21" translatable="yes">A-1</item>
+              <item id="22" translatable="yes">A#/Bb-1</item>
+              <item id="23" translatable="yes">B-1</item>
+              <item id="24" translatable="yes">C 0</item>
+              <item id="25" translatable="yes">C#/Db 0</item>
+              <item id="26" translatable="yes">D 0</item>
+              <item id="27" translatable="yes">D#/Eb 0</item>
+              <item id="28" translatable="yes">E 0</item>
+              <item id="29" translatable="yes">F 0</item>
+              <item id="30" translatable="yes">F#/Gb 0</item>
+              <item id="31" translatable="yes">G 0</item>
+              <item id="32" translatable="yes">G#/Ab 0</item>
+              <item id="33" translatable="yes">A 0</item>
+              <item id="34" translatable="yes">A#/Bb 0</item>
+              <item id="35" translatable="yes">B 0</item>
+              <item id="36" translatable="yes">C 1</item>
+              <item id="37" translatable="yes">C#/Db 1</item>
+              <item id="38" translatable="yes">D 1</item>
+              <item id="39" translatable="yes">D#/Eb 1</item>
+              <item id="40" translatable="yes">E 1</item>
+              <item id="41" translatable="yes">F 1</item>
+              <item id="42" translatable="yes">F#/Gb 1</item>
+              <item id="43" translatable="yes">G 1</item>
+              <item id="44" translatable="yes">G#/Ab 1</item>
+              <item id="45" translatable="yes">A 1</item>
+              <item id="46" translatable="yes">A#/Bb 1</item>
+              <item id="47" translatable="yes">B 1</item>
+              <item id="48" translatable="yes">C 2</item>
+              <item id="49" translatable="yes">C#/Db 2</item>
+              <item id="50" translatable="yes">D 2</item>
+              <item id="51" translatable="yes">D#/Eb 2</item>
+              <item id="52" translatable="yes">E 2</item>
+              <item id="53" translatable="yes">F 2</item>
+              <item id="54" translatable="yes">F#/Gb 2</item>
+              <item id="55" translatable="yes">G 2</item>
+              <item id="56" translatable="yes">G#/Ab 2</item>
+              <item id="57" translatable="yes">A 2</item>
+              <item id="58" translatable="yes">A#/Bb 2</item>
+              <item id="59" translatable="yes">B 2</item>
+              <item id="60" translatable="yes">C 3</item>
+              <item id="61" translatable="yes">C#/Db 3</item>
+              <item id="62" translatable="yes">D 3</item>
+              <item id="63" translatable="yes">D#/Eb 3</item>
+              <item id="64" translatable="yes">E 3</item>
+              <item id="65" translatable="yes">F 3</item>
+              <item id="66" translatable="yes">F#/Gb 3</item>
+              <item id="67" translatable="yes">G 3</item>
+              <item id="68" translatable="yes">G#/Ab 3</item>
+              <item id="69" translatable="yes">A 3</item>
+              <item id="70" translatable="yes">A#/Bb 3</item>
+              <item id="71" translatable="yes">B 3</item>
+              <item id="72" translatable="yes">C 4</item>
+              <item id="73" translatable="yes">C#/Db 4</item>
+              <item id="74" translatable="yes">D 4</item>
+              <item id="75" translatable="yes">D#/Eb 4</item>
+              <item id="76" translatable="yes">E 4</item>
+              <item id="77" translatable="yes">F 4</item>
+              <item id="78" translatable="yes">F#/Gb 4</item>
+              <item id="79" translatable="yes">G 4</item>
+              <item id="80" translatable="yes">G#/Ab 4</item>
+              <item id="81" translatable="yes">A 4</item>
+              <item id="82" translatable="yes">A#/Bb 4</item>
+              <item id="83" translatable="yes">B 4</item>
+              <item id="84" translatable="yes">C 5</item>
+              <item id="85" translatable="yes">C#/Db 5</item>
+              <item id="86" translatable="yes">D 5</item>
+              <item id="87" translatable="yes">D#/Eb 5</item>
+              <item id="88" translatable="yes">E 5</item>
+              <item id="89" translatable="yes">F 5</item>
+              <item id="90" translatable="yes">F#/Gb 5</item>
+              <item id="91" translatable="yes">G 5</item>
+              <item id="92" translatable="yes">G#/Ab 5</item>
+              <item id="93" translatable="yes">A 5</item>
+              <item id="94" translatable="yes">A#/Bb 5</item>
+              <item id="95" translatable="yes">B 5</item>
+              <item id="96" translatable="yes">C 6</item>
+              <item id="97" translatable="yes">C#/Db 6</item>
+              <item id="98" translatable="yes">D 6</item>
+              <item id="99" translatable="yes">D#/Eb 6</item>
+              <item id="100" translatable="yes">E 6</item>
+              <item id="101" translatable="yes">F 6</item>
+              <item id="102" translatable="yes">F#/Gb 6</item>
+              <item id="103" translatable="yes">G 6</item>
+              <item id="104" translatable="yes">G#/Ab 6</item>
+              <item id="105" translatable="yes">A 6</item>
+              <item id="106" translatable="yes">A#/Bb 6</item>
+              <item id="107" translatable="yes">B 6</item>
+              <item id="108" translatable="yes">C 7</item>
+              <item id="109" translatable="yes">C#/Db 7</item>
+              <item id="110" translatable="yes">D 7</item>
+              <item id="111" translatable="yes">D#/Eb 7</item>
+              <item id="112" translatable="yes">E 7</item>
+              <item id="113" translatable="yes">F 7</item>
+              <item id="114" translatable="yes">F#/Gb 7</item>
+              <item id="115" translatable="yes">G 7</item>
+              <item id="116" translatable="yes">G#/Ab 7</item>
+              <item id="117" translatable="yes">A 7</item>
+              <item id="118" translatable="yes">A#/Bb 7</item>
+              <item id="119" translatable="yes">B 7</item>
+              <item id="120" translatable="yes">C 8</item>
+              <item id="121" translatable="yes">C#/Db 8</item>
+              <item id="122" translatable="yes">D 8</item>
+              <item id="123" translatable="yes">D#/Eb 8</item>
+              <item id="124" translatable="yes">E 8</item>
+              <item id="125" translatable="yes">F 8</item>
+              <item id="126" translatable="yes">F#/Gb 8</item>
+              <item id="127" translatable="yes">G 8</item>
+            </items>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">To</property>
+          </object>
+          <packing>
+            <property name="left-attach">2</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="track_midi_routing_note_to_combobox_text">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="active">127</property>
+            <items>
+              <item id="0" translatable="yes">C-2</item>
+              <item id="1" translatable="yes">C#/Db-2</item>
+              <item id="2" translatable="yes">D-2</item>
+              <item id="3" translatable="yes">D#/Eb-2</item>
+              <item id="4" translatable="yes">E-2</item>
+              <item id="5" translatable="yes">F-2</item>
+              <item id="6" translatable="yes">F#/Gb-2</item>
+              <item id="7" translatable="yes">G-2</item>
+              <item id="8" translatable="yes">G#/Ab-2</item>
+              <item id="9" translatable="yes">A-2</item>
+              <item id="10" translatable="yes">A#/Bb-2</item>
+              <item id="11" translatable="yes">B-2</item>
+              <item id="12" translatable="yes">C-1</item>
+              <item id="13" translatable="yes">C#/Db-1</item>
+              <item id="14" translatable="yes">D-1</item>
+              <item id="15" translatable="yes">D#/Eb-1</item>
+              <item id="16" translatable="yes">E-1</item>
+              <item id="17" translatable="yes">F-1</item>
+              <item id="18" translatable="yes">F#/Gb-1</item>
+              <item id="19" translatable="yes">G-1</item>
+              <item id="20" translatable="yes">G#/Ab-1</item>
+              <item id="21" translatable="yes">A-1</item>
+              <item id="22" translatable="yes">A#/Bb-1</item>
+              <item id="23" translatable="yes">B-1</item>
+              <item id="24" translatable="yes">C 0</item>
+              <item id="25" translatable="yes">C#/Db 0</item>
+              <item id="26" translatable="yes">D 0</item>
+              <item id="27" translatable="yes">D#/Eb 0</item>
+              <item id="28" translatable="yes">E 0</item>
+              <item id="29" translatable="yes">F 0</item>
+              <item id="30" translatable="yes">F#/Gb 0</item>
+              <item id="31" translatable="yes">G 0</item>
+              <item id="32" translatable="yes">G#/Ab 0</item>
+              <item id="33" translatable="yes">A 0</item>
+              <item id="34" translatable="yes">A#/Bb 0</item>
+              <item id="35" translatable="yes">B 0</item>
+              <item id="36" translatable="yes">C 1</item>
+              <item id="37" translatable="yes">C#/Db 1</item>
+              <item id="38" translatable="yes">D 1</item>
+              <item id="39" translatable="yes">D#/Eb 1</item>
+              <item id="40" translatable="yes">E 1</item>
+              <item id="41" translatable="yes">F 1</item>
+              <item id="42" translatable="yes">F#/Gb 1</item>
+              <item id="43" translatable="yes">G 1</item>
+              <item id="44" translatable="yes">G#/Ab 1</item>
+              <item id="45" translatable="yes">A 1</item>
+              <item id="46" translatable="yes">A#/Bb 1</item>
+              <item id="47" translatable="yes">B 1</item>
+              <item id="48" translatable="yes">C 2</item>
+              <item id="49" translatable="yes">C#/Db 2</item>
+              <item id="50" translatable="yes">D 2</item>
+              <item id="51" translatable="yes">D#/Eb 2</item>
+              <item id="52" translatable="yes">E 2</item>
+              <item id="53" translatable="yes">F 2</item>
+              <item id="54" translatable="yes">F#/Gb 2</item>
+              <item id="55" translatable="yes">G 2</item>
+              <item id="56" translatable="yes">G#/Ab 2</item>
+              <item id="57" translatable="yes">A 2</item>
+              <item id="58" translatable="yes">A#/Bb 2</item>
+              <item id="59" translatable="yes">B 2</item>
+              <item id="60" translatable="yes">C 3</item>
+              <item id="61" translatable="yes">C#/Db 3</item>
+              <item id="62" translatable="yes">D 3</item>
+              <item id="63" translatable="yes">D#/Eb 3</item>
+              <item id="64" translatable="yes">E 3</item>
+              <item id="65" translatable="yes">F 3</item>
+              <item id="66" translatable="yes">F#/Gb 3</item>
+              <item id="67" translatable="yes">G 3</item>
+              <item id="68" translatable="yes">G#/Ab 3</item>
+              <item id="69" translatable="yes">A 3</item>
+              <item id="70" translatable="yes">A#/Bb 3</item>
+              <item id="71" translatable="yes">B 3</item>
+              <item id="72" translatable="yes">C 4</item>
+              <item id="73" translatable="yes">C#/Db 4</item>
+              <item id="74" translatable="yes">D 4</item>
+              <item id="75" translatable="yes">D#/Eb 4</item>
+              <item id="76" translatable="yes">E 4</item>
+              <item id="77" translatable="yes">F 4</item>
+              <item id="78" translatable="yes">F#/Gb 4</item>
+              <item id="79" translatable="yes">G 4</item>
+              <item id="80" translatable="yes">G#/Ab 4</item>
+              <item id="81" translatable="yes">A 4</item>
+              <item id="82" translatable="yes">A#/Bb 4</item>
+              <item id="83" translatable="yes">B 4</item>
+              <item id="84" translatable="yes">C 5</item>
+              <item id="85" translatable="yes">C#/Db 5</item>
+              <item id="86" translatable="yes">D 5</item>
+              <item id="87" translatable="yes">D#/Eb 5</item>
+              <item id="88" translatable="yes">E 5</item>
+              <item id="89" translatable="yes">F 5</item>
+              <item id="90" translatable="yes">F#/Gb 5</item>
+              <item id="91" translatable="yes">G 5</item>
+              <item id="92" translatable="yes">G#/Ab 5</item>
+              <item id="93" translatable="yes">A 5</item>
+              <item id="94" translatable="yes">A#/Bb 5</item>
+              <item id="95" translatable="yes">B 5</item>
+              <item id="96" translatable="yes">C 6</item>
+              <item id="97" translatable="yes">C#/Db 6</item>
+              <item id="98" translatable="yes">D 6</item>
+              <item id="99" translatable="yes">D#/Eb 6</item>
+              <item id="100" translatable="yes">E 6</item>
+              <item id="101" translatable="yes">F 6</item>
+              <item id="102" translatable="yes">F#/Gb 6</item>
+              <item id="103" translatable="yes">G 6</item>
+              <item id="104" translatable="yes">G#/Ab 6</item>
+              <item id="105" translatable="yes">A 6</item>
+              <item id="106" translatable="yes">A#/Bb 6</item>
+              <item id="107" translatable="yes">B 6</item>
+              <item id="108" translatable="yes">C 7</item>
+              <item id="109" translatable="yes">C#/Db 7</item>
+              <item id="110" translatable="yes">D 7</item>
+              <item id="111" translatable="yes">D#/Eb 7</item>
+              <item id="112" translatable="yes">E 7</item>
+              <item id="113" translatable="yes">F 7</item>
+              <item id="114" translatable="yes">F#/Gb 7</item>
+              <item id="115" translatable="yes">G 7</item>
+              <item id="116" translatable="yes">G#/Ab 7</item>
+              <item id="117" translatable="yes">A 7</item>
+              <item id="118" translatable="yes">A#/Bb 7</item>
+              <item id="119" translatable="yes">B 7</item>
+              <item id="120" translatable="yes">C 8</item>
+              <item id="121" translatable="yes">C#/Db 8</item>
+              <item id="122" translatable="yes">D 8</item>
+              <item id="123" translatable="yes">D#/Eb 8</item>
+              <item id="124" translatable="yes">E 8</item>
+              <item id="125" translatable="yes">F 8</item>
+              <item id="126" translatable="yes">F#/Gb 8</item>
+              <item id="127" translatable="yes">G 8</item>
+            </items>
+          </object>
+          <packing>
+            <property name="left-attach">3</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_midi_routing_delete_button">
+            <property name="visible">True</property>
+            <property name="can-focus">True</property>
+            <property name="receives-default">True</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="stock">gtk-delete</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="left-attach">4</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        <child>
+          <placeholder/>
+        </child>
+        <child>
+          <placeholder/>
+        </child>
+        <child>
+          <placeholder/>
+        </child>
+        <child>
+          <placeholder/>
+        </child>
+      </object>
+    </child>
+    <child type="label_item">
+      <placeholder/>
+    </child>
+  </object>
+</interface>

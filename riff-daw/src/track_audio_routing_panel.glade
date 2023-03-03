@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.38.2 -->
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkFrame" id="track_audio_routing_panel">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="label-xalign">0</property>
+    <property name="shadow-type">none</property>
+    <child>
+      <!-- n-columns=5 n-rows=2 -->
+      <object class="GtkGrid">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Track</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel" id="track_audio_routing_send_to_track_label">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">0</property>
+            <property name="width">3</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_audio_routing_delete_button">
+            <property name="visible">True</property>
+            <property name="can-focus">True</property>
+            <property name="receives-default">True</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="stock">gtk-delete</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="left-attach">4</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Input# - Left</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="track_audio_routing_left_channel_input_index_combobox_text">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="active">2</property>
+            <items>
+              <item id="0" translatable="yes">1</item>
+              <item id="1" translatable="yes">2</item>
+              <item id="2" translatable="yes">3</item>
+              <item id="3" translatable="yes">4</item>
+              <item id="4" translatable="yes">5</item>
+              <item id="5" translatable="yes">6</item>
+              <item id="6" translatable="yes">7</item>
+              <item id="7" translatable="yes">8</item>
+              <item id="8" translatable="yes">9</item>
+              <item id="9" translatable="yes">10</item>
+              <item id="10" translatable="yes">11</item>
+              <item id="11" translatable="yes">12</item>
+              <item id="12" translatable="yes">13</item>
+              <item id="13" translatable="yes">14</item>
+              <item id="14" translatable="yes">15</item>
+              <item id="15" translatable="yes">16</item>
+            </items>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">Right</property>
+          </object>
+          <packing>
+            <property name="left-attach">2</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="track_audio_routing_right_channel_input_index_combobox_text">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="active">3</property>
+            <items>
+              <item id="0" translatable="yes">1</item>
+              <item id="1" translatable="yes">2</item>
+              <item id="2" translatable="yes">3</item>
+              <item id="3" translatable="yes">4</item>
+              <item id="4" translatable="yes">5</item>
+              <item id="5" translatable="yes">6</item>
+              <item id="6" translatable="yes">7</item>
+              <item id="7" translatable="yes">8</item>
+              <item id="8" translatable="yes">9</item>
+              <item id="9" translatable="yes">10</item>
+              <item id="10" translatable="yes">11</item>
+              <item id="11" translatable="yes">12</item>
+              <item id="12" translatable="yes">13</item>
+              <item id="13" translatable="yes">14</item>
+              <item id="14" translatable="yes">15</item>
+              <item id="15" translatable="yes">16</item>
+            </items>
+          </object>
+          <packing>
+            <property name="left-attach">3</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <placeholder/>
+        </child>
+      </object>
+    </child>
+    <child type="label_item">
+      <placeholder/>
+    </child>
+  </object>
+</interface>

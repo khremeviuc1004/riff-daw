@@ -1,0 +1,10 @@
+[package]
+name = "clap_checker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap-sys = "0.3.0"
+libc = "0.2.137"
+libloading = "0.7.4"
+parking_lot = "0.12.1"

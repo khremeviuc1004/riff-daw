@@ -1,0 +1,6 @@
+**/target
+**/*.*~
+**/*.glade~
+**/*.log
+/.idea
+.vscode/

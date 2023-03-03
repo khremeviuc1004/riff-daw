@@ -126,50 +126,52 @@ fn main() {
 
     set_up_initial_project_in_ui(&tx_to_audio, &track_audio_coast, &mut gui, tx_from_ui.clone(), state.clone(), vst_host_time_info.clone());
 
-    // scan for vst plugins
+    // scan for audio plugins
     {
         if let Ok(vst_path) = std::env::var("VST_PATH") {
-            match state.lock() {
-                Ok(mut state) => {
-                    if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
-                        let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), vst_path, "".to_string());
-                        for (key, value) in instruments.iter() {
-                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                            state.configuration.scanned_vst_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+            if let Ok(clap_path) = std::env::var("CLAP_PATH") {
+                match state.lock() {
+                    Ok(mut state) => {
+                        if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
+                            let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone());
+                            for (key, value) in instruments.iter() {
+                                state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                                state.configuration.scanned_vst_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                            }
+                            state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
 
-                        for (key, value) in effects.iter() {
-                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                            state.configuration.scanned_vst_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+                            for (key, value) in effects.iter() {
+                                state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
+                                state.configuration.scanned_vst_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                            }
+                            state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
 
-                        state.configuration.save();
+                            state.configuration.save();
+                        }
+                        else {
+                            let mut intermediate_map = HashMap::new();
+                            for (key, value) in state.configuration.scanned_vst_instrument_plugins.successfully_scanned.iter() {
+                                intermediate_map.insert(key.to_string(), value.to_string());
+                            }
+                            for (key, value) in intermediate_map.iter() {
+                                state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                            }
+                            state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+
+                            intermediate_map.clear();
+                            for (key, value) in state.configuration.scanned_vst_effect_plugins.successfully_scanned.iter() {
+                                intermediate_map.insert(key.to_string(), value.to_string());
+                            }
+                            for (key, value) in intermediate_map.iter() {
+                                state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
+                            }
+                            state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+                        }
+
+                        gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
                     }
-                    else {
-                        let mut intermediate_map = HashMap::new();
-                        for (key, value) in state.configuration.scanned_vst_instrument_plugins.successfully_scanned.iter() {
-                            intermediate_map.insert(key.to_string(), value.to_string());
-                        }
-                        for (key, value) in intermediate_map.iter() {
-                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                        intermediate_map.clear();
-                        for (key, value) in state.configuration.scanned_vst_effect_plugins.successfully_scanned.iter() {
-                            intermediate_map.insert(key.to_string(), value.to_string());
-                        }
-                        for (key, value) in intermediate_map.iter() {
-                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-                    }
-
-                    gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+                    Err(_) => {}
                 }
-                Err(_) => {}
             }
         }
     }

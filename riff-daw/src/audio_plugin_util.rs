@@ -3,7 +3,7 @@ use std::{path::Path};
 use std::path::PathBuf;
 use std::process::{Command};
 
-
+use pathsearch::find_executable_in_path;
 
 use simple_clap_host_helper_lib::{plugin::{instance::process::{AudioBuffers, OutOfPlaceAudioBuffers, ProcessConfig, ProcessData}, library::PluginLibrary, ext::audio_ports::AudioPorts}, host::{DAWCallback}};
 use vst::{host::{PluginInstance, PluginLoader}, plugin::Category, plugin::Plugin};
@@ -296,18 +296,21 @@ pub fn create_vst24_audio_plugin(
     }
 }
 
-pub fn scan_for_audio_plugins(vst_path: String, clap_path: String, _vst3_path: String) -> (HashMap<String, String>, HashMap<String, String>) {
+pub fn scan_for_audio_plugins(vst_path: String, clap_path: String) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut instrument_audio_plugins: HashMap<String, String> = HashMap::new();
     let mut effect_audio_plugins: HashMap<String, String> = HashMap::new();
 
-    let vst24_checker = "/home/kevin/Desktop/Data/Personal/Development/Rust/daw/target/debug/vst_checker".to_string();
-    scan_for_audio_plugins_of_type(vst24_checker.as_str(), vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
+    if let Some(vst24_checker) = find_executable_in_path("vst_checker") {
+        if let Some(vst24_checker) = vst24_checker.to_str() {
+            scan_for_audio_plugins_of_type(vst24_checker, vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
+        }
+    }
     
-    // let vst3_checker = "/home/kevin/Desktop/Data/Personal/Development/Rust/daw/target/debug/vst3_checker".to_string();
-    // scan_for_audio_plugins_of_type(vst3_checker.as_str(), vst3_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
-    
-    let clap_checker = "/home/kevin/Desktop/Data/Personal/Development/Rust/daw/target/debug/clap_checker".to_string();
-    scan_for_audio_plugins_of_type(clap_checker.as_str(), clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
+    if let Some(clap_checker) = find_executable_in_path("clap_checker") {
+        if let Some(clap_checker) = clap_checker.to_str() {
+            scan_for_audio_plugins_of_type(clap_checker, clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
+        }
+    }
 
     (instrument_audio_plugins, effect_audio_plugins)
 }

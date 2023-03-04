@@ -20,7 +20,7 @@ jobs:
         submodules: recursive
     - uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: libpango1.0-dev
+        packages: libgtk-3-dev
         version: 1.0
     - name: Build
       run: cargo build --verbose --release

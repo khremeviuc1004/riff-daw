@@ -20,7 +20,7 @@ jobs:
         submodules: recursive
     - uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: libgtk-3-dev libjack-jackd2-dev
+        packages: libgtk-3-dev libjack-jackd2-dev liblzma5 libsndfile1 
         version: 1.0
     - name: Build
       run: cargo build --verbose --release

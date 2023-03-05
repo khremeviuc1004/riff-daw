@@ -25,7 +25,7 @@ jobs:
     - name: List installed libsndfile shared libraries and links
       run: ls -l /usr/lib/x86_64-linux-gnu/libsndfile*
     - name: Create link for libsndfile.so
-      run: sudo find /usr/lib/x86_64-linux-gnu/ -type f -name "libsndfile.so.*" -exec ln -s {} /usr/lib/x86_64-linux-gnu/libsndfile.so
+      run: sudo find /usr/lib/x86_64-linux-gnu/ -type f -name "libsndfile.so.*" -exec ln -s {} /usr/lib/x86_64-linux-gnu/libsndfile.so \;
     - name: Build
       run: cargo build --verbose --release
 #    - name: Run tests

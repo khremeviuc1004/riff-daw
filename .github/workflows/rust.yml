@@ -28,6 +28,8 @@ jobs:
       run: sudo find /usr/lib/x86_64-linux-gnu/ -type f -name "libsndfile.so.*" -exec ln -s {} /usr/lib/x86_64-linux-gnu/libsndfile.so \;
     - name: Build
       run: cargo build --verbose --release
+    - name: Show contents of build directory
+      run: find ./target
 #    - name: Run tests
 #      run: cargo test --verbose
     - name: 'Upload Artifact'

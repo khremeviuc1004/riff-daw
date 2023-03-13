@@ -30,8 +30,8 @@ jobs:
       run: cargo build --verbose --release
     - name: Show contents of build directory
       run: find ./target
-   - name: Run tests
-     run: cargo test --verbose
+    - name: Run tests
+      run: cargo test --verbose
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v3
       with:

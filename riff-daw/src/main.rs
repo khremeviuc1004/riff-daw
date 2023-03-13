@@ -103,13 +103,7 @@ fn main() {
     };
 
     if let Some(application) = gui.ui.wnd_main.application() {
-        gui.ui.menu_item_cut.set_detailed_action_name("app.test");
-        info!("Found an application instance: {}", application.application_id().unwrap().to_string().as_str());
-        let test_action = gio::SimpleAction::new("test", None);
-        test_action.connect_activate(move |_, _| {
-            println!("%%%%%%%%%%%%%%%%%%%%%% Test action executed!");
-        });
-        application.add_action(&test_action);
+        application.connect_startup(build_ui);
     }
 
     {
@@ -274,6 +268,19 @@ fn main() {
         }
         Err(_) => {}
     };
+}
+
+pub fn build_ui(application: &gtk::Application) {
+    let test_action = gio::SimpleAction::new("test", None);
+    test_action.connect_activate(move |_, _| {
+        println!("%%%%%%%%%%%%%%%%%%%%%% Test action executed!");
+    });
+    application.add_action(&test_action);
+    let quit_action = gio::SimpleAction::new("quit", None);
+    quit_action.connect_activate(move |_, _| {
+        println!("%%%%%%%%%%%%%%%%%%%%%% Quit action executed!");
+    });
+    application.add_action(&quit_action);
 }
 
 fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
@@ -629,7 +636,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::SequenceNumber(_) => (),
                                                                 apres::MIDIEvent::Text(_) => (),
                                                                 apres::MIDIEvent::CopyRightNotice(_) => (),
-                                                                apres::MIDIEvent::TrackName(name) => track_name.push_str(name.as_str()),
+                                                                apres::MIDIEvent::TrackName(name) => track_name.push_str(name.as_str().trim_matches(char::from(0))),
                                                                 apres::MIDIEvent::InstrumentName(_) => (),
                                                                 apres::MIDIEvent::Lyric(_) => (),
                                                                 apres::MIDIEvent::Marker(_) => (),

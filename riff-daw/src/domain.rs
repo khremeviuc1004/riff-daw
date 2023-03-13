@@ -2748,7 +2748,6 @@ pub struct TrackBackgroundProcessorHelper {
     pub track_event_blocks_transition_to: Option<Vec<Vec<TrackEvent>>>,
     pub param_event_blocks: Option<Vec<Vec<PluginParameter>>>,
     pub audio_plugin_immediate_events: Vec<TrackEvent>,
-    pub jack_midi_out_event_blocks: Option<Vec<Vec<MidiEvent>>>,
     pub jack_midi_out_immediate_events: Vec<MidiEvent>,
     pub block_index: i32,
     pub play: bool,
@@ -2811,7 +2810,6 @@ impl TrackBackgroundProcessorHelper {
             track_event_blocks_transition_to: None,
             param_event_blocks: None,
             audio_plugin_immediate_events: vec![],
-            jack_midi_out_event_blocks: None,
             jack_midi_out_immediate_events: vec![],
             block_index: 0,
             play: false,
@@ -3872,54 +3870,33 @@ impl TrackBackgroundProcessorHelper {
     }
 
     pub fn process_jack_midi_out_events(&mut self, producer: &mut Producer<(u32, u8, u8, u8, bool)>) {
-        let jack_event_blocks_ref = &self.jack_midi_out_event_blocks;
-        let mut events: Vec<(u32, u8, u8, u8, bool)> = vec![];
-        if self.play {
-            match jack_event_blocks_ref {
-                Some(event_blocks) => {
-                    if event_blocks.is_empty() {
-                        self.block_index = -1;
-                    }
-                    else if self.block_index > event_blocks.len() as i32 {
-                        self.block_index = 0;
-                    }
+        // get the events for this block
+        let (track_events, _) = self.process_events();
+        let mut jack_events: Vec<(u32, u8, u8, u8, bool)> = vec![];
 
-                    if self.block_index > -1 &&
-                        self.play_loop_on &&
-                        (self.block_index > self.play_right_block_index || self.block_index < self.play_left_block_index) {
-                        self.block_index = self.play_left_block_index;
-                    }
-
-                    if self.block_index > -1 {
-                        if let Some(event_block) = event_blocks.get(self.block_index as usize) {
-
-                            for event in event_block {
-                                events.push((event.delta_frames as u32, event.data[0], event.data[1], event.data[2], true));
-                                if event.data[0] == 144 {
-                                    self.playing_notes.push(event.data[1] as i32);
-                                }
-                                else if event.data[0] == 128 {
-                                    self.playing_notes.retain(|note| event.data[1] != *note as u8);
-                                }
-                            }
-
-                            self.block_index += 1;
-                        }
-                        else if self.play_loop_on {
-                            self.block_index = self.play_left_block_index;
-                        }
-                        else {
-                            self.block_index = -1;
-                        }
-                    }
-                },
-                None => (),
+        for event in track_events.iter() {
+            match event {
+                TrackEvent::NoteOn(note_on) => jack_events.push((
+                    note_on.position() as u32,
+                    144 + note_on.channel() as u8,
+                    note_on.note() as u8,
+                    note_on.velocity() as u8,
+                    false,
+                )),
+                TrackEvent::NoteOff(note_off) => jack_events.push((
+                    note_off.position() as u32,
+                    128 + note_off.channel() as u8,
+                    note_off.note() as u8,
+                    0,
+                    false,
+                )),
+                _ => (),
             }
         }
 
         if !self.jack_midi_out_immediate_events.is_empty() {
             for event in self.jack_midi_out_immediate_events.iter() {
-                events.push((event.delta_frames as u32, event.data[0], event.data[1], event.data[2], true));
+                jack_events.push((event.delta_frames as u32, event.data[0], event.data[1], event.data[2], true));
             }
         }
         self.jack_midi_out_immediate_events.clear();
@@ -3933,14 +3910,14 @@ impl TrackBackgroundProcessorHelper {
             self.jack_midi_out_buffer[index].4 = false;
         }
 
-        if !events.is_empty() && !self.mute && !self.coast() {
-            for index in 0..events.len() {
+        if !jack_events.is_empty() && !self.mute && !self.coast() {
+            for index in 0..jack_events.len() {
                 if index < self.jack_midi_out_buffer.len() {
                     // info!("Copied event to the jack midi buffer: {}", events.len());
-                    self.jack_midi_out_buffer[index].0 = events[index].0;
-                    self.jack_midi_out_buffer[index].1 = events[index].1;
-                    self.jack_midi_out_buffer[index].2 = events[index].2;
-                    self.jack_midi_out_buffer[index].3 = events[index].3;
+                    self.jack_midi_out_buffer[index].0 = jack_events[index].0;
+                    self.jack_midi_out_buffer[index].1 = jack_events[index].1;
+                    self.jack_midi_out_buffer[index].2 = jack_events[index].2;
+                    self.jack_midi_out_buffer[index].3 = jack_events[index].3;
                     self.jack_midi_out_buffer[index].4 = true;
                 }
             }
@@ -6369,7 +6346,7 @@ mod tests {
 
     #[test]
     fn can_deserialise() {
-        let json_text = include_str!("test.fdaw");
+        let json_text = include_str!("../test_data/test.fdaw");
         let mut project: Project = serde_json::from_str(json_text).unwrap();
         info!("can_deserialise_from_file success: {}", project.song_mut().name_mut());
     }

@@ -207,6 +207,7 @@ pub enum TrackChangeType {
     RiffCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
     RiffPasteSelected,
     RiffChangeLengthOfSelected(bool, f64, i32, f64, i32), // true to lengthen, false to shorten, window - x1, y1, x2, y2
+    RiffEventsSelected(f64, i32, f64, i32, bool),
 
     AutomationAdd(f64, i32),
     AutomationDelete(f64),
@@ -218,11 +219,12 @@ pub enum TrackChangeType {
         f64,
         i32,
     ), // window - x1, y1, x2, y2
-    AutomationQuantiseSelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
-    AutomationCut(f64, i32, f64, i32),              // window - x1, y1, x2, y2
-    AutomationCopy(f64, i32, f64, i32),             // window - x1, y1, x2, y2
+    AutomationQuantiseSelected,
+    AutomationCut,
+    AutomationCopy,
     AutomationPaste,
     AutomationTypeChange(AutomationChangeData),
+    AutomationSelected(f64, i32, f64, i32, bool),
 
     RouteMidiTo(TrackEventRouting),
     RemoveMidiRouting(String), // route_uuid

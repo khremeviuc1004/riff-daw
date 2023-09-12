@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use log::*;
 
-use crate::domain::DAWItemLength;
+use crate::domain::{DAWItemLength, DAWItemID};
 use crate::{DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent};
 use crate::event::{TranslateDirection, TranslationEntityType};
 
@@ -463,6 +463,7 @@ impl HistoryAction for RiffCutSelectedAction {
         match state.lock() {
             Ok(state) => {
                 let mut state = state;
+                let selected = state.selected_riff_events().to_vec();
 
                 match self.track_uuid.clone() {
                     Some(track_uuid) => {
@@ -481,7 +482,7 @@ impl HistoryAction for RiffCutSelectedAction {
                                                 // store the notes for an undo
                                                 for track_event in riff.events_mut().iter_mut() {
                                                     if let TrackEvent::Note(note) = track_event {
-                                                        if self.y <= note.note() && note.note() <= self.y2 && self.x <= note.position() && (note.position() + note.length()) <= self.x2 {
+                                                        if selected.contains(&note.id_mut()) {
                                                             self.notes.push(note.clone());
                                                             riff_changed = true;
                                                         }
@@ -493,7 +494,7 @@ impl HistoryAction for RiffCutSelectedAction {
                                                     TrackEvent::ActiveSense => true,
                                                     TrackEvent::AfterTouch => true,
                                                     TrackEvent::ProgramChange => true,
-                                                    TrackEvent::Note(note) => !(self.y <= note.note() && note.note() <= self.y2 && self.x <= note.position() && (note.position() + note.length()) <= self.x2),
+                                                    TrackEvent::Note(note) => !selected.contains(&note.id()),
                                                     TrackEvent::NoteOn(_) => true,
                                                     TrackEvent::NoteOff(_) => true,
                                                     TrackEvent::Controller(_) => true,
@@ -579,6 +580,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
     fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<(), String> {
         match state.lock() {
             Ok(state) => {
+                let selected = state.selected_riff_events().to_vec();
                 let tempo = {
                     state.project().song().tempo()
                 };
@@ -603,7 +605,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                                     TrackEvent::ActiveSense => {},
                                                     TrackEvent::AfterTouch => {},
                                                     TrackEvent::ProgramChange => {},
-                                                    TrackEvent::Note(note) => if self.y <= note.note() && note.note() <= self.y2 && self.x <= note.position() && (note.position() + note.length()) <= self.x2 {
+                                                    TrackEvent::Note(note) => if selected.contains(&note.id_mut()) {
                                                         let mut note_number = note.note();
                                                         let mut note_position = note.position();
 
@@ -943,6 +945,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
         match state.lock() {
             Ok(state) => {
                 let mut state = state;
+                let selected = state.selected_riff_events().to_vec();
 
                 match self.track_uuid.as_ref() {
                     Some(track_uuid) => {
@@ -963,31 +966,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::AfterTouch => {},
                                                     TrackEvent::ProgramChange => {},
                                                     TrackEvent::Note(note) => {
-                                                        let lower_y = if self.y < self.y2 {
-                                                            self.y
-                                                        }
-                                                        else {
-                                                            self.y2
-                                                        };
-                                                        let upper_y = if self.y > self.y2 {
-                                                            self.y
-                                                        }
-                                                        else {
-                                                            self.y2
-                                                        };
-                                                        let lower_x = if self.x < self.x2 {
-                                                            self.x
-                                                        }
-                                                        else {
-                                                            self.x2
-                                                        };
-                                                        let upper_x = if self.x > self.x2 {
-                                                            self.x
-                                                        }
-                                                        else {
-                                                            self.x2
-                                                        };
-                                                        if lower_y <= note.note() && note.note() <= upper_y && lower_x <= note.position() && (note.position() + note.length()) <= upper_x {
+                                                        if selected.contains(&note.id_mut()) {
                                                             let note_position = note.position();
 
                                                             if note_position > 0.0 {

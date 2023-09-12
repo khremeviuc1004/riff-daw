@@ -3466,7 +3466,7 @@ impl MainWindow {
                     else if key_name == "a" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the track grid select all message
                         match track_grid.lock() {
-                            Ok(mut grid) => {
+                            Ok(_grid) => {
                                 info!("Not implemented yet!");
                             }
                             Err(_) => {}
@@ -3670,7 +3670,7 @@ impl MainWindow {
         {
             // track_grid_vertical_zoom_scale
             let track_grid = track_grid_arc.clone();
-            let track_drawing_area = self.ui.track_drawing_area.clone();
+            let _track_drawing_area = self.ui.track_drawing_area.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.track_grid_vertical_zoom_scale.connect_value_changed(move |track_grid_vertical_zoom_scale| {
                 let scale = track_grid_vertical_zoom_scale.value();
@@ -4549,7 +4549,7 @@ impl MainWindow {
                         else {
                             MouseButton::Button3
                         };
-                        // info!("Piano keyboard mouse press: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                        // info!("Piano keyboard mouse release: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                         piano_ref.handle_mouse_release(coords.0, coords.1, drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from(""));
                     },
                     Err(error) => info!("Could not lock piano keyboard for drawing: {}", error),
@@ -4740,7 +4740,7 @@ impl MainWindow {
                         else if key_name == "a" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                             // send the piano roll select all message
                             match piano_roll_grid.lock() {
-                                Ok(mut grid) => {
+                                Ok(_grid) => {
                                     info!("Not implemented yet!");
                                 }
                                 Err(_) => {}
@@ -5963,7 +5963,7 @@ impl MainWindow {
     
         {
             let riff_set_uuid = riff_set_uuid.clone();
-            riff_set_blade_head.riff_set_drag_btn.connect_drag_data_get(move |riff_set_drag_btn, drag_context, selection_data, info, time| {
+            riff_set_blade_head.riff_set_drag_btn.connect_drag_data_get(move |_riff_set_drag_btn, _drag_context, selection_data, _info, _time| {
                 info!("Riff set drag data get called.");
                 selection_data.set_text(riff_set_uuid.as_str());
             });
@@ -8287,7 +8287,7 @@ impl MainWindow {
             DRAG_N_DROP_TARGETS.as_ref(), 
             gdk::DragAction::COPY);
 
-        riff_set_heads_box.connect_drag_motion(move |_, _ , x , y, _| {
+        riff_set_heads_box.connect_drag_motion(move |_, _ , x , _y, _| {
             if let Some(window) = riff_sets_view_port.window() {
                 let view_port_width = window.width();
                 let horizontal_adjustment_position = riff_set_horizontal_adjustment.value() as i32;
@@ -8359,7 +8359,7 @@ impl MainWindow {
         item_box: Box, 
         horizontal_adjustment: Adjustment,
         view_port: Viewport,
-        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
+        _tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ){
         item_box.drag_dest_set(
             DestDefaults::ALL, 
@@ -8367,7 +8367,7 @@ impl MainWindow {
             gdk::DragAction::COPY
         );
 
-        item_box.connect_drag_motion(move |_, _ , x , y, _| {
+        item_box.connect_drag_motion(move |_, _ , x , _y, _| {
             if let Some(window) = view_port.window() {
                 let view_port_width = window.width();
                 let horizontal_adjustment_position = horizontal_adjustment.value() as i32;

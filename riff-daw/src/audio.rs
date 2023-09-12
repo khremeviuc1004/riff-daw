@@ -221,6 +221,7 @@ pub struct Audio {
     low_priority_processing_delay_count: i32,
     rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
     jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+    jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
     coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
     custom_midi_out_ports: Vec<Port<MidiOut>>,
     keep_alive: bool,
@@ -233,6 +234,7 @@ impl Audio {
     pub fn new(client: &Client,
                rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+               jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
@@ -262,6 +264,7 @@ impl Audio {
             low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
+            jack_midi_sender_ui,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -274,6 +277,7 @@ impl Audio {
     pub fn new_with_consumers(client: &Client,
                               rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                               jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+                              jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                               audio_consumers: Vec<AudioConsumerDetails<f32>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
@@ -305,6 +309,7 @@ impl Audio {
             low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
+            jack_midi_sender_ui,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -473,7 +478,7 @@ impl Audio {
             }
         }
 
-        let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
+        let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
 
         self.process_preview_sample(process_scope, frames_written, &mut number_of_consumers, left_pan, right_pan)
     }
@@ -554,7 +559,7 @@ impl Audio {
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
-                delta_frames = self.block * 1024 + event.time as i32;
+                delta_frames = self.block * 1024 /* + event.time as i32 */;
             }
 
             if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
@@ -639,7 +644,7 @@ impl Audio {
                 };
 
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_on));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_on));
             }
             else if event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143 { // note off
                 let note_off = MidiEvent {
@@ -652,7 +657,7 @@ impl Audio {
                     note_off_velocity: 0,
                 };
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_off));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_off));
             }
             else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
                 let controller = Self::create_midi_event(event, &mut delta_frames);
@@ -694,7 +699,7 @@ impl Audio {
             }
 
             if self.play_position_in_frames % self.frames_per_beat < 1024 {
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
             }
         }
         else if !self.play { // not playing anymore

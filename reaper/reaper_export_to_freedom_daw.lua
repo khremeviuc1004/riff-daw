@@ -57,7 +57,7 @@ local function new_instrument_track(name)
                 ["num_inputs"] = 0,
                 ["num_outputs"] = 0,
                 ["plugin_type"] = "Unknown",
-                ["shell_plugin_id"] = nil,
+                ["sub_plugin_id"] = nil,
                 ["preset_data"] = "",
                 ["parameters"] = {0},
             },
@@ -70,7 +70,9 @@ local function new_instrument_track(name)
             },
             ["volume"] = 0.0,
             ["pan"] = 0.0,
-        }
+            ["midi_routings"] = {0},
+            ["audio_routings"] = {0}
+          }
     }
 end
 
@@ -91,7 +93,7 @@ local function new_vst_plugin()
         ["num_inputs"] = 0,
         ["num_outputs"] = 0,
         ["plugin_type"] = "Unknown",
-        ["shell_plugin_id"] = nil,
+        ["sub_plugin_id"] = nil,
         ["preset_data"] = "",
     }
 end
@@ -113,7 +115,7 @@ local function new_note(position, note, velocity, duration)
             ["position"] = position,
             ["note"] = note,
             ["velocity"] = velocity,
-            ["duration"] = duration
+            ["length"] = duration
         }
     }
 end
@@ -239,170 +241,76 @@ local function split(pString, pPattern)
     return Table
  end
 
-
-local function handle_instrument_preset(freedomdaw_audio_plugin, reaper_track, fx_index)
-    local _, track_state_chunk = reaper.GetTrackStateChunk(reaper_track, "", false)
-
-    --reaper.ShowConsoleMsg(track_state_chunk)
-
-    local lines = split(track_state_chunk, "\n")
-    local start_of_vst = nil
-    local end_of_vst = nil
-    local instrument_vst_chunk = ""
-    local found_start_line_less_128_chars = false
-    local found_end_line_less_128_chars = false
-    for line_number, line in ipairs(lines) do
-
-    --  print(line .. "\n")
-      end_of_vst = string.match(line, "^(>)$")
-
-      if found_start_line_less_128_chars and start_of_vst ~= nil and line:len() < 128 then
-        break
-      end
-
-      if end_of_vst ~= nil then
-        break
-      end
-
-      if found_start_line_less_128_chars == false and  start_of_vst ~= nil and line:len() < 128 then
-        found_start_line_less_128_chars = true
-      elseif found_start_line_less_128_chars and start_of_vst ~= nil then
-        instrument_vst_chunk = instrument_vst_chunk .. line
-
-        --reaper.ShowConsoleMsg(line:len() .. "\n")
-      end
-
-      if start_of_vst == nil then
-        start_of_vst = string.match(line, "^(<VST.*)$")
-      end
-
-    end
-
-    local count = 0
-    local line = ""
-    for c in instrument_vst_chunk:gmatch(".") do
-      line = line .. c
-
-      if line:len() > 127 then
-        print(line)
-        line = ""
-      end
-    end
-
-    --print(instrument_vst_chunk)
-
-    local uuencoded_preset_data = string.gsub(instrument_vst_chunk:gsub("\n[^\n]*(\n?)$", "%1"), "\n", "")
-
-    -- print("uuencoded_preset_data:\n" .. uuencoded_preset_data)
-
-
-    freedomdaw_audio_plugin["preset_data"] = uuencoded_preset_data
-
-    freedomdaw_audio_plugin["parameters"] = {}
-
-    local param_count = reaper.TrackFX_GetNumParams(reaper_track, fx_index)
-    local param_index = 0
-
-    while param_index < param_count do
-        local retval, param_name = reaper.TrackFX_GetParamName(reaper_track, fx_index, param_index)
-        local param_value = reaper.TrackFX_GetParamNormalized(reaper_track, fx_index, param_index)
-        local parameter = {}
-        local is_instrument = false
-
-        if fx_index == 0 then
-            is_instrument = true
-        end
-
-        parameter["index"] = param_index
-        parameter["position"] = 0.0
-        parameter["name"] = param_name
-        parameter["label"] = ""
-        parameter["text"] = ""
-        parameter["value"] = param_value
-        parameter["instrument"] = is_instrument
-        parameter["plugin_uuid"] = ""
-
-        table.insert(freedomdaw_audio_plugin["parameters"], parameter)
-
-        param_index = param_index + 1
-    end
-end
-
-local function handle_preset(freedomdaw_audio_plugin, reaper_track, fx_index)
+-- techniques in this function have been gleaned from https://github.com/EUGEN27771/ReaScripts/blob/master/FX/gen_Save%20Preset%20for%20last%20touched%20FX.lua
+local function handle_preset(freedomdaw_audio_plugin, reaper_track, fx_index, is_instrument)
     -- Get the preset data
     local _, track_state_chunk = reaper.GetTrackStateChunk(reaper_track, "", false)
-
-    local lines = split(track_state_chunk, "\n")
-    local vst_count = -1;
-    local uuencoded_preset_data = ""
-    local found_vst = false
-    local append = false
-    for line_number, line in ipairs(lines) do
-        local start_of_vst = string.match(line, "<VST")
-        local end_of_vst = string.match(line, ">")
-
-        if found_vst and append and vst_count == fx_index and end_of_vst == nil then
-            uuencoded_preset_data = uuencoded_preset_data .. line .. "\n"
-        end
-
-        -- stop appending when a short line is found (after appending the line)
-        if found_vst and append and vst_count == fx_index and end_of_vst == nil and string.len(line) < 280 then
-            append = false
-        end
-
-        -- start appending from the next line
-        if found_vst and append ~= true and vst_count == fx_index and end_of_vst == nil and string.len(line) < 280 then
-            append = true
-        end
-
-        if start_of_vst ~= nil then
-            -- print("start of vst not nil")
-            found_vst = true
-            vst_count = vst_count + 1
-        elseif end_of_vst ~= nil then
-            -- print("end of vst not nil")
-            found_vst = false
-        end
-
-        -- if found_vst and vst_count == fx_index then
-        --     print("fx_index=" .. fx_index .. ", Vst count=" .. vst_count ..", Line " .. line_number .. " " .. line)
-        -- end
+    local start_index, end_index = track_state_chunk:find("<FXCHAIN")
+    
+    track_state_chunk = track_state_chunk:gsub("(%d+)<(%x+)>", "%1{%2}")
+    
+    -- fast forward to the fx that we are interested in
+    for index = 1, fx_index + 1 do
+        start_index, end_index = track_state_chunk:find("<%u+%s.->", end_index)
     end
+    
+    local retval, reaper_fx_type = reaper.TrackFX_GetNamedConfigParm(reaper_track, fx_index, "fx_type")
 
-    uuencoded_preset_data = string.gsub(uuencoded_preset_data:gsub("\n[^\n]*(\n?)$", "%1"), "\n", "")
+    print("reaper_fx_type")
+    print(reaper_fx_type)
+    print(reaper_fx_type:len())
 
-    -- print("uuencoded_preset_data:\n" .. uuencoded_preset_data)
+    if reaper_fx_type == "VSTi" or reaper_fx_type == "VST" then
+        print("Found VST2 plugin")
+        -- there are 3 blocks
+        -- the VST preset is in block 2
+        -- overwrite block 2s
 
+        local vst24_xml = track_state_chunk:sub(start_index, end_index)
+        print("vst24_xml")
+        print(vst24_xml)
+        local block_count = 1
+        local block_1 = ""
+        local block_1_max_line_length = 280
+        local block_2 = ""
 
-    freedomdaw_audio_plugin["preset_data"] = uuencoded_preset_data
-
-    freedomdaw_audio_plugin["parameters"] = {}
-
-    local param_count = reaper.TrackFX_GetNumParams(reaper_track, fx_index)
-    local param_index = 0
-
-    while param_index < param_count do
-        local retval, param_name = reaper.TrackFX_GetParamName(reaper_track, fx_index, param_index)
-        local param_value = reaper.TrackFX_GetParamNormalized(reaper_track, fx_index, param_index)
-        local parameter = {}
-        local is_instrument = false
-
-        if fx_index == 0 then
-            is_instrument = true
+        if is_instrument then
+            block_1_max_line_length = 128
         end
 
-        parameter["index"] = param_index
-        parameter["position"] = 0.0
-        parameter["name"] = param_name
-        parameter["label"] = ""
-        parameter["text"] = ""
-        parameter["value"] = param_value
-        parameter["instrument"] = is_instrument
-        parameter["plugin_uuid"] = ""
+        print("block#"..block_count)
+        for line in vst24_xml:gmatch("(.-)\n") do
+            if line:match("<VST%s") == nil then
+                print(line:len().." "..line)
+                if block_count == 1 then
+                    block_1 = block_1..line
+                elseif block_count == 2 then
+                    block_2 = block_2..line
+                end
+                
+                if block_count == 1 and line:len() < block_1_max_line_length then
+                    block_count = block_count + 1
+                    if block_count < 4 then
+                    print("block#"..block_count)
+                    end
+                elseif block_count == 2 and line:len() < 280 then
+                    block_count = block_count + 1
+                    if block_count < 4 then
+                    print("block#"..block_count)
+                    end
+                end
+            end
+        end
+        
+        print("Extracted block#1")
+        print(block_1)
+        print("Extracted block#2")
+        print(block_2)
 
-        table.insert(freedomdaw_audio_plugin["parameters"], parameter)
-
-        param_index = param_index + 1
+        freedomdaw_audio_plugin["preset_data"] = block_2
+        freedomdaw_audio_plugin["plugin_type"] = reaper_fx_type:gsub("i", "").."24"
+    else
+        print("Did not match VST2")
     end
 end
 
@@ -432,16 +340,18 @@ local function handle_track_effects(freedomdaw_project, reaper_track, freedomdaw
 
             local retval, track_effect_plugin_ident = reaper.TrackFX_GetNamedConfigParm(reaper_track, track_fx_index, "fx_ident")
             if retval then
-                -- effect["shell_plugin_id"] = tonumber(track_effect_plugin_ident:gsub("^.*<", ""))
-                effect["file"] = track_effect_plugin_ident:gsub("<", ":")
+                print("track_effect_plugin_ident="..track_effect_plugin_ident)
+                effect["sub_plugin_id"] = track_effect_plugin_ident:gsub("^.*<", "")
+                effect["file"] = track_effect_plugin_ident:gsub("<.*", "")
             else
                 local retval, track_effect_plugin_module_name = reaper.BR_TrackFX_GetFXModuleName(reaper_track, track_fx_index)
                 if retval then
+                    print("track_effect_plugin_module_name="..track_effect_plugin_module_name)
                     effect["file"] = track_effect_plugin_module_name
                 end
             end
 
-            handle_preset(effect, reaper_track, track_fx_index)
+            handle_preset(effect, reaper_track, track_fx_index, false)
 
             table.insert(freedomdaw_track["InstrumentTrack"]["effects"], effect)
         end
@@ -455,7 +365,7 @@ local function handle_instrument(freedomdaw_project, reaper_track, freedomdaw_tr
     local track_instrument_plugin_index = 0
     local retval, track_instrument_plugin_name = reaper.TrackFX_GetFXName(reaper_track, track_instrument_plugin_index)
     if retval then
-        freedomdaw_track["InstrumentTrack"]["instrument"]["name"] = track_instrument_plugin_name:gsub("VSTi: ", ""):gsub("VST: ", ""):gsub(" %(.*%)", "")
+        freedomdaw_track["InstrumentTrack"]["instrument"]["name"] = track_instrument_plugin_name:gsub("CLAPi: ", ""):gsub("CLAPi: ", ""):gsub("VSTi: ", ""):gsub("VST: ", ""):gsub(" %(.*%)", "")
         freedomdaw_track["InstrumentTrack"]["instrument"]["is_instrument"] = true
 
         local retval, track_instrument_plugin_type = reaper.TrackFX_GetNamedConfigParm(reaper_track, track_instrument_plugin_index, "fx_type")
@@ -465,16 +375,19 @@ local function handle_instrument(freedomdaw_project, reaper_track, freedomdaw_tr
 
         local retval, track_instrument_plugin_ident = reaper.TrackFX_GetNamedConfigParm(reaper_track, track_instrument_plugin_index, "fx_ident")
         if retval then
-            -- freedomdaw_track["InstrumentTrack"]["instrument"]["shell_plugin_id"] = tonumber(track_instrument_plugin_ident:gsub("^.*<", ""))
-            freedomdaw_track["InstrumentTrack"]["instrument"]["file"] = track_instrument_plugin_ident:gsub("<", ":")
+            print("track_instrument_plugin_ident="..track_instrument_plugin_ident)
+            freedomdaw_track["InstrumentTrack"]["instrument"]["sub_plugin_id"] = track_instrument_plugin_ident:gsub("^.*<", "")
+            freedomdaw_track["InstrumentTrack"]["instrument"]["file"] = track_instrument_plugin_ident:gsub("<.*", "")
+            print("freedomdaw_track[InstrumentTrack][instrument][file]="..freedomdaw_track["InstrumentTrack"]["instrument"]["file"])
         else
             local retval, track_instrument_plugin_index_module_name = reaper.BR_TrackFX_GetFXModuleName(reaper_track, track_instrument_plugin_index)
             if retval then
+                print("track_instrument_plugin_index_module_name="..track_instrument_plugin_index_module_name)
                 freedomdaw_track["InstrumentTrack"]["instrument"]["file"] = track_instrument_plugin_index_module_name
             end
         end
 
-        handle_instrument_preset(freedomdaw_track["InstrumentTrack"]["instrument"], reaper_track, track_instrument_plugin_index)
+        handle_preset(freedomdaw_track["InstrumentTrack"]["instrument"], reaper_track, track_instrument_plugin_index, true)
     end
 end
 
@@ -524,7 +437,7 @@ local function write_freedomdaw_project_file(freedomdaw_project)
 
     -- print( data )
 
-    local freedomdaw_project_file = io.open("/tmp/lua.json", "w")
+    local freedomdaw_project_file = io.open("/tmp/lua.fdaw", "w")
     if freedomdaw_project_file ~= nil then
         freedomdaw_project_file:write(data)
         freedomdaw_project_file:write("\n")

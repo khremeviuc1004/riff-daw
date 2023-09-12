@@ -73,6 +73,8 @@ pub struct DAWState {
     track_grid_cursor_follow: bool,
     pub current_view: CurrentView,
     pub dirty: bool,
+    selected_automation: Vec<String>,
+    selected_riff_events: Vec<String>,
 }
 
 impl DAWState {
@@ -118,6 +120,8 @@ impl DAWState {
             current_view: CurrentView::Track,
             selected_riff_arrangement_uuid: None,
             dirty: false,
+            selected_automation: Vec::new(),
+            selected_riff_events: Vec::new(),
         }
     }
 
@@ -1552,13 +1556,14 @@ impl DAWState {
         &mut self,
         rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
         jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
         vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
-        let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender.clone(), coast, vst_host_time_info);
-        let notifications = JackNotificationHandler::new(jack_midi_sender);
+        let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender.clone(), jack_midi_sender_ui.clone(), coast, vst_host_time_info);
+        let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
         // these should come from configuration and be selected from a menu and dialogue
@@ -1573,6 +1578,7 @@ impl DAWState {
     pub fn restart_jack(&mut self,
                         rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                         jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+                        jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                         vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) {
@@ -1587,12 +1593,13 @@ impl DAWState {
                         &jack_client,
                         rx_to_audio,
                         jack_midi_sender.clone(),
+                        jack_midi_sender_ui.clone(),
                         coast,
                         consumers,
                         vec![],
                         vst_host_time_info,
                     );
-                    let notifications = JackNotificationHandler::new(jack_midi_sender);
+                    let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
                     let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
                     for (from_name, to_name) in self.jack_connections.iter() {
                         let _ = jack_async_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());
@@ -1600,12 +1607,12 @@ impl DAWState {
                     self.set_jack_client(jack_async_client);
                 }
                 Err(_) => {
-                    self.start_jack(rx_to_audio, jack_midi_sender, coast, vst_host_time_info);
+                    self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, coast, vst_host_time_info);
                 }
             }
         }
         else {
-            self.start_jack(rx_to_audio, jack_midi_sender, coast, vst_host_time_info);
+            self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, coast, vst_host_time_info);
         }
     }
 
@@ -2045,6 +2052,22 @@ impl DAWState {
 
     pub fn set_automation_edit_type(&mut self, automation_edit_type: AutomationEditType) {
         self.automation_edit_type = automation_edit_type;
+    }
+
+    pub fn selected_automation(&self) -> &[String] {
+        self.selected_automation.as_ref()
+    }
+
+    pub fn selected_automation_mut(&mut self) -> &mut Vec<String> {
+        &mut self.selected_automation
+    }
+
+    pub fn selected_riff_events(&self) -> &[String] {
+        self.selected_riff_events.as_ref()
+    }
+
+    pub fn selected_riff_events_mut(&mut self) -> &mut Vec<String> {
+        &mut self.selected_riff_events
     }
 }
 

@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::thread;
 
 use clap_sys::{ext::{gui::{clap_window, CLAP_WINDOW_API_X11, clap_window_handle}}, process::clap_process};
-use jack::{MidiOut, Port};
+use jack::{MidiOut, Port, Control};
 use log::*;
 use mlua::prelude::LuaUserData;
 use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
@@ -49,6 +49,48 @@ pub enum TrackEvent {
     Measure(Measure),
 }
 
+impl DAWItemID for TrackEvent {
+    fn id(&self) -> String {
+        match self {
+            TrackEvent::ActiveSense => Uuid::nil().to_string(),
+            TrackEvent::AfterTouch => Uuid::nil().to_string(),
+            TrackEvent::ProgramChange => Uuid::nil().to_string(),
+            TrackEvent::Note(note) => note.id(),
+            TrackEvent::NoteOn(note_on) => Uuid::nil().to_string(),
+            TrackEvent::NoteOff(note_off) => Uuid::nil().to_string(),
+            TrackEvent::Controller(controller) => controller.id(),
+            TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
+            TrackEvent::KeyPressure => Uuid::nil().to_string(),
+            TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
+            TrackEvent::Sample(sample_reference) => Uuid::nil().to_string(),
+            TrackEvent::Measure(measure) => Uuid::nil().to_string(),
+            TrackEvent::NoteExpression(note_expression) => Uuid::nil().to_string(),
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        match self {
+            TrackEvent::ActiveSense => Uuid::nil().to_string(),
+            TrackEvent::AfterTouch => Uuid::nil().to_string(),
+            TrackEvent::ProgramChange => Uuid::nil().to_string(),
+            TrackEvent::Note(note) => note.id(),
+            TrackEvent::NoteOn(note_on) => Uuid::nil().to_string(),
+            TrackEvent::NoteOff(note_off) => Uuid::nil().to_string(),
+            TrackEvent::Controller(controller) => controller.id(),
+            TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
+            TrackEvent::KeyPressure => Uuid::nil().to_string(),
+            TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
+            TrackEvent::Sample(sample_reference) => Uuid::nil().to_string(),
+            TrackEvent::Measure(measure) => Uuid::nil().to_string(),
+            TrackEvent::NoteExpression(note_expression) => Uuid::nil().to_string(),
+        }
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        todo!()
+    }
+}
+
 impl DAWItemPosition for TrackEvent {
     fn position(&self) -> f64 {
         match self {
@@ -59,7 +101,7 @@ impl DAWItemPosition for TrackEvent {
             TrackEvent::NoteOn(note_on) => note_on.position(),
             TrackEvent::NoteOff(note_off) => note_off.position(),
             TrackEvent::Controller(controller) => controller.position(),
-            TrackEvent::PitchBend(_pitch_bend) => 0.0,
+            TrackEvent::PitchBend(pitch_bend) => pitch_bend.position(),
             TrackEvent::KeyPressure => 0.0,
             TrackEvent::AudioPluginParameter(parameter) => parameter.position(),
             TrackEvent::Sample(sample_reference) => sample_reference.position(),
@@ -167,6 +209,13 @@ impl Track for TrackType {
             TrackType::InstrumentTrack(track) => track.colour(),
             TrackType::AudioTrack(track) => track.colour(),
             TrackType::MidiTrack(track) => track.colour(),
+        }
+    }
+    fn colour_mut(&mut self) -> (f64, f64, f64, f64) {
+        match self {
+            TrackType::InstrumentTrack(track) => track.colour_mut(),
+            TrackType::AudioTrack(track) => track.colour_mut(),
+            TrackType::MidiTrack(track) => track.colour_mut(),
         }
     }
     fn set_colour(&mut self, red: f64, green: f64, blue: f64, alpha: f64) {
@@ -401,6 +450,8 @@ pub enum NoteExpressionType {
 
 #[derive(Clone, Copy, Serialize, Deserialize, Default)]
 pub struct NoteExpression {
+    #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
+    id: Uuid,
     expression_type: NoteExpressionType,
     port: i16,
     channel: i16,
@@ -408,6 +459,19 @@ pub struct NoteExpression {
 	note_id: i32,
     key: i32,
 	value: f64,
+}
+
+impl DAWItemID for NoteExpression {
+    fn id(&self) -> String {
+        return self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
 }
 
 impl DAWItemPosition for NoteExpression {
@@ -429,6 +493,7 @@ impl NoteExpression {
 			note_id,
             key,
 			value,
+            id: Uuid::new_v4(),
 		}
 	}
 
@@ -475,6 +540,8 @@ impl NoteExpression {
 
 #[derive(Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 pub struct Note {
+    #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
+    id: Uuid,
     #[serde(default)]
     port: u16,
     #[serde(default)]
@@ -487,14 +554,14 @@ pub struct Note {
 
 impl DAWItemID for Note {
     fn id(&self) -> String {
-        Uuid::nil().to_string()
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, _uuid: String) {
     }
 
     fn id_mut(&mut self) -> String {
-        Uuid::nil().to_string()
-    }
-
-    fn set_id(&mut self, uuid: String) {
+        return self.id.to_string()
     }
 }
 
@@ -536,6 +603,7 @@ impl Note {
 			note: 60,
 			velocity: 127,
             length: 1.0,
+            id: Uuid::new_v4(),
 		}
 	}
 	pub fn new_with_params(position: f64, note: i32, velocity: i32, duration: f64) -> Note {
@@ -546,6 +614,7 @@ impl Note {
 			note,
 			velocity,
             length: duration,
+            id: Uuid::new_v4(),
 		}
 	}
 
@@ -740,9 +809,24 @@ impl DAWItemPosition for NoteOff {
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Controller {
+    #[serde(skip_serializing, skip_deserializing)]
+    id: Uuid,
 	position: f64,
 	controller: i32,
     value: i32,
+}
+
+impl DAWItemID for Controller {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
 }
 
 impl DAWItemPosition for Controller {
@@ -760,6 +844,7 @@ impl Controller {
 			position,
 			controller,
             value,
+            id: Uuid::new_v4(),
 		}
 	}
 
@@ -786,8 +871,23 @@ impl Controller {
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct PitchBend {
+    #[serde(skip_serializing, skip_deserializing)]
+    id: Uuid,
     position: f64,
     value: i32,
+}
+
+impl DAWItemID for PitchBend {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
 }
 
 impl DAWItemPosition for PitchBend {
@@ -801,13 +901,21 @@ impl DAWItemPosition for PitchBend {
 
 impl PitchBend {
     pub fn new(position: f64, value: i32) -> Self {
-        Self { position, value }
+        Self { 
+            position, 
+            value,
+            id: Uuid::new_v4(),
+         }
     }
     pub fn new_from_midi_bytes(position: f64, lsb: u8, msb: u8) -> Self {
         let mut value: u16 = msb as u16;
         value <<= 7;
         value |= lsb as u16;
-        Self { position, value: value as i32 }
+        Self { 
+            position, 
+            value: value as i32,
+            id: Uuid::new_v4(),
+        }
     }
     pub fn value(&self) -> i32 {
         self.value
@@ -985,14 +1093,14 @@ impl DAWItemID for Riff {
         self.uuid().to_string()
     }
 
-    fn id_mut(&mut self) -> String {
-        self.uuid().to_string()
-    }
-
     fn set_id(&mut self, uuid: String) {
         if let Ok(uuid) = Uuid::parse_str(uuid.as_str()) {
             self.uuid = uuid;
         }
+    }
+
+    fn id_mut(&mut self) -> String {
+        self.uuid.to_string()
     }
 }
 
@@ -1020,7 +1128,7 @@ impl DAWItemVerticalIndex for Riff {
         0
     }
 
-    fn set_vertical_index(&mut self, value: i32) {
+    fn set_vertical_index(&mut self, _value: i32) {
         
     }
 }
@@ -1094,14 +1202,14 @@ impl DAWItemID for RiffReference {
         self.uuid().to_string()
     }
 
-    fn id_mut(&mut self) -> String {
-        self.uuid().to_string()
-    }
-
     fn set_id(&mut self, uuid: String) {
         if let Ok(uuid) = Uuid::parse_str(uuid.as_str()) {
             self.uuid = uuid;
         }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.uuid.to_string()
     }
 }
 
@@ -1119,7 +1227,7 @@ impl DAWItemLength for RiffReference {
         0.0
     }
 
-    fn set_length(&mut self, length: f64) {
+    fn set_length(&mut self, _length: f64) {
         
     }
 }
@@ -1129,7 +1237,7 @@ impl DAWItemVerticalIndex for RiffReference {
         0
     }
 
-    fn set_vertical_index(&mut self, value: i32) {
+    fn set_vertical_index(&mut self, _value: i32) {
         
     }
 }
@@ -1818,11 +1926,26 @@ impl PluginParameterDetail {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PluginParameter {
+    #[serde(skip_serializing, skip_deserializing)]
+    pub id: Uuid,
     pub index: i32,
 	pub position: f64,
     pub value: f32,
     pub instrument: bool,
     pub plugin_uuid: Uuid,
+}
+
+impl DAWItemID for PluginParameter {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+    }
+
+    fn id_mut(&mut self) -> String {
+        self.id.to_string()
+    }
 }
 
 impl DAWItemPosition for PluginParameter {
@@ -4647,6 +4770,7 @@ pub trait Track {
     fn solo(&self) -> bool;
     fn set_solo(&mut self, solo: bool);
     fn colour(&self) -> (f64, f64, f64, f64);
+    fn colour_mut(&mut self) -> (f64, f64, f64, f64);
     fn set_colour(&mut self, red: f64, green: f64, blue: f64, alpha: f64);
     fn riffs_mut(&mut self) -> &mut Vec<Riff>;
     fn riff_refs_mut(&mut self) -> &mut Vec<RiffReference>;
@@ -4805,6 +4929,10 @@ impl Track for InstrumentTrack {
     }
 
     fn colour(&self) -> (f64, f64, f64, f64) {
+        (self.red, self.green, self.blue, self.alpha)
+    }
+
+    fn colour_mut(&mut self) -> (f64, f64, f64, f64) {
         (self.red, self.green, self.blue, self.alpha)
     }
 
@@ -5067,6 +5195,10 @@ impl Track for MidiTrack {
         (self.red, self.green, self.blue, self.alpha)
     }
 
+    fn colour_mut(&mut self) -> (f64, f64, f64, f64) {
+        (self.red, self.green, self.blue, self.alpha)
+    }
+
     fn set_colour(&mut self, red: f64, green: f64, blue: f64, alpha: f64) {
         self.red = red;
         self.green = green;
@@ -5259,6 +5391,10 @@ impl Track for AudioTrack {
     }
 
     fn colour(&self) -> (f64, f64, f64, f64) {
+        (self.red, self.green, self.blue, self.alpha)
+    }
+
+    fn colour_mut(&mut self) -> (f64, f64, f64, f64) {
         (self.red, self.green, self.blue, self.alpha)
     }
 

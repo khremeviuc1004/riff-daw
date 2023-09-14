@@ -1325,17 +1325,19 @@ impl DAWState {
                 info!("");
                 let automation: Vec<TrackEvent> = vec![];
                 let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
-                self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
+                                self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
             }
         }
+
+        let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
 
         // tell each track audio to play
         for track in self.project().song().tracks() {
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));
+            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, number_of_blocks));
         }
 
         // set the start block and the number of blocks in the jack audio layer
-        let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
                 Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play riff sequence on: {}", error),
@@ -1469,13 +1471,15 @@ impl DAWState {
             }
         }
 
+        let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
+
         // tell each track audio to play
         for track in tracks {
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));
+            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, number_of_blocks));
         }
 
         // set the start block and the number of blocks in the jack audio layer
-        let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
                 Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play riff arrangement on: {}", error),

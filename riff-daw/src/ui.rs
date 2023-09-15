@@ -3306,7 +3306,7 @@ impl MainWindow {
         let track_grid = BeatGrid::new_with_custom(
             0.04,
             1.0,
-            19.0,
+            18.0,
             50.0,
             4,
             Some(std::boxed::Box::new(track_grid_custom_painter)),

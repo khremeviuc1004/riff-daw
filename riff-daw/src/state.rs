@@ -66,7 +66,7 @@ pub struct DAWState {
     jack_client: Vec<AsyncClient<JackNotificationHandler, Audio>>,
     jack_connections: HashMap<String, String>,
     sample_data: HashMap<String, SampleData>,
-    track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<f32>>>>,
+    track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>>,
     centre_split_pane_position: i32,
     vst_instrument_plugins: IndexMap<String, String>,
     vst_effect_plugins: IndexMap<String, String>,
@@ -1675,11 +1675,8 @@ impl DAWState {
                     let number_of_audio_type_tracks = track_render_audio_consumers.len() as f32;
                     let mut master_left_channel_data: [f32; 1024] = [0.0; 1024];
                     let mut master_right_channel_data: [f32; 1024] = [0.0; 1024];
-                    let mut left_channel_data: [f32; 1024] = [0.0; 1024];
-                    let mut right_channel_data: [f32; 1024] = [0.0; 1024];
-                    let mut left_sample_count: u32 = 0;
-                    let mut right_sample_count: u32 = 0;
                     let mut sample_data = vec![];
+                    let mut audio_blocks = vec![AudioBlock::default()];
 
                     for _block_number in 0..number_of_blocks {
                         // reset the master block
@@ -1689,20 +1686,17 @@ impl DAWState {
                         }
 
                         for (_track_uuid, track_audio_consumer_details) in track_render_audio_consumers.iter() {
-                            if let Some(left_bytes_read) = track_audio_consumer_details.consumer_left().read_blocking(&mut left_channel_data) {
+                            if let Some(blocks_read) = track_audio_consumer_details.consumer().read_blocking(&mut audio_blocks) {
                                 // info!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
                                 // copy the track channel data to the the master channels
-                                for index in 0..left_bytes_read as usize {
-                                    master_left_channel_data[index] += left_channel_data[index] / number_of_audio_type_tracks;
-                                    left_sample_count += 1;
-                                }
-                            }
-                            if let Some(right_bytes_read) = track_audio_consumer_details.consumer_right().read_blocking(&mut right_channel_data) {
-                                // info!("State.export_to_wave_file: track_uuid={}, channel=right, byes_read={}", track_uuid.as_str(), right_bytes_read);
-                                // copy the track channel data to the the master channels
-                                for index in 0..right_bytes_read as usize {
-                                    master_right_channel_data[index] += right_channel_data[index] / number_of_audio_type_tracks;
-                                    right_sample_count += 1;
+                                if blocks_read == 1 {
+                                    let audio_block = audio_blocks.get(0).unwrap();
+                                    for index in 0..1024_usize as usize {
+                                        master_left_channel_data[index] += audio_block.audio_data_left[index] / number_of_audio_type_tracks;
+                                    }
+                                    for index in 0..1024_usize as usize {
+                                        master_right_channel_data[index] += audio_block.audio_data_right[index] / number_of_audio_type_tracks;
+                                    }
                                 }
                             }
                         }
@@ -1829,11 +1823,11 @@ impl DAWState {
         }
     }
 
-    pub fn track_render_audio_consumers(&self) -> &Arc<Mutex<HashMap<String, AudioConsumerDetails<f32>>>> {
+    pub fn track_render_audio_consumers(&self) -> &Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>> {
         &self.track_render_audio_consumers
     }
 
-    pub fn track_render_audio_consumers_mut(&mut self) -> &mut Arc<Mutex<HashMap<String, AudioConsumerDetails<f32>>>> {
+    pub fn track_render_audio_consumers_mut(&mut self) -> &mut Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>> {
         &mut self.track_render_audio_consumers
     }
 

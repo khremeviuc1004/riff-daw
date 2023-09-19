@@ -12,7 +12,7 @@ serde = { version = "1.0.132", features = ["derive"] }
 serde_json = { version = "1.0.73", features = ["preserve_order"] }
 cairo-rs = "0.14.9"
 jack = "0.10.0"
-rb = "0.3.2"
+rb = "0.4.1"
 vst = { path = "../lib/vst-rs" }
 simple-clap-host-helper-lib = { path = "../lib/simple-clap-host-helper-lib" }
 raw-window-handle = "0.4.2"

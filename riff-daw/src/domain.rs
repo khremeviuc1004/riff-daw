@@ -4069,14 +4069,14 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
-    pub fn send_render_audio_consumer_details_to_app(&self, track_render_audio_consumer_details: AudioConsumerDetails<f32>) {
+    pub fn send_render_audio_consumer_details_to_app(&self, track_render_audio_consumer_details: AudioConsumerDetails<AudioBlock>) {
         match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::TrackRenderAudioConsumer(track_render_audio_consumer_details)) {
             Ok(_) => (),
             Err(_) => info!("AudioPlugin could not send render audio consumer detail."),
         }
     }
 
-    pub fn send_audio_consumer_details_to_jack(&self, audio_consumer_details: AudioConsumerDetails<f32>) {
+    pub fn send_audio_consumer_details_to_jack(&self, audio_consumer_details: AudioConsumerDetails<AudioBlock>) {
         match self.tx_audio.send(AudioLayerInwardEvent::NewAudioConsumer(audio_consumer_details)) {
             Ok(_) => (),
             Err(_) => info!("AudioPlugin could not send audio consumer detail."),
@@ -4215,6 +4215,28 @@ impl TrackBackgroundProcessorHelper {
     }
 }
 
+#[derive(Copy)]
+pub struct AudioBlock {
+    pub block: i32,
+    pub audio_data_left: [f32; 1024],
+    pub audio_data_right: [f32; 1024],
+}
+
+impl Default for AudioBlock {
+    fn default() -> Self {
+        Self { 
+            block: 0, 
+            audio_data_left: [0.0f32; 1024], 
+            audio_data_right: [0.0f32; 1024] }
+    }
+}
+
+impl Clone for AudioBlock {
+    fn clone(&self) -> Self {
+        Self { block: self.block.clone(), audio_data_left: [-1.0; 1024], audio_data_right: [1.0; 1024] }
+    }
+}
+
 #[derive(Default)]
 pub struct InstrumentTrackBackgroundProcessor{
 }
@@ -4248,22 +4270,16 @@ impl InstrumentTrackBackgroundProcessor {
                 const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
-                let render_ring_buffer_left: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let render_producer_left = render_ring_buffer_left.producer();
-                let render_consumer_left = render_ring_buffer_left.consumer();
-                let render_ring_buffer_right: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let render_producer_right = render_ring_buffer_right.producer();
-                let render_consumer_right = render_ring_buffer_right.consumer();
+                let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let render_producer_block = render_ring_buffer_block.producer();
+                let render_consumer_block = render_ring_buffer_block.consumer();
                 let track_render_audio_consumer_details =
-                    AudioConsumerDetails::<f32>::new(track_uuid.clone(), render_consumer_left, render_consumer_right);
+                    AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), render_consumer_block);
 
-                let ring_buffer_left: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let producer_left = ring_buffer_left.producer();
-                let consumer_left = ring_buffer_left.consumer();
-                let ring_buffer_right: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let producer_right = ring_buffer_right.producer();
-                let consumer_right = ring_buffer_right.consumer();
-                let audio_consumer_details = AudioConsumerDetails::<f32>::new(track_uuid.clone(), consumer_left, consumer_right);
+                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let producer_ring_buffer_block = ring_buffer_block.producer();
+                let consumer_ring_buffer_block = ring_buffer_block.consumer();
+                let audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), consumer_ring_buffer_block);
 
                 let mut host_buffer: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
                 let mut host_buffer_swapped: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
@@ -4288,6 +4304,8 @@ impl InstrumentTrackBackgroundProcessor {
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
                 let mut routed_audio_right_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
 
+                let mut audio_block = AudioBlock::default();
+                let mut audio_block_buffer = vec![audio_block];
 
                 track_background_processor_helper.send_render_audio_consumer_details_to_app(track_render_audio_consumer_details);
                 track_background_processor_helper.send_audio_consumer_details_to_jack(audio_consumer_details);
@@ -4449,36 +4467,43 @@ impl InstrumentTrackBackgroundProcessor {
                     }
 
                     // transfer to the ring buffer
-                    if mode == TrackBackgroundProcessorMode::AudioOut {
+                    if mode == TrackBackgroundProcessorMode::AudioOut || mode == TrackBackgroundProcessorMode::Render {
+                        let audio_block = audio_block_buffer.get_mut(0).unwrap();
+
+                        audio_block.block = track_background_processor_helper.block_index;
+
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
-                        for left_frame in left_channel.iter_mut() {
+                        for (index, left_frame) in left_channel.iter_mut().enumerate() {
                             *left_frame *= track_background_processor_helper.volume;
                             *left_frame *= left_pan;
                             if *left_frame > left_channel_level {
                                 left_channel_level = *left_frame;
                             }
+                            audio_block.audio_data_left[index] = *left_frame;
                         }
                         let right_channel = outputs_32.get_mut(1);
-                        for right_frame in right_channel.iter_mut() {
+                        for (index, right_frame) in right_channel.iter_mut().enumerate() {
                             *right_frame *= track_background_processor_helper.volume;
                             *right_frame *= right_pan;
                             if *right_frame > right_channel_level {
                                 right_channel_level = *right_frame;
                             }
+                            audio_block.audio_data_right[index] = *right_frame;
                         }
 
-                        producer_left.write_blocking(outputs_32.get_mut(0));
-                        producer_right.write_blocking(outputs_32.get_mut(1));
+                        if mode == TrackBackgroundProcessorMode::AudioOut {
+                            let _ = producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+                        }
+                        else {
+                            let _ = render_producer_block.write_blocking(&audio_block_buffer);
+                        }
+
+                        // might be a good idea to do this every x number of blocks
                         let _ = tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
                     else if mode == TrackBackgroundProcessorMode::Coast {
                         thread::sleep(Duration::from_millis(100));
-                    }
-                    else if mode == TrackBackgroundProcessorMode::Render {
-                        let (_, mut outputs_32) = audio_buffer_in_use.split();
-                        render_producer_left.write_blocking(outputs_32.get_mut(0));
-                        render_producer_right.write_blocking(outputs_32.get_mut(1));
                     }
                 } // end loop
 
@@ -4523,18 +4548,15 @@ impl AudioTrackBackgroundProcessor {
                 const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
-                let render_ring_buffer_left: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let (render_producer_left, render_consumer_left) = (render_ring_buffer_left.producer(), render_ring_buffer_left.consumer());
-                let render_ring_buffer_right: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let (render_producer_right, render_consumer_right) = (render_ring_buffer_right.producer(), render_ring_buffer_right.consumer());
-                let track_render_audio_consumer_details =
-                    AudioConsumerDetails::<f32>::new(track_uuid.clone(), render_consumer_left, render_consumer_right);
+                let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let render_producer_block = render_ring_buffer_block.producer();
+                let render_consumer_block = render_ring_buffer_block.consumer();
+                let track_render_audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), render_consumer_block);
 
-                let ring_buffer_left: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let (producer_left, consumer_left) = (ring_buffer_left.producer(), ring_buffer_left.consumer());
-                let ring_buffer_right: SpscRb<f32> = SpscRb::new(BLOCK_SIZE);
-                let (producer_right, consumer_right) = (ring_buffer_right.producer(), ring_buffer_right.consumer());
-                let audio_consumer_details = AudioConsumerDetails::<f32>::new(track_uuid.clone(), consumer_left, consumer_right);
+                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let producer_ring_buffer_block = ring_buffer_block.producer();
+                let consumer_ring_buffer_block = ring_buffer_block.consumer();
+                let audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), consumer_ring_buffer_block);
 
                 let mut host_buffer: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
                 let mut host_buffer_swapped: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
@@ -4560,6 +4582,12 @@ impl AudioTrackBackgroundProcessor {
 
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
                 let mut routed_audio_right_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
+
+                let mut audio_block = AudioBlock::default();
+                let mut audio_block_buffer = vec![audio_block];
+
+                let mut render_audio_block = AudioBlock::default();
+                let mut render_audio_block_buffer = vec![render_audio_block];
 
                 track_background_processor_helper.send_render_audio_consumer_details_to_app(track_render_audio_consumer_details);
                 track_background_processor_helper.send_audio_consumer_details_to_jack(audio_consumer_details);
@@ -4655,26 +4683,29 @@ impl AudioTrackBackgroundProcessor {
                         &mut audio_buffer
                     };
                     if mode == TrackBackgroundProcessorMode::AudioOut {
+                        let audio_block = audio_block_buffer.get_mut(0).unwrap();
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
-                        for left_frame in left_channel.iter_mut() {
+                        for (index, left_frame) in left_channel.iter_mut().enumerate() {
                             *left_frame *= track_background_processor_helper.volume;
                             *left_frame *= left_pan;
                             if *left_frame > left_channel_level {
                                 left_channel_level = *left_frame;
                             }
+                            audio_block.audio_data_left[index] = *left_frame;
                         }
                         let right_channel = outputs_32.get_mut(1);
-                        for right_frame in right_channel.iter_mut() {
+                        for (index, right_frame) in right_channel.iter_mut().enumerate() {
                             *right_frame *= track_background_processor_helper.volume;
                             *right_frame *= right_pan;
                             if *right_frame > right_channel_level {
                                 right_channel_level = *right_frame;
                             }
+                            audio_block.audio_data_right[index] = *right_frame;
                         }
 
-                        producer_left.write_blocking(outputs_32.get_mut(0));
-                        producer_right.write_blocking(outputs_32.get_mut(1));
+                        producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+
                         let _ = tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
                     else if mode == TrackBackgroundProcessorMode::Coast {
@@ -4682,8 +4713,7 @@ impl AudioTrackBackgroundProcessor {
                     }
                     else if mode == TrackBackgroundProcessorMode::Render {
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
-                        render_producer_left.write_blocking(outputs_32.get_mut(0));
-                        render_producer_right.write_blocking(outputs_32.get_mut(1));
+                        render_producer_block.write_blocking(&render_audio_block_buffer);
                     }
                     
                 } // end loop
@@ -6100,16 +6130,14 @@ impl Project {
 
 pub struct AudioConsumerDetails<T> {
     track_id: String,
-    consumer_left: Consumer<T>,
-    consumer_right: Consumer<T>,
+    consumer: Consumer<T>,
 }
 
 impl<T> AudioConsumerDetails<T> {
-    pub fn new(track_id: String, consumer_left: Consumer<T>, consumer_right: Consumer<T>) -> Self {
+    pub fn new(track_id: String, consumer: Consumer<T>) -> Self {
         Self {
             track_id,
-            consumer_left,
-            consumer_right
+            consumer,
         }
     }
 
@@ -6128,34 +6156,16 @@ impl<T> AudioConsumerDetails<T> {
         self.track_id = track_id;
     }
 
-    /// Get a reference to the consumer details consumer left.
-    pub fn consumer_left(&self) -> &Consumer<T> {
-        &self.consumer_left
+    pub fn consumer(&self) -> &Consumer<T> {
+        &self.consumer
     }
 
-    /// Get a mutable reference to the consumer details consumer left.
-    pub fn consumer_left_mut(&mut self) -> &mut Consumer<T> {
-        &mut self.consumer_left
+    pub fn consumer_mut(&mut self) -> &mut Consumer<T> {
+        &mut self.consumer
     }
 
-    /// Set the consumer details consumer left.
-    pub fn set_consumer_left(&mut self, consumer_left: Consumer<T>) {
-        self.consumer_left = consumer_left;
-    }
-
-    /// Get a reference to the consumer details consumer right.
-    pub fn consumer_right(&self) -> &Consumer<T> {
-        &self.consumer_right
-    }
-
-    /// Get a mutable reference to the consumer details consumer right.
-    pub fn consumer_right_mut(&mut self) -> &mut Consumer<T> {
-        &mut self.consumer_right
-    }
-
-    /// Set the consumer details consumer right.
-    pub fn set_consumer_right(&mut self, consumer_right: Consumer<T>) {
-        self.consumer_right = consumer_right;
+    pub fn set_consumer(&mut self, consumer: Consumer<T>) {
+        self.consumer = consumer;
     }
 }
 

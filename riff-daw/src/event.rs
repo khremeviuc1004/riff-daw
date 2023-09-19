@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, TrackEvent, TrackEventRouting, VstHost};
 
 #[derive(Clone)]
 pub enum CurrentView {
@@ -378,7 +378,7 @@ pub enum DAWEvents {
 }
 
 pub enum AudioLayerInwardEvent {
-    NewAudioConsumer(AudioConsumerDetails<f32>),
+    NewAudioConsumer(AudioConsumerDetails<AudioBlock>),
     NewMidiConsumer(MidiConsumerDetails<(u32, u8, u8, u8, bool)>), // frame, midi byte 1, midi byte 2, midi byte 3
     Play(bool, i32, i32), // play - true/false, number of blocks, start at block
     ExtentsChange(i32),
@@ -476,7 +476,7 @@ pub enum TrackBackgroundProcessorOutwardEvent {
     InstrumentPluginWindowSize(String, i32, i32), // track uuid, width, height
     EffectPluginWindowSize(String, String, i32, i32), // track uuid, plugin uuid, width, height
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0
-    TrackRenderAudioConsumer(AudioConsumerDetails<f32>),
+    TrackRenderAudioConsumer(AudioConsumerDetails<AudioBlock>),
     ChannelLevels(String, f32, f32), // track_uuid, left channel level, right channel_level
 }
 

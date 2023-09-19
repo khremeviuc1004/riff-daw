@@ -6,6 +6,7 @@ use rb::RbConsumer;
 use vst::api::{TimeInfo, TimeInfoFlags};
 use vst::event::MidiEvent;
 
+use crate::domain::AudioBlock;
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 
 const MAX_MIDI: usize = 3;
@@ -198,13 +199,14 @@ impl NotificationHandler for JackNotificationHandler {
 pub struct Audio {
     audio_buffer_right: [f32; 1024],
     audio_buffer_left: [f32; 1024],
+    audio_blocks: Vec<AudioBlock>,
     jack_midi_buffer: [(u32, u8, u8, u8, bool); 1024],
     out_l: Port<AudioOut>,
     out_r: Port<AudioOut>,
     midi_out: Port<MidiOut>,
     midi_in: Port<MidiIn>,
     midi_control_in: Port<MidiIn>,
-    audio_consumers: Vec<AudioConsumerDetails<f32>>,
+    audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
     midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
     play: bool,
     block: i32,
@@ -241,6 +243,7 @@ impl Audio {
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
+            audio_blocks: vec![AudioBlock::default()],
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -279,13 +282,14 @@ impl Audio {
                               jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                              audio_consumers: Vec<AudioConsumerDetails<f32>>,
+                              audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
                               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
+            audio_blocks: vec![AudioBlock::default()],
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -433,44 +437,42 @@ impl Audio {
             for index in 0..self.audio_consumers.len() {
                 match self.audio_consumers.get_mut(index) {
                     Some(consumer) => {
-                        let consumer_right = consumer.consumer_right_mut();
-                        match consumer_right.read(&mut self.audio_buffer_right) {
-                            Ok(read) => if read > 0 {
-                                let mut count = 0;
-                                for x in out_right.iter_mut() {
-                                    if count < read {
-                                        // info!(root_logger, "consumer_right index {}: {}", index, buffer_right[count]);
-                                        *x += (self.audio_buffer_right[count]) as f32 * self.master_volume * 2.0 * right_pan;
-                                        // print!("{} ", buffer_right[count]);
-                                        if *x > master_channel_right_level {
-                                            master_channel_right_level += *x;
+                        let consumer_block = consumer.consumer();
+                        // let mut audio_block = AudioBlock::default();
+                        match consumer_block.read(&mut self.audio_blocks) {
+                            Ok(read) => {
+                                if read == 1 {
+                                    let mut count = 0;
+                                    let audio_block = self.audio_blocks.get(0).unwrap();
+
+                                    for x in out_right.iter_mut() {
+                                        if count < audio_block.audio_data_right.len() {
+                                            *x += audio_block.audio_data_right[count] * self.master_volume * 2.0 * right_pan;
+                                            // print!("{} ", buffer_right[count]);
+                                            if *x > master_channel_right_level {
+                                                master_channel_right_level += *x;
+                                            }
+                                            count += 1;
+                                        } else {
+                                            break;
                                         }
-                                        count += 1;
-                                    } else {
-                                        break;
+                                    }
+                                    count = 0;
+                                    for x in out_left.iter_mut() {
+                                        if count < audio_block.audio_data_left.len() {
+                                            *x += audio_block.audio_data_left[count] * self.master_volume * 2.0 * left_pan;
+                                            // print!("{} ", buffer_left[count]);
+                                            if *x > master_channel_left_level {
+                                                master_channel_left_level += *x;
+                                            }
+                                            count += 1;
+                                        } else {
+                                            break;
+                                        }
                                     }
                                 }
-                            },
-                            Err(_) => (), //info!(root_logger, "Problem reading from consumer right channel!"),
-                        }
-                        let consumer_left = consumer.consumer_left_mut();
-                        match consumer_left.read(&mut self.audio_buffer_left) {
-                            Ok(read) => if read > 0 {
-                                let mut count = 0;
-                                for x in out_left.iter_mut() {
-                                    if count < read {
-                                        *x += (self.audio_buffer_left[count]) as f32 * self.master_volume * 2.0 * left_pan;
-                                        // print!("{} ", buffer_left[count]);
-                                        if *x > master_channel_left_level {
-                                            master_channel_left_level += *x;
-                                        }
-                                        count += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            },
-                            Err(_) => (), //info!(root_logger, "Problem reading from consumer left channel!"),
+                            }
+                            Err(_) => (),
                         }
                     }
                     None => (), //info!(root_logger, "Problem getting consumer detail from consumers"),
@@ -747,7 +749,7 @@ impl Audio {
         &mut self.custom_midi_out_ports
     }
 
-    pub fn get_all_audio_consumers(&mut self) -> Vec<AudioConsumerDetails<f32>> {
+    pub fn get_all_audio_consumers(&mut self) -> Vec<AudioConsumerDetails<AudioBlock>> {
         let mut consumers = vec![];
         for _ in 0..self.audio_consumers.len() {
             consumers.push(self.audio_consumers.remove(0));

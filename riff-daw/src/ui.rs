@@ -801,7 +801,7 @@ impl MainWindow {
                         centre_split_pane_position = 230;
                     }
 
-                    std::thread::spawn(move || {
+                    let _ = std::thread::Builder::new().name("Split position".into()).spawn(move || {
                         match state.lock() {
                             Ok(mut state) => {
                                 if centre_split_pane_position != centre_split_pane_max_position
@@ -831,7 +831,7 @@ impl MainWindow {
                             path.set_file_name(&file_name);
                             {
                                 let tx_from_ui = tx_from_ui.clone();
-                                std::thread::spawn(move || {
+                                let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
                                     if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
                                         info!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
                                     }
@@ -6599,7 +6599,7 @@ impl MainWindow {
 
                     {
                         let state = state.clone();
-                        std::thread::spawn(move || {
+                        let _ = std::thread::Builder::new().name("Set sel riffarr".into()).spawn(move || {
                             // update the state
                             if let Ok(mut state) = state.lock() {
                                 state.set_selected_riff_arrangement_uuid(Some(uuid.to_string()));

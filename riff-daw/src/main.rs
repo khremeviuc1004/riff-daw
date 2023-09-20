@@ -448,7 +448,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 let tx_to_audio = tx_to_audio;
                 let vst24_plugin_loaders = vst24_plugin_loaders;
                 let tx_from_ui = tx_from_ui;
-                thread::spawn(move || {
+                let _ = thread::Builder::new().name("Open file".into()).spawn(move || {
                     if let Ok(mut coast) = track_audio_coast.lock() {
                         *coast = TrackBackgroundProcessorMode::Coast;
                     }
@@ -479,7 +479,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             state.load_from_file(
                                 vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone());
-                            
+
                             let tempo = state.project().song().tempo();
 
                             {
@@ -554,7 +554,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    thread::spawn(move || {
+                    let _ = thread::Builder::new().name("Save".into()).spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -584,7 +584,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    thread::spawn(move || {
+                    let _ = thread::Builder::new().name("Save as".into()).spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -613,7 +613,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    thread::spawn(move || {
+                    let _ = thread::Builder::new().name("Import midi file".into()).spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -682,7 +682,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             riff.events_mut().push(TrackEvent::Note(current_note.clone()));
                                                                             current_notes.retain(|current_note, _| *current_note != note);
                                                                         }
-
                                                                     }
                                                                 },
                                                                 apres::MIDIEvent::AfterTouch(_, _, _) => (),
@@ -766,7 +765,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::SongPositionPointer(_) => (),
                                                                 apres::MIDIEvent::SongSelect(_) => (),
                                                                 apres::MIDIEvent::TimeCode(_, _, _, _, _) => (),
-                                                                apres::MIDIEvent::EndOfTrack =>  {
+                                                                apres::MIDIEvent::EndOfTrack => {
                                                                     if let Some((_, ticks)) = position {
                                                                         let position_in_beats = *ticks as f64 / ppq as f64;
                                                                         riff.set_length(position_in_beats);
@@ -834,7 +833,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let track_audio_coast = track_audio_coast;
-                    thread::spawn(move || {
+                    let _ = thread::Builder::new().name("Export midi file".into()).spawn(move || {
                         match state.lock() {
                             Ok(state) => {
                                 info!("Main - rx_ui processing loop - Export Midi File - attempting to export.");
@@ -864,7 +863,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let track_audio_coast = track_audio_coast;
-                    thread::spawn(move || {
+                    let _ = thread::Builder::new().name("Export riffs to midi file".into()).spawn(move || {
                         match state.lock() {
                             Ok(state) => {
                                 info!("Main - rx_ui processing loop - Export riffs to midi file - attempting to export.");
@@ -1935,7 +1934,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     };
                     {
                         let state_arc = state.clone();
-                        thread::spawn(move || {
+                        let _ = thread::Builder::new().name("Riff add note".into()).spawn(move || {
                             thread::sleep(Duration::from_millis((duration * 60.0 / tempo * 1000.0) as u64));
                             match state_arc.lock() {
                                 Ok(state) => {
@@ -5570,7 +5569,7 @@ fn create_jack_event_processing_thread(
 ) {
 
     let _ = ThreadBuilder::default()
-            .name("jack_event_processing_thread")
+            .name("jack_event_proc")
             .priority(ThreadPriority::Crossplatform(95.try_into().unwrap()))
             .spawn(move |result| {
                 match result {
@@ -5848,7 +5847,7 @@ fn create_jack_event_processing_thread(
                         Err(_) => (),
                     }
 
-                    // thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(10));
                 }
             });
 }

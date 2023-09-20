@@ -1669,7 +1669,7 @@ impl DAWState {
         let number_of_blocks = self.play_song(tx_to_audio);
         let track_render_audio_consumers = self.track_render_audio_consumers.clone();
 
-        thread::spawn(move || {
+        let _ = thread::Builder::new().name("Export wave file".into()).spawn(move || {
             match track_render_audio_consumers.lock() {
                 Ok(track_render_audio_consumers) => if let Ok(mut export_wave_file) = std::fs::File::create(path) {
                     let number_of_audio_type_tracks = track_render_audio_consumers.len() as f32;

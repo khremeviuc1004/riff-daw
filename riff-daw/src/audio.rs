@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::convert::From;
+use std::ops::IndexMut;
 use std::sync::{Arc, Mutex};
 
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
@@ -199,7 +201,10 @@ impl NotificationHandler for JackNotificationHandler {
 pub struct Audio {
     audio_buffer_right: [f32; 1024],
     audio_buffer_left: [f32; 1024],
-    audio_blocks: Vec<AudioBlock>,
+    audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
+    block_number_buffer: BTreeMap<i32, BTreeMap<i32, AudioBlock>>,
+    stuck_block_number: i32,
+    stuck_block_number_attempt_count: i32,
     jack_midi_buffer: [(u32, u8, u8, u8, bool); 1024],
     out_l: Port<AudioOut>,
     out_r: Port<AudioOut>,
@@ -244,6 +249,9 @@ impl Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
             audio_blocks: vec![AudioBlock::default()],
+            block_number_buffer: BTreeMap::new(),
+            stuck_block_number: 0,
+            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -290,6 +298,9 @@ impl Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
             audio_blocks: vec![AudioBlock::default()],
+            block_number_buffer: BTreeMap::new(),
+            stuck_block_number: 0,
+            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -352,6 +363,7 @@ impl Audio {
                         self.block = 0;
                     }
                     self.play_position_in_frames = 0;
+                    self.block_number_buffer.clear();
                 }
                 AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
                     // info!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
@@ -434,49 +446,67 @@ impl Audio {
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
 
-            for index in 0..self.audio_consumers.len() {
-                match self.audio_consumers.get_mut(index) {
-                    Some(consumer) => {
-                        let consumer_block = consumer.consumer();
-                        // let mut audio_block = AudioBlock::default();
-                        match consumer_block.read(&mut self.audio_blocks) {
-                            Ok(read) => {
-                                if read == 1 {
-                                    let mut count = 0;
-                                    let audio_block = self.audio_blocks.get(0).unwrap();
-
-                                    for x in out_right.iter_mut() {
-                                        if count < audio_block.audio_data_right.len() {
-                                            *x += audio_block.audio_data_right[count] * self.master_volume * 2.0 * right_pan;
-                                            // print!("{} ", buffer_right[count]);
-                                            if *x > master_channel_right_level {
-                                                master_channel_right_level += *x;
-                                            }
-                                            count += 1;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    count = 0;
-                                    for x in out_left.iter_mut() {
-                                        if count < audio_block.audio_data_left.len() {
-                                            *x += audio_block.audio_data_left[count] * self.master_volume * 2.0 * left_pan;
-                                            // print!("{} ", buffer_left[count]);
-                                            if *x > master_channel_left_level {
-                                                master_channel_left_level += *x;
-                                            }
-                                            count += 1;
-                                        } else {
-                                            break;
-                                        }
-                                    }
+            // read the consumers and store the audio blocks appropriately
+            // TODO this would work better for track deletes if the track uuid was used as the key
+            for (track_key, audio_consumer_details) in self.audio_consumers.iter_mut().enumerate() {
+                let consumer = audio_consumer_details.consumer();
+                match consumer.read(&mut self.audio_blocks) {
+                    Ok(read) => {
+                        if read == 1 {
+                            let audio_block = self.audio_blocks.get(0).unwrap();
+                            if self.block_number_buffer.contains_key(&audio_block.block) {
+                                if let Some(track_buffer) = self.block_number_buffer.get_mut(&audio_block.block) {
+                                    track_buffer.insert(track_key as i32, audio_block.clone());
                                 }
                             }
-                            Err(_) => (),
+                            else {
+                                let mut track_buffer = BTreeMap::new();
+                                track_buffer.insert(track_key as i32, audio_block.clone());
+                                self.block_number_buffer.insert(audio_block.block, track_buffer);
+                            }
                         }
                     }
-                    None => (), //info!(root_logger, "Problem getting consumer detail from consumers"),
+                    Err(_) => ()
                 }
+            }
+
+            let mut key_to_remove = None;
+            if let Some((key, track_buffer)) = self.block_number_buffer.first_key_value() {
+                if self.stuck_block_number != *key {
+                    self.stuck_block_number = *key;
+                    self.stuck_block_number_attempt_count = 0;
+                }
+
+                if track_buffer.len() == self.audio_consumers.len() {
+                    for audio_block in track_buffer.values() {
+                        for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
+                            if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
+                                *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
+                                *right += audio_block.audio_data_right[index] * self.master_volume * 2.0 * right_pan;
+                                if *left > master_channel_left_level {
+                                    master_channel_left_level += *left;
+                                }
+                                if *right > master_channel_right_level {
+                                    master_channel_right_level += *right;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    key_to_remove = Some(*key);
+                }
+                else {
+                    self.stuck_block_number_attempt_count += 1;
+                }
+
+                if self.stuck_block_number_attempt_count > self.audio_consumers.len() as i32 {
+                    key_to_remove = Some(*key);
+                }
+            }
+
+            if let Some(key) = key_to_remove {
+                self.block_number_buffer.remove(&key);
             }
         }
 

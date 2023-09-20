@@ -4215,7 +4215,7 @@ impl TrackBackgroundProcessorHelper {
     }
 }
 
-#[derive(Copy)]
+#[derive(Clone, Copy)]
 pub struct AudioBlock {
     pub block: i32,
     pub audio_data_left: [f32; 1024],
@@ -4228,12 +4228,6 @@ impl Default for AudioBlock {
             block: 0, 
             audio_data_left: [0.0f32; 1024], 
             audio_data_right: [0.0f32; 1024] }
-    }
-}
-
-impl Clone for AudioBlock {
-    fn clone(&self) -> Self {
-        Self { block: self.block.clone(), audio_data_left: [-1.0; 1024], audio_data_right: [1.0; 1024] }
     }
 }
 

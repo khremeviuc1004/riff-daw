@@ -14,3 +14,9 @@ When the UI is slow to draw on Debian Bookworm run with:
 ```bash
 GDK_RENDERING=image VST_PATH=/home/kevin/Desktop/Linux_VST/ CLAP_PATH=/home/kevin/Desktop/Linux_VST/ ./target/release/riff-daw
 ```
+
+To check thread performance on Linux using htop adapted from [unix.stackexchange.com](https://unix.stackexchange.com/questions/183514/how-to-display-only-a-process-and-its-descendant-processes-on-htop):
+```bash
+ps -ef | grep riff-daw
+htop -p $(pstree -p <process id> | perl -ne 'push @t, /\((\d+)\)/g; END { print join ",", @t }')
+```

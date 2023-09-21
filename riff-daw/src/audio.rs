@@ -202,7 +202,9 @@ pub struct Audio {
     audio_buffer_right: [f32; 1024],
     audio_buffer_left: [f32; 1024],
     audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
+    audio_block_pool: Vec<AudioBlock>,
     block_number_buffer: BTreeMap<i32, BTreeMap<i32, AudioBlock>>,
+    btree_map_pool: Vec<BTreeMap<i32, AudioBlock>>,
     stuck_block_number: i32,
     stuck_block_number_attempt_count: i32,
     jack_midi_buffer: [(u32, u8, u8, u8, bool); 1024],
@@ -245,11 +247,15 @@ impl Audio {
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
+        let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
+        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
-            audio_blocks: vec![AudioBlock::default()],
+            audio_blocks: vec![],
+            audio_block_pool,
             block_number_buffer: BTreeMap::new(),
+            btree_map_pool,
             stuck_block_number: 0,
             stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
@@ -294,11 +300,15 @@ impl Audio {
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
                               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
+        let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
+        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
-            audio_blocks: vec![AudioBlock::default()],
+            audio_blocks: vec![],
+            audio_block_pool,
             block_number_buffer: BTreeMap::new(),
+            btree_map_pool,
             stuck_block_number: 0,
             stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
@@ -443,30 +453,59 @@ impl Audio {
         }
 
         {
+            // the following breaks down when a consumer's producer takes too long to send audio blocks
+            // the block_number_buffer keeps filling up until all pool resources are consumed and there is no audio
+
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
+
+            // if block number is 1 then dump all previous data and return audio blocks and btree maps to their respective pools - works when loop in the riff views
+            let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
+            for block_number in block_numbers.iter() {
+                if let Some(mut tracks) = self.block_number_buffer.remove(&block_number) {
+                    let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                    for track_number in track_numbers.iter() {
+                        if let Some(audio_block) = tracks.remove(&track_number) {
+                            self.audio_block_pool.push(audio_block);
+                        }
+                    }
+                    self.btree_map_pool.push(tracks);
+                }
+            }
+
 
             // read the consumers and store the audio blocks appropriately
             // TODO this would work better for track deletes if the track uuid was used as the key
             for (track_key, audio_consumer_details) in self.audio_consumers.iter_mut().enumerate() {
                 let consumer = audio_consumer_details.consumer();
-                match consumer.read(&mut self.audio_blocks) {
-                    Ok(read) => {
-                        if read == 1 {
-                            let audio_block = self.audio_blocks.get(0).unwrap();
-                            if self.block_number_buffer.contains_key(&audio_block.block) {
-                                if let Some(track_buffer) = self.block_number_buffer.get_mut(&audio_block.block) {
-                                    track_buffer.insert(track_key as i32, audio_block.clone());
+                if let Some(mut new_audio_block) = self.audio_block_pool.pop() {
+                    self.audio_blocks.push(new_audio_block);
+
+                    match consumer.read(&mut self.audio_blocks) {
+                        Ok(read) => {
+                            if read == 1 {
+                                if let Some(mut audio_block) = self.audio_blocks.pop() {
+                                    if self.block_number_buffer.contains_key(&audio_block.block) {
+                                        if let Some(tracks) = self.block_number_buffer.get_mut(&audio_block.block) {
+                                            tracks.insert(track_key as i32, audio_block);
+                                        }
+                                    } else if let Some(mut tracks) = self.btree_map_pool.pop() {
+                                        let block_number = audio_block.block;
+                                        tracks.insert(track_key as i32, audio_block);
+                                        self.block_number_buffer.insert(block_number, tracks);
+                                    }
+                                    else {
+                                        self.audio_block_pool.push(audio_block);
+                                    }
                                 }
                             }
-                            else {
-                                let mut track_buffer = BTreeMap::new();
-                                track_buffer.insert(track_key as i32, audio_block.clone());
-                                self.block_number_buffer.insert(audio_block.block, track_buffer);
+                        }
+                        Err(_) => {
+                            if let Some(audio_block) = self.audio_blocks.pop() {
+                                self.audio_block_pool.push(audio_block);
                             }
                         }
                     }
-                    Err(_) => ()
                 }
             }
 
@@ -498,16 +537,25 @@ impl Audio {
                 }
                 else {
                     self.stuck_block_number_attempt_count += 1;
-                }
 
-                if self.stuck_block_number_attempt_count > self.audio_consumers.len() as i32 {
-                    key_to_remove = Some(*key);
+                    if self.stuck_block_number_attempt_count > 2 {
+                        key_to_remove = Some(*key);
+                    }
                 }
             }
 
             if let Some(key) = key_to_remove {
-                self.block_number_buffer.remove(&key);
+                if let Some(mut tracks) = self.block_number_buffer.remove(&key) {
+                    let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                    for track_number in track_numbers.iter() {
+                        if let Some(audio_block) = tracks.remove(&track_number) {
+                            self.audio_block_pool.push(audio_block);
+                        }
+                    }
+                    self.btree_map_pool.push(tracks);
+                }
             }
+            // println!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
         }
 
         let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
@@ -552,8 +600,8 @@ impl Audio {
         let out_left = self.out_l.as_mut_slice(process_scope);
         let out_right = self.out_r.as_mut_slice(process_scope);
         for left_sample in left_samples.iter() {
-            out_left[frame] += (*left_sample / *number_of_consumers) as f32 * self.master_volume * 2.0 * left_pan;
-            out_right[frame] += (*right_samples.get(frame).unwrap() / *number_of_consumers) as f32 * self.master_volume * 2.0 * right_pan;
+            out_left[frame] += (*left_sample / *number_of_consumers) * self.master_volume * 2.0 * left_pan;
+            out_right[frame] += (*right_samples.get(frame).unwrap() / *number_of_consumers) * self.master_volume * 2.0 * right_pan;
             frame += 1;
         }
     }

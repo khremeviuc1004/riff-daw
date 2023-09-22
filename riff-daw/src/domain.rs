@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use std::thread;
 
 use clap_sys::{ext::{gui::{clap_window, CLAP_WINDOW_API_X11, clap_window_handle}}, process::clap_process};
+use clap_sys::ext::params::CLAP_EXT_PARAMS;
 use jack::{MidiOut, Port, Control};
 use log::*;
 use mlua::prelude::LuaUserData;
@@ -15,6 +16,7 @@ use sndfile::*;
 use strum_macros::EnumString;
 use thread_priority::*;
 use uuid::Uuid;
+use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
 use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
@@ -2626,8 +2628,17 @@ impl BackgroundProcessorClapAudioPlugin {
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
         let track_clap_events = DAWUtils::convert_events_with_timing_in_frames_to_clap(events, 0);
+        let mut clap_input_events = self.process_data.input_events.events.lock();
         for event in track_clap_events {
-            self.process_data.input_events.events.lock().push(event); 
+            clap_input_events.push(event);
+        }
+    }
+
+    pub fn process_param_events(&self, events: &Vec<&PluginParameter>, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) {
+        let track_clap_events = DAWUtils::convert_param_events_with_timing_in_frames_to_clap(events, 0, param_info);
+        let mut clap_input_events = self.process_data.input_events.events.lock();
+        for event in track_clap_events {
+            clap_input_events.push(event);
         }
     }
 
@@ -2700,6 +2711,9 @@ impl BackgroundProcessorClapAudioPlugin {
             self.process_data.clear_events();
             self.process_data.advance_transport(1024);
         }
+    }
+    pub fn plugin(&self) -> &simple_clap_host_helper_lib::plugin::instance::Plugin {
+        &self.plugin
     }
 }
 
@@ -3811,8 +3825,16 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                     BackgroundProcessorAudioPluginType::Vst3 => {}
-                    BackgroundProcessorAudioPluginType::Clap(_instrument_plugin) => {
-                        
+                    BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
+                        if let Some(params) = instrument_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
+                            match params.info(instrument_plugin.plugin()) {
+                                Ok(param_info) => {
+                                    let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == instrument_plugin.uuid().to_string()).collect();
+                                    instrument_plugin.process_param_events(&plugin_param_events, &param_info);
+                                }
+                                Err(_) => {}
+                            }
+                        }
                     }
                 }
             }
@@ -3830,8 +3852,16 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                     BackgroundProcessorAudioPluginType::Vst3 => {}
-                    BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
-
+                    BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
+                        if let Some(params) = effect_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
+                            match params.info(effect_plugin.plugin()) {
+                                Ok(param_info) => {
+                                    let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == effect_plugin.uuid().to_string()).collect();
+                                    effect_plugin.process_param_events(&plugin_param_events, &param_info);
+                                }
+                                Err(_) => {}
+                            }
+                        }
                     }
                 }
             }
@@ -3946,8 +3976,8 @@ impl TrackBackgroundProcessorHelper {
             for event in self.audio_plugin_immediate_events.iter() {
                 events.push(*event);
             }
+            self.audio_plugin_immediate_events.clear();
         }
-        self.audio_plugin_immediate_events.clear();
 
         (events, param_events)
     }

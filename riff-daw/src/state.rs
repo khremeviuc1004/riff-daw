@@ -1048,7 +1048,7 @@ impl DAWState {
     }
 
     pub fn play_riff_set(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
-        info!("Playing riff set2={}", riff_set_uuid.as_str());
+        info!("Playing riff set={}", riff_set_uuid.as_str());
 
         let already_playing = self.playing();
 

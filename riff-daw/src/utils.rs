@@ -1,7 +1,8 @@
+use std::any::Any;
 use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
-use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_MIDI, clap_event_midi, clap_event_note, clap_event_note_expression, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME};
+use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_MIDI, clap_event_midi, clap_event_note, clap_event_note_expression, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, clap_event_param_value, CLAP_EVENT_PARAM_VALUE, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME};
 use vst::event::*;
 
 use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength};
@@ -147,7 +148,7 @@ impl DAWUtils {
         // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - 1024.0; 
         let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
 
-        println!("util-convert_to_event_blocks2: passage_length_in_frames={}", passage_length_in_frames);
+        println!("util - convert_to_event_blocks: passage_length_in_frames={}", passage_length_in_frames);
 
         let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel);
         println!("Number of riff ref events extracted for track: {}", track_events.len());
@@ -649,6 +650,38 @@ impl DAWUtils {
                 TrackEvent::AudioPluginParameter(_) => {}
                 TrackEvent::Sample(_) => {}
                 _ => {}
+            }
+        }
+
+        // events_all.sort_by(|a, b| a.delta_frames.cmp(&b.delta_frames));
+        events_all
+    }
+
+    pub fn convert_param_events_with_timing_in_frames_to_clap(plugin_param_events: &Vec<&PluginParameter>, midi_channel: i32, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) -> Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> {
+        let mut events_all: Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> = Vec::new();
+
+        for event in plugin_param_events.iter() {
+            println!("Plugin parameter value: {}", event.value);
+            if let Some(param) = param_info.get(&(event.index as u32)) {
+                let param_value = event.value as f64 * (param.range.end() - param.range.start());
+                println!("Plugin parameter info: original value={}, value={}, start={}, end={}", event.value, param_value, param.range.start(), param.range.end());
+                let clap_event = clap_event_param_value {
+                    header: clap_event_header {
+                        size: std::mem::size_of::<clap_event_param_value>() as u32,
+                        time: 0,
+                        space_id: CLAP_CORE_EVENT_SPACE_ID,
+                        type_: CLAP_EVENT_PARAM_VALUE,
+                        flags: 0,
+                    },
+                    param_id: event.index as u32,
+                    cookie: param.cookie,
+                    note_id: -1,
+                    port_index: 0,
+                    channel: -1,
+                    key: -1,
+                    value: param_value,
+                };
+                events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::ParamValue(clap_event));
             }
         }
 

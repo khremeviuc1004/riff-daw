@@ -459,20 +459,21 @@ impl Audio {
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
 
-            // if block number is 1 then dump all previous data and return audio blocks and btree maps to their respective pools - works when loop in the riff views
-            let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
-            for block_number in block_numbers.iter() {
-                if let Some(mut tracks) = self.block_number_buffer.remove(&block_number) {
-                    let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
-                    for track_number in track_numbers.iter() {
-                        if let Some(audio_block) = tracks.remove(&track_number) {
-                            self.audio_block_pool.push(audio_block);
+            // if block number is 0 then dump all previous data and return audio blocks and btree maps to their respective pools - works when loop in the riff views
+            if self.block == 0 {
+                let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
+                for block_number in block_numbers.iter() {
+                    if let Some(mut tracks) = self.block_number_buffer.remove(&block_number) {
+                        let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                        for track_number in track_numbers.iter() {
+                            if let Some(audio_block) = tracks.remove(&track_number) {
+                                self.audio_block_pool.push(audio_block);
+                            }
                         }
+                        self.btree_map_pool.push(tracks);
                     }
-                    self.btree_map_pool.push(tracks);
                 }
             }
-
 
             // read the consumers and store the audio blocks appropriately
             // TODO this would work better for track deletes if the track uuid was used as the key

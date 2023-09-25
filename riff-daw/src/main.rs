@@ -26,6 +26,7 @@ use ui::*;
 
 use crate::{grid::Grid, utils::DAWUtils};
 use crate::audio::Audio;
+use crate::constants::EVENT_DELETION_BEAT_TOLERANCE;
 
 mod constants;
 mod domain;
@@ -2913,6 +2914,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             else {
                                 None
                             };
+                            let selected_effect_plugin_uuid = if let Some(uuid) = state.selected_effect_plugin_uuid() {
+                                uuid.clone()
+                            }
+                            else {
+                                "".to_string()
+                            };
                             let song = state.get_project().song_mut();
                             let tracks = song.tracks_mut();
 
@@ -2923,7 +2930,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     {
                                         match tracks.iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
-                                                let automation = track_type.automation_mut();
                                                 match controller_view_mode {
                                                     AutomationViewMode::NoteVelocities => {
                                                         match selected_riff_uuid {
@@ -2951,6 +2957,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     }
                                                     AutomationViewMode::Controllers => {
                                                         if let Some(automation_type_value) = automation_type {
+                                                            let automation = track_type.automation_mut();
                                                             automation.events_mut().iter_mut().for_each(|event| {
                                                                 match event {
                                                                     TrackEvent::Controller(controller) => {
@@ -2968,11 +2975,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     }
                                                     AutomationViewMode::Instrument => {
                                                         if let Some(automation_type_value) = automation_type {
+                                                            // get the instrument plugin uuid
+                                                            let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                instrument_track.instrument().uuid()
+                                                            }
+                                                            else {
+                                                                return;
+                                                            };
+
+                                                            let automation = track_type.automation_mut();
                                                             automation.events_mut().iter_mut().for_each(|event| {
                                                                 match event {
                                                                     TrackEvent::AudioPluginParameter(plugin_param) => {
                                                                         let position = plugin_param.position();
                                                                         if plugin_param.index == automation_type_value &&
+                                                                            plugin_param.plugin_uuid.to_string() == instrument_plugin_id.to_string() &&
                                                                             time_lower <= position &&
                                                                             position <= time_higher {
                                                                                 selected.push(plugin_param.id());
@@ -2983,7 +3000,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             })
                                                         }
                                                     }
-                                                    AutomationViewMode::Effect => {}
+                                                    AutomationViewMode::Effect => {
+
+                                                        if let Some(automation_type_value) = automation_type {
+                                                            let automation = track_type.automation_mut();
+                                                            automation.events_mut().iter_mut().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::AudioPluginParameter(plugin_param) => {
+                                                                        let position = plugin_param.position();
+                                                                        if plugin_param.index == automation_type_value &&
+                                                                            plugin_param.plugin_uuid.to_string() == selected_effect_plugin_uuid &&
+                                                                            time_lower <= position &&
+                                                                            position <= time_higher {
+                                                                            selected.push(plugin_param.id());
+                                                                        }
+                                                                    },
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                    }
                                                     AutomationViewMode::NoteExpression => {}
                                                 }
                                             },
@@ -5157,8 +5193,9 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
                 events.retain(|event| {
                     match event {
                         TrackEvent::AudioPluginParameter(plugin_parameter) => {
-                            !(plugin_parameter.index == automation_type_value && 
-                                plugin_parameter.position() == time && 
+                            !(plugin_parameter.index == automation_type_value &&
+                                (time - EVENT_DELETION_BEAT_TOLERANCE) <= plugin_parameter.position() &&
+                                plugin_parameter.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE) &&
                                 plugin_parameter.plugin_uuid() == plugin_uuid.to_string() &&
                                 plugin_parameter.instrument()
                             )
@@ -5207,7 +5244,7 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
             events.retain(|event| {
                 match event {
                     TrackEvent::NoteExpression(note_expression) => {
-                        !(note_expression.position() == time)
+                        !((time - EVENT_DELETION_BEAT_TOLERANCE) <= note_expression.position() && note_expression.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE))
                     },
                     _ => true,
                 }
@@ -5266,8 +5303,9 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
                     events.retain(|event| {
                         match event {
                             TrackEvent::AudioPluginParameter(plugin_parameter) => {
-                                !(plugin_parameter.index == automation_type_value && 
-                                    plugin_parameter.position() == time && 
+                                !(plugin_parameter.index == automation_type_value &&
+                                    (time - EVENT_DELETION_BEAT_TOLERANCE) <= plugin_parameter.position() &&
+                                    plugin_parameter.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE) &&
                                     plugin_parameter.plugin_uuid() == selected_effect_uuid &&
                                     !plugin_parameter.instrument()
                                 )
@@ -5318,7 +5356,7 @@ fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
             events.retain(|event| {
                 match event {
                     TrackEvent::Controller(controller) => {
-                        !(controller.controller() == automation_type_value && controller.position() == time)
+                        !(controller.controller() == automation_type_value && (time - EVENT_DELETION_BEAT_TOLERANCE) <= controller.position() && controller.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE))
                     },
                     _ => true,
                 }

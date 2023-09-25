@@ -89,7 +89,14 @@ impl DAWItemID for TrackEvent {
     }
 
     fn set_id(&mut self, uuid: String) {
-        todo!()
+        match self {
+            TrackEvent::Note(note) => note.set_id(uuid),
+            TrackEvent::Controller(controller) => controller.set_id(uuid),
+            TrackEvent::PitchBend(pitch_bend) => pitch_bend.set_id(uuid),
+            TrackEvent::AudioPluginParameter(parameter) => parameter.set_id(uuid),
+            TrackEvent::NoteExpression(note_expression) => note_expression.set_id(uuid),
+            _ => {}
+        }
     }
 }
 
@@ -469,6 +476,10 @@ impl DAWItemID for NoteExpression {
     }
 
     fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) =>self.id = uuid,
+            Err(_) => {}
+        }
     }
 
     fn id_mut(&mut self) -> String {
@@ -559,7 +570,11 @@ impl DAWItemID for Note {
         self.id.to_string()
     }
 
-    fn set_id(&mut self, _uuid: String) {
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) =>self.id = uuid,
+            Err(_) => {}
+        }
     }
 
     fn id_mut(&mut self) -> String {
@@ -811,7 +826,7 @@ impl DAWItemPosition for NoteOff {
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Controller {
-    #[serde(skip_serializing, skip_deserializing)]
+    #[serde(skip_serializing, skip_deserializing, default)]
     id: Uuid,
 	position: f64,
 	controller: i32,
@@ -824,6 +839,10 @@ impl DAWItemID for Controller {
     }
 
     fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) =>self.id = uuid,
+            Err(_) => {}
+        }
     }
 
     fn id_mut(&mut self) -> String {
@@ -885,6 +904,10 @@ impl DAWItemID for PitchBend {
     }
 
     fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) =>self.id = uuid,
+            Err(_) => {}
+        }
     }
 
     fn id_mut(&mut self) -> String {
@@ -1943,6 +1966,10 @@ impl DAWItemID for PluginParameter {
     }
 
     fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) =>self.id = uuid,
+            Err(_) => {}
+        }
     }
 
     fn id_mut(&mut self) -> String {
@@ -3675,8 +3702,23 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                         BackgroundProcessorAudioPluginType::Vst3 => {}
-                        BackgroundProcessorAudioPluginType::Clap(_effect) => {
-
+                        BackgroundProcessorAudioPluginType::Clap(effect) => {
+                            if let Some(params) = effect.plugin.get_extension::<Params>() {
+                                if let Ok(info) = params.info(&effect.plugin) {
+                                    for (param_id, param) in info.iter() {
+                                        info!("Parameter: index={}, param={:?}", param_id, param);
+                                        // vector of plugin uuid, param index, param name, param label, param value, param text
+                                        plugin_parameters.push((
+                                            effect.uuid().to_string(),
+                                            *param_id as i32,
+                                            param.name.clone(),
+                                            param.name.clone(),
+                                            params.get(&effect.plugin, *param_id).unwrap() as f32,
+                                            "".to_string()
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                     break;

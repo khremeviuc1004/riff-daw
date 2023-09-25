@@ -190,6 +190,14 @@ impl DAWState {
                 }
             }
         }
+
+        {
+            for track in self.get_project().song_mut().tracks_mut().iter_mut() {
+                for event in track.automation_mut().events_mut().iter_mut() {
+                    event.set_id(Uuid::new_v4().to_string());
+                }
+            }
+        }
     }
 
     pub fn update_track_senders_and_receivers(&mut self, instrument_track_senders2: HashMap<Option<String>, Sender<TrackBackgroundProcessorInwardEvent>>, instrument_track_receivers2: HashMap<Option<String>, Receiver<TrackBackgroundProcessorOutwardEvent>>) {

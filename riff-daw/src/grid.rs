@@ -849,6 +849,11 @@ impl MouseHandler for BeatGrid {
                         self.mouse_pointer_previous_position = (x, y);
                         drawing_area.queue_draw();
                     }
+                    OperationModeType::Add => {
+                        self.draw_mode_x_start = x;
+                        self.draw_mode_y_start = y;
+                        self.draw_mode_on = true;
+                    }
                     _ => (),
                 }
             }
@@ -3268,7 +3273,9 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let y = height - note_y_pos_inverted;
                                                         let width = 1.0;
 
-                                                        let is_selected = state.selected_automation().iter().any(|id| id.as_str() == controller.id().as_str());
+                                                        let is_selected = state.selected_automation().iter().any(|id| {
+                                                            id.as_str() == controller.id().as_str()
+                                                        });
                                                         if is_selected {
                                                             event_colour = (0.0, 0.0, 1.0, 1.0);
                                                         }
@@ -3379,7 +3386,8 @@ impl CustomPainter for AutomationCustomPainter {
 
         if draw_mode_on {
             if let DrawMode::Line = draw_mode {
-                    Self::draw_line(context, draw_mode_start_x, draw_mode_start_y, draw_mode_end_x, draw_mode_end_y);
+                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                Self::draw_line(context, draw_mode_start_x, draw_mode_start_y, draw_mode_end_x, draw_mode_end_y);
             }
         }
     }
@@ -3392,7 +3400,13 @@ pub struct AutomationMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
-        ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
+        let value = ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical);
+        if value < 0.0 {
+            0.0
+        }
+        else {
+            value
+        }
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {

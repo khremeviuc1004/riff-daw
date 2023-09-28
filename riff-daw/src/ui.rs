@@ -5823,7 +5823,7 @@ impl MainWindow {
     ) -> Arc<Mutex<BeatGrid>> {
         let state_arc = state_arc;
         let custom_painter = RiffSetTrackCustomPainter::new(state_arc);
-        let beat_grid = BeatGrid::new_with_custom(
+        let mut beat_grid = BeatGrid::new_with_custom(
             10.0,
             1.0,
             drawing_area.height_request() as f64 / 127.0,
@@ -5834,6 +5834,7 @@ impl MainWindow {
             tx_from_ui,
             false
         );
+        beat_grid.draw_play_cursor = false;
         let beat_grid_arc = Arc::new( Mutex::new(beat_grid));
 
         {

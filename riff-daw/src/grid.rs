@@ -1,7 +1,7 @@
 use std::{sync::{Arc, Mutex}, vec::Vec};
 use std::any::Any;
 
-use cairo::{Context, RectangleInt, Region};
+use cairo::{Context};
 use gtk::{DrawingArea, prelude::*};
 use itertools::Itertools;
 use log::*;
@@ -102,6 +102,9 @@ pub trait CustomPainter {
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 );
+    fn track_cursor_time_in_beats(&self) -> f64;
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64);
+
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
@@ -400,6 +403,8 @@ pub struct BeatGrid {
     // drag cycle state
     pub edit_drag_cycle: DragCycle,
     pub select_drag_cycle: DragCycle,
+
+    pub draw_play_cursor: bool,
 }
 
 impl BeatGrid {
@@ -474,6 +479,8 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+
+            draw_play_cursor: true,
         }
     }
 
@@ -559,6 +566,8 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+
+            draw_play_cursor: true,
         }
     }
 
@@ -645,6 +654,8 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+
+            draw_play_cursor: true,
         }
     }
 
@@ -1150,7 +1161,9 @@ impl Grid for BeatGrid {
         if self.draw_selection_window {
             self.paint_select_window(context, height, width);
         }
-        self.paint_play_cursor(context, height, width);
+        if self.draw_play_cursor {
+            self.paint_play_cursor(context, height, width);
+        }
         self.paint_edit_cursor(context, height, width);
     }
 
@@ -1257,6 +1270,7 @@ impl Grid for BeatGrid {
 
         let (x_selection_window_position, y_selection_window_position, x_selection_window_position2, y_selection_window_position2) = self.get_select_window();
         if let Some(custom_painter) = self.custom_painter.as_mut() {
+            custom_painter.set_track_cursor_time_in_beats(self.track_cursor_time_in_beats);
             custom_painter.paint_custom(
                 context,
                 height,
@@ -2144,6 +2158,14 @@ impl CustomPainter for PianoRollCustomPainter {
             let _ = context.show_text(format!("{}{}", note_name, octave_number).as_str());
         }
     }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
@@ -2515,6 +2537,14 @@ impl CustomPainter for SampleRollCustomPainter {
             Err(_) => info!("Piano Roll custom painter could not get state lock."),
         }
     }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
@@ -2522,12 +2552,14 @@ impl CustomPainter for SampleRollCustomPainter {
 
 pub struct RiffSetTrackCustomPainter {
     state: Arc<Mutex<DAWState>>,
+    track_cursor_time_in_beats: f64,
 }
 
 impl RiffSetTrackCustomPainter {
     pub fn new(state: Arc<Mutex<DAWState>>) -> RiffSetTrackCustomPainter {
         RiffSetTrackCustomPainter {
             state,
+            track_cursor_time_in_beats: 0.0,
         }
     }
 }
@@ -2561,7 +2593,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
         // info!("RiffSetTrackCustomPainter::paint_custom - entered");
         match self.state.lock() {
             Ok( state) => {
-                let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
+                let mut adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 let _adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
                 if let Some(drawing_area_widget_name) = drawing_area_widget_name {
@@ -2603,6 +2635,13 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                                 let (red, green, blue, alpha) = track_colour;
                                                 context.set_source_rgba(red, green, blue, alpha);
                                             }
+
+                                            // also zoom out to fit the entire riff
+                                            let riff_width_in_pixels = riff.length() * adjusted_beat_width_in_pixels;
+                                            if riff_width_in_pixels > width {
+                                                let zoom_factor = riff_width_in_pixels / width;
+                                                adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal / zoom_factor;
+                                            }
                                         }
                                         else {
                                             context.set_source_rgba(0.5, 0.5, 0.5, 1.0);
@@ -2641,11 +2680,20 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                         context.set_font_size(9.0);
                                         if riff.name() == "empty" {
                                             let _ = context.show_text("e");
+                                            let _ = context.stroke();
                                         }
                                         else {
                                             let _ = context.show_text(riff.name());
+                                            let _ = context.stroke();
+
+                                            let x = (self.track_cursor_time_in_beats as i32 % riff.length() as i32) as f64 * adjusted_beat_width_in_pixels;
+
+                                            context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
+                                            context.move_to(x, 0.0);
+                                            context.line_to(x, height);
+                                            let _ = context.stroke();
                                         }
-                                        let _ = context.stroke();
+
                                     }
                                 },
                                 None => (),
@@ -2659,6 +2707,14 @@ impl CustomPainter for RiffSetTrackCustomPainter {
 
         info!("RiffSetTrackCustomPainter::paint_custom - entered");
     }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        self.track_cursor_time_in_beats
+    }
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+    }
+
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
@@ -2728,6 +2784,14 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
             }
         }
     }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
@@ -3012,6 +3076,13 @@ impl CustomPainter for TrackGridCustomPainter {
             Err(_) => info!("Track grid custom painter could not get state lock."),
         }
         // info!("TrackGridCustomPainter::paint_custom - exited.");
+    }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -3391,6 +3462,14 @@ impl CustomPainter for AutomationCustomPainter {
             }
         }
     }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }

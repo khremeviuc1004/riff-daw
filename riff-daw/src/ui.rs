@@ -1303,13 +1303,16 @@ impl MainWindow {
         midi_devices: Option<Vec<String>>,
         volume: f32,
         pan: f32,
-        _mute: bool,
-        _solo: bool,
+        mute: bool,
+        solo: bool,
     ) {
         let (entry_buffer, track_mute_toggle_state, track_solo_toggle_state) = {
             let tx_from_ui = tx_from_ui.clone();
             self.add_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone())
         };
+
+        track_mute_toggle_state.set_active(mute);
+        track_solo_toggle_state.set_active(solo);
 
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -1634,7 +1637,10 @@ impl MainWindow {
                 selection_data.set_text(track_uuid.as_str());
             });
         }
-    
+
+        riff_set_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_set_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+
         let _ = track_solo_toggle_state.bind_property("active", &riff_set_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_set_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
@@ -1736,6 +1742,9 @@ impl MainWindow {
                 selection_data.set_text(track_uuid.as_str());
             });
         }
+
+        riff_sequence_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_sequence_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_sequence_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_sequence_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
@@ -1843,6 +1852,9 @@ impl MainWindow {
             });
         }
 
+        riff_arrangement_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_arrangement_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+
         let _ = track_solo_toggle_state.bind_property("active", &riff_arrangement_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_arrangement_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
@@ -1932,6 +1944,9 @@ impl MainWindow {
         mixer_blade_volume_scale.set_value((volume * 100.0) as f64);
         let mixer_blade_track_pan_scale: Scale = mixer_blade.mixer_blade_track_pan_scale.clone();
         mixer_blade_track_pan_scale.set_value((pan * 50.0) as f64);
+
+        mixer_blade.mixer_blade_track_solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        mixer_blade.mixer_blade_track_mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();

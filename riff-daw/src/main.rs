@@ -1288,7 +1288,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(uuid, TrackBackgroundProcessorInwardEvent::Unmute);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                        Err(_) => info!("Main - rx_ui processing loop - SoloOn - could not get lock on state"),
                     }
                 }
                 TrackChangeType::SoloOff => {
@@ -1322,7 +1322,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(uuid, TrackBackgroundProcessorInwardEvent::Mute);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                        Err(_) => info!("Main - rx_ui processing loop - SoloOff - could not get lock on state"),
                     }
                 }
                 TrackChangeType::Mute => {

@@ -74,6 +74,7 @@ pub struct DAWState {
     pub current_view: CurrentView,
     pub dirty: bool,
     selected_automation: Vec<String>,
+    automation_event_copy_buffer: Vec<TrackEvent>,
     selected_riff_events: Vec<String>,
 }
 
@@ -121,6 +122,7 @@ impl DAWState {
             selected_riff_arrangement_uuid: None,
             dirty: false,
             selected_automation: Vec::new(),
+            automation_event_copy_buffer: vec![],
             selected_riff_events: Vec::new(),
         }
     }
@@ -191,10 +193,27 @@ impl DAWState {
             }
         }
 
+        // set the transient event ids (don't need to be persisted)
         {
+            let mut track_uuids = vec![];
+
+            // set the event ids in the track automation events
             for track in self.get_project().song_mut().tracks_mut().iter_mut() {
+                track_uuids.push(track.uuid_string());
+
                 for event in track.automation_mut().events_mut().iter_mut() {
                     event.set_id(Uuid::new_v4().to_string());
+                }
+            }
+
+            // set the event ids in the riff arrangement automation events
+            for riff_arrangement in self.get_project().song_mut().riff_arrangements_mut().iter_mut() {
+                for track_uuid in track_uuids.iter() {
+                    for automation in riff_arrangement.automation_mut(track_uuid) {
+                        for event in automation.events_mut().iter_mut() {
+                            event.set_id(Uuid::new_v4().to_string());
+                        }
+                    }
                 }
             }
         }
@@ -2066,6 +2085,14 @@ impl DAWState {
 
     pub fn selected_automation_mut(&mut self) -> &mut Vec<String> {
         &mut self.selected_automation
+    }
+
+    pub fn automation_event_copy_buffer(&self) -> &[TrackEvent] {
+        self.automation_event_copy_buffer.as_ref()
+    }
+
+    pub fn automation_event_copy_buffer_mut(&mut self) -> &mut Vec<TrackEvent> {
+        &mut self.automation_event_copy_buffer
     }
 
     pub fn selected_riff_events(&self) -> &[String] {

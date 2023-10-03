@@ -20,7 +20,7 @@ use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_V
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType};
-use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler};
+use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType};
 use crate::state::DAWState;
 use crate::utils::DAWUtils;
 
@@ -3327,7 +3327,8 @@ impl MainWindow {
             Some(std::boxed::Box::new(track_grid_custom_painter)),
             Some(std::boxed::Box::new(TrackGridMouseCoordHelper)),
             tx_from_ui.clone(),
-            true
+            true,
+            Some(DrawingAreaType::TrackGrid),
         );
         let track_grid_arc = Arc::new( Mutex::new(track_grid));
 
@@ -3895,7 +3896,8 @@ impl MainWindow {
             Some(std::boxed::Box::new(automation_custom_painter)),
             Some(std::boxed::Box::new(AutomationMouseCoordHelper)),
             tx_from_ui.clone(),
-            true
+            true,
+            Some(DrawingAreaType::Automation),
         );
         let automation_grid_arc = Arc::new( Mutex::new(automation_grid));
         self.set_automation_grid(Some(automation_grid_arc.clone()));
@@ -4599,7 +4601,8 @@ impl MainWindow {
                 Some(std::boxed::Box::new(piano_roll_custom_vertical_scale_painter)),
                 Some(std::boxed::Box::new(PianoRollMouseCoordHelper)),
                 tx_from_ui.clone(),
-                true
+                true,
+                Some(DrawingAreaType::PianoRoll),
             );
             let piano_roll_grid_arc = Arc::new( Mutex::new(piano_roll_grid));
 
@@ -5422,7 +5425,8 @@ impl MainWindow {
                 Some(std::boxed::Box::new(sample_roll_custom_painter)),
                 Some(std::boxed::Box::new(SampleRollMouseCoordHelper)),
                 tx_from_ui.clone(),
-                true
+                true,
+                None,
             );
             let sample_roll_grid_arc = Arc::new( Mutex::new(sample_roll_grid));
 
@@ -5847,7 +5851,8 @@ impl MainWindow {
             Some(std::boxed::Box::new(custom_painter)),
             Some(std::boxed::Box::new(PianoRollMouseCoordHelper)),
             tx_from_ui,
-            false
+            false,
+            Some(DrawingAreaType::Riff),
         );
         beat_grid.draw_play_cursor = false;
         let beat_grid_arc = Arc::new( Mutex::new(beat_grid));
@@ -6560,7 +6565,7 @@ impl MainWindow {
             let new_arrangement_name_entry = self.ui.new_arrangement_name_entry.clone();
             let arrangement_sequence_combobox = self.ui.arrangements_combobox.clone();
             let state_arc = state_arc.clone();
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             let riff_arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
             let _arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
@@ -6602,6 +6607,7 @@ impl MainWindow {
         {
             let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
             let state = state_arc.clone();
+            let tx_from_ui = tx_from_ui.clone();
             self.ui.arrangements_combobox.connect_changed(move |arrangements_combobox| {
                 if let Some(uuid) = arrangements_combobox.active_id() {
                     info!("ui.arrangements_combobox.active_id={}", uuid);
@@ -6615,10 +6621,12 @@ impl MainWindow {
 
                     {
                         let state = state.clone();
+                        let tx_from_ui = tx_from_ui.clone();
                         let _ = std::thread::Builder::new().name("Set sel riffarr".into()).spawn(move || {
                             // update the state
                             if let Ok(mut state) = state.lock() {
                                 state.set_selected_riff_arrangement_uuid(Some(uuid.to_string()));
+                                let _ = tx_from_ui.send(DAWEvents::RepaintAutomationView);
                             }
                         });
                     }

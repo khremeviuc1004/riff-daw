@@ -10,6 +10,7 @@ use uuid::Uuid;
 use geo::{coord, Intersects, Rect};
 
 use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
+use crate::event::CurrentView;
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -29,6 +30,14 @@ pub enum DrawMode {
     Point,
     Line,
     Curve,
+}
+
+#[derive(Clone)]
+pub enum DrawingAreaType {
+    PianoRoll,
+    TrackGrid,
+    Automation,
+    Riff,
 }
 
 pub trait Grid : MouseHandler {
@@ -405,10 +414,12 @@ pub struct BeatGrid {
     pub select_drag_cycle: DragCycle,
 
     pub draw_play_cursor: bool,
+
+    pub drawing_area_type: Option<DrawingAreaType>,
 }
 
 impl BeatGrid {
-    pub fn new(zoom_horizontal: f64, zoom_vertical: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> BeatGrid {
+    pub fn new(zoom_horizontal: f64, zoom_vertical: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, drawing_area_type: Option<DrawingAreaType>) -> BeatGrid {
         BeatGrid {
             entity_height_in_pixels,
             beat_width_in_pixels,
@@ -481,6 +492,8 @@ impl BeatGrid {
             select_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
+
+            drawing_area_type,
         }
     }
 
@@ -493,7 +506,8 @@ impl BeatGrid {
         custom_painter: Option<Box<dyn CustomPainter>>,
         mouse_coord_helper: Option<Box<dyn BeatGridMouseCoordHelper>>,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-        resize_drawing_area: bool
+        resize_drawing_area: bool,
+        drawing_area_type: Option<DrawingAreaType>,
     ) -> BeatGrid {
         BeatGrid {
             entity_height_in_pixels,
@@ -568,6 +582,8 @@ impl BeatGrid {
             select_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
+
+            drawing_area_type,
         }
     }
 
@@ -581,7 +597,8 @@ impl BeatGrid {
         vertical_scale_painter: Option<Box<dyn CustomPainter>>,
         mouse_coord_helper: Option<Box<dyn BeatGridMouseCoordHelper>>,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-        resize_drawing_area: bool
+        resize_drawing_area: bool,
+        drawing_area_type: Option<DrawingAreaType>,
     ) -> BeatGrid {
         BeatGrid {
             entity_height_in_pixels,
@@ -656,6 +673,8 @@ impl BeatGrid {
             select_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
+
+            drawing_area_type,
         }
     }
 
@@ -1081,9 +1100,20 @@ impl MouseHandler for BeatGrid {
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                     let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                     self.track_cursor_time_in_beats = snap_position;
-                                    match self.tx_from_ui.send(DAWEvents::PlayPositionInBeats(snap_position)) {
-                                        Ok(_) => (),
-                                        Err(_) => (),
+                                    let _ = self.tx_from_ui.send(DAWEvents::PlayPositionInBeats(snap_position));
+                                    if let Some(drawing_area_type) = &self.drawing_area_type {
+                                        match drawing_area_type {
+                                            DrawingAreaType::PianoRoll => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintPianoRollView);
+                                            }
+                                            DrawingAreaType::TrackGrid => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintTrackGridView);
+                                            }
+                                            DrawingAreaType::Automation => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintAutomationView);
+                                            }
+                                            _ => {}
+                                        }
                                     }
                                 },
                                 None => (),
@@ -1095,6 +1125,20 @@ impl MouseHandler for BeatGrid {
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                     let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                     self.edit_cursor_time_in_beats = snap_position;
+                                    if let Some(drawing_area_type) = &self.drawing_area_type {
+                                        match drawing_area_type {
+                                            DrawingAreaType::PianoRoll => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintPianoRollView);
+                                            }
+                                            DrawingAreaType::TrackGrid => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintTrackGridView);
+                                            }
+                                            DrawingAreaType::Automation => {
+                                                let _ = self.tx_from_ui.send(DAWEvents::RepaintAutomationView);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                 },
                                 None => (),
                             }
@@ -3225,6 +3269,7 @@ impl CustomPainter for AutomationCustomPainter {
                 let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
                 let type_to_show = state.automation_view_mode();
+                let current_view = state.current_view();
 
                 if let crate::state::AutomationViewMode::NoteVelocities = type_to_show {
                     match state.selected_track() {
@@ -3303,15 +3348,12 @@ impl CustomPainter for AutomationCustomPainter {
                             // draw the track name
                             Self::draw_track_name(context, name.as_str());
 
-                            let events = match state.automation_edit_type() {
-                                AutomationEditType::Track => {
-                                    Some(track.automation().events())
-                                }
-                                AutomationEditType::Riff => {
-                                    if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
-                                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == selected_riff_uuid) {
-                                            Self::draw_riff_name(context, riff.name());
-                                            Some(riff.events_vec())
+                            let events = if let CurrentView::RiffArrangement = current_view {
+                                // get the arrangement
+                                if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()){
+                                        if let Some(riff_arr_automation) = riff_arrangement.automation(&track_uuid) {
+                                            Some(riff_arr_automation.events())
                                         }
                                         else {
                                             None
@@ -3319,6 +3361,30 @@ impl CustomPainter for AutomationCustomPainter {
                                     }
                                     else {
                                         None
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                            else {
+                                match state.automation_edit_type() {
+                                    AutomationEditType::Track => {
+                                        Some(track.automation().events())
+                                    }
+                                    AutomationEditType::Riff => {
+                                        if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+                                            if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == selected_riff_uuid) {
+                                                Self::draw_riff_name(context, riff.name());
+                                                Some(riff.events_vec())
+                                            }
+                                            else {
+                                                None
+                                            }
+                                        }
+                                        else {
+                                            None
+                                        }
                                     }
                                 }
                             };

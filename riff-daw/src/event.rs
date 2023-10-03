@@ -375,6 +375,10 @@ pub enum DAWEvents {
     TrackGridVerticalScaleChanged(f64), // scale
 
     Shutdown,
+
+    RepaintAutomationView,
+    RepaintTrackGridView,
+    RepaintPianoRollView,
 }
 
 pub enum AudioLayerInwardEvent {

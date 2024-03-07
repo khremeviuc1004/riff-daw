@@ -71,6 +71,7 @@ pub struct Ui {
     pub menu_item_import_midi: MenuItem,
     pub menu_item_export_midi: MenuItem,
     pub menu_item_export_midi_riffs: MenuItem,
+    pub menu_item_export_midi_riffs_separate: MenuItem,
     pub menu_item_export_wave: MenuItem,
     pub menu_item_quit: MenuItem,
 
@@ -1571,7 +1572,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1702,7 +1703,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1807,7 +1808,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -1916,7 +1917,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -2092,7 +2093,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             mixer_blade.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
@@ -2807,7 +2808,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             track_details_dialogue.track_detail_close_button.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), false)) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(false), Some(track_uuid.to_string()))) {
                     Err(_) => info!("Problem sending message with tx from ui lock when requesting hide track details"),
                     _ => (),
                 }
@@ -3044,6 +3045,24 @@ impl MainWindow {
         }
 
         {
+            let tx_from_ui = tx_from_ui.clone();
+            let window = self.ui.get_wnd_main().clone();
+            self.ui.menu_item_export_midi_riffs_separate.connect_button_press_event(move |_menu_item, _btn|{
+                let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."),     Some(&window), FileChooserAction::SelectFolder);
+                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                let result = dialog.run();
+                if result == gtk::ResponseType::Ok {
+                    let directory = dialog.current_folder();
+                    let _ = tx_from_ui.send(DAWEvents::ExportRiffsToSeparateMidiFiles(directory.unwrap()));
+                }
+                dialog.hide();
+
+                Inhibit(true)
+            });
+        }
+
+        {
             let tx_from_ui = tx_from_ui;
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_export_wave.connect_button_press_event(move |_menu_item, _btn|{
@@ -3137,7 +3156,6 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             self.ui.toolbar_redo.connect_clicked(move |_|{
-                let _ = tx_from_ui.send(DAWEvents::Redo);
                 let _ = tx_from_ui.send(DAWEvents::Redo);
             });
         }
@@ -7242,106 +7260,7 @@ impl MainWindow {
                     );
                 }
             }
-            match self.track_details_dialogues.get_mut(&track.uuid_string()) {
-                Some(track_details_dialogue) => {
-                    // clear and add the riffs
-                    let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
-                    track_riff_choice.remove_all();
-                    let mut first_riff = true;
-                    for riff in track.riffs().iter() {
-                        if riff.name() != "empty" {
-                            let uuid = riff.uuid().to_string();
-                            track_riff_choice.append( Some(uuid.as_str()), riff.name());
-
-                            if first_riff {
-                                track_riff_choice.set_active_id(Some(uuid.as_str()));
-                                first_riff = false;
-                            }
-                        }
-                    }
-
-                    match track  {
-                        TrackType::InstrumentTrack(track) => {
-                            // select the instrument
-                            let track_instrument_choice = track_details_dialogue.track_instrument_choice.clone();
-                            let mut instrument_id = track.instrument().file().to_string();
-                            instrument_id.push(':');
-                            if let Some(sub_plugin_id) = track.instrument().sub_plugin_id() {
-                                instrument_id.push_str(sub_plugin_id.as_str());
-                            }
-                            instrument_id.push(':');
-                            instrument_id.push_str(track.instrument().plugin_type());
-
-                            // re-populate the track instrument choice
-                            track_instrument_choice.remove_all();
-                            for (key, value) in instrument_plugins.iter() {
-                                let adjusted_key = key.replace(char::from(0), "");
-                                let adjusted_value = value.replace(char::from(0), "");
-                                // info!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
-                                track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
-                            }
-
-                            // set the active element without generating an event
-                            if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") {
-                                if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track.uuid_string()) {
-                                    track_instrument_choice.block_signal(signal_handler_id);
-
-                                    if !track_instrument_choice.set_active_id(Some(instrument_id.as_str())) {
-                                        info!("failed to set the active id for: track={}, instrument={} taking the shell plugin id off and trying again", track_number, instrument_id.as_str());
-                                        let adjusted_instrument_id = instrument_id.replace(char::from(0), "");
-                                        let tokens: Vec<&str> = adjusted_instrument_id.split(':').collect();
-
-                                        if tokens.len() == 2 {
-                                            let library_file_only = tokens.first().unwrap().to_string();
-
-                                            if !track_instrument_choice.set_active_id(Some(library_file_only.as_str())) {
-                                                info!("Fallback failed to set the active id for: track={}, instrument={}", track_number, library_file_only.as_str());
-                                            }
-                                        }
-                                    }
-
-                                    track_instrument_choice.unblock_signal(signal_handler_id);
-                                    track_instrument_choice.show_all();
-                                    track_instrument_choice.activate();
-                                }
-                            }
-
-                            // clear and add the effects
-                            let track_effects_list = track_details_dialogue.track_effect_list.clone();
-                            if let Some(track_effects_list_store) = track_effects_list.model() {
-                                if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
-                                    model.clear();
-                                    for effect in track.effects().iter() {
-                                        model.insert_with_values(None, &[
-                                            (0, &effect.name().to_string()),
-                                            (1, &effect.file().to_string()),
-                                            (2, &effect.uuid().to_string()),
-                                            (3, &(RGBA::black())),
-                                            (4, &(RGBA::white())),
-                                        ]);
-                                    }
-                                    track_effects_list.set_model(Some(model));
-                                }
-                            }
-                        },
-                        TrackType::AudioTrack(_track) => {
-
-                        },
-                        TrackType::MidiTrack(track) => {
-                            track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
-
-                            // populate the possible midi connections
-                            track_details_dialogue.track_midi_device_choice.remove_all();
-                            for midi_in_port in midi_input_devices.iter() {
-                                track_details_dialogue.track_midi_device_choice.append(Some(midi_in_port.as_str()), midi_in_port.as_str());
-                            }
-
-                            track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
-                        },
-                    };
-                }
-                None => (),
-            }
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut track_number, &track);
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -7591,6 +7510,109 @@ impl MainWindow {
         self.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
 
         info!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
+    }
+
+    pub fn update_track_details_dialogue(&mut self, midi_input_devices: &Vec<String>, instrument_plugins: &mut IndexMap<String, String>, track_number: &mut i32, track: &&mut TrackType) {
+        let track_uuid = track.uuid().to_string();
+        
+        match self.track_details_dialogues.get_mut(&track_uuid) {
+            Some(track_details_dialogue) => {
+                // clear and add the riffs
+                let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
+                track_riff_choice.remove_all();
+                let mut first_riff = true;
+                for riff in track.riffs().iter() {
+                    if riff.name() != "empty" {
+                        let uuid = riff.uuid().to_string();
+                        track_riff_choice.append(Some(uuid.as_str()), riff.name());
+
+                        if first_riff {
+                            track_riff_choice.set_active_id(Some(uuid.as_str()));
+                            first_riff = false;
+                        }
+                    }
+                }
+
+                match track {
+                    TrackType::InstrumentTrack(track) => {
+                        // select the instrument
+                        let track_instrument_choice = track_details_dialogue.track_instrument_choice.clone();
+                        let mut instrument_id = track.instrument().file().to_string();
+                        instrument_id.push(':');
+                        if let Some(sub_plugin_id) = track.instrument().sub_plugin_id() {
+                            instrument_id.push_str(sub_plugin_id.as_str());
+                        }
+                        instrument_id.push(':');
+                        instrument_id.push_str(track.instrument().plugin_type());
+
+                        // re-populate the track instrument choice
+                        track_instrument_choice.remove_all();
+                        for (key, value) in instrument_plugins.iter() {
+                            let adjusted_key = key.replace(char::from(0), "");
+                            let adjusted_value = value.replace(char::from(0), "");
+                            // info!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
+                            track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                        }
+
+                        // set the active element without generating an event
+                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") {
+                            if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track_uuid) {
+                                track_instrument_choice.block_signal(signal_handler_id);
+
+                                if !track_instrument_choice.set_active_id(Some(instrument_id.as_str())) {
+                                    info!("failed to set the active id for: track={}, instrument={} taking the shell plugin id off and trying again", track_number, instrument_id.as_str());
+                                    let adjusted_instrument_id = instrument_id.replace(char::from(0), "");
+                                    let tokens: Vec<&str> = adjusted_instrument_id.split(':').collect();
+
+                                    if tokens.len() == 2 {
+                                        let library_file_only = tokens.first().unwrap().to_string();
+
+                                        if !track_instrument_choice.set_active_id(Some(library_file_only.as_str())) {
+                                            info!("Fallback failed to set the active id for: track={}, instrument={}", track_number, library_file_only.as_str());
+                                        }
+                                    }
+                                }
+
+                                track_instrument_choice.unblock_signal(signal_handler_id);
+                                track_instrument_choice.show_all();
+                                track_instrument_choice.activate();
+                            }
+                        }
+
+                        // clear and add the effects
+                        let track_effects_list = track_details_dialogue.track_effect_list.clone();
+                        if let Some(track_effects_list_store) = track_effects_list.model() {
+                            if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
+                                model.clear();
+                                for effect in track.effects().iter() {
+                                    model.insert_with_values(None, &[
+                                        (0, &effect.name().to_string()),
+                                        (1, &effect.file().to_string()),
+                                        (2, &effect.uuid().to_string()),
+                                        (3, &(RGBA::black())),
+                                        (4, &(RGBA::white())),
+                                    ]);
+                                }
+                                track_effects_list.set_model(Some(model));
+                            }
+                        }
+                    },
+                    TrackType::AudioTrack(_track) => {},
+                    TrackType::MidiTrack(track) => {
+                        track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
+
+                        // populate the possible midi connections
+                        track_details_dialogue.track_midi_device_choice.remove_all();
+                        for midi_in_port in midi_input_devices.iter() {
+                            track_details_dialogue.track_midi_device_choice.append(Some(midi_in_port.as_str()), midi_in_port.as_str());
+                        }
+
+                        track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
+                    },
+                };
+            }
+            None => (),
+        }
     }
 
     pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &IndexMap<String, String>, effect_plugins: &IndexMap<String, String>) {

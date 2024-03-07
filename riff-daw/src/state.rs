@@ -2,6 +2,7 @@ extern crate factor;
 
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::thread;
 
 use apres::MIDI;
@@ -1838,11 +1839,188 @@ impl DAWState {
 
     pub fn export_riffs_to_midi_file(&self, path: std::path::PathBuf) -> bool {
         if let Some(absolute_path) = path.to_str() {
-            let midi = MIDI::new();
+            let bpm = self.project().song().tempo();
+            let mut midi = MIDI::new();
+            let parts_per_quarter_note = midi.get_ppqn();
+            let microseconds_per_beat = (1.0 / bpm * 60.0 * 1000000.0) as u32;
+            let mut track_number: usize = 0;
 
+            midi.insert_event(track_number, 0, apres::MIDIEvent::SetTempo(microseconds_per_beat));
+            midi.insert_event(track_number, 1, apres::MIDIEvent::EndOfTrack);
+            track_number += 1;
 
+            for track in self.project().song().tracks() {
+                let mut absolute_position: f64 = 0.0;
+
+                midi.insert_event(track_number, 0, TrackName(track.name().to_string()));
+                if let TrackType::InstrumentTrack(instrument_track) = track {
+                    midi.insert_event(track_number, 0, InstrumentName(instrument_track.instrument().name().to_string()));
+                }
+
+                for riff in track.riffs() {
+                    let mut single_track_events: Vec<TrackEvent> = vec![];
+                    let riff_length = (riff.length() * (parts_per_quarter_note as f64)) as usize;
+
+                    // convert notes to note on and note offs
+                    for event in riff.events().iter() {
+                        let start_position_in_beats = absolute_position + event.position();
+
+                        match event {
+                            TrackEvent::Note(note) => {
+                                let end_position_in_beats = start_position_in_beats + note.length();
+
+                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(start_position_in_beats, note.note(), note.velocity())));
+                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(end_position_in_beats, note.note(), 0)));
+                            }
+                            _ => (),
+                        }
+                    }
+
+                    // sort the note ons and offs
+                    single_track_events.sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+
+                    // convert to midi events
+                    for event in single_track_events.iter() {
+                        let mut position = (event.position() * (parts_per_quarter_note as f64)) as usize;
+
+                        if position >= riff_length {
+                            position = riff_length - 1;
+                        }
+
+                        match event {
+                            TrackEvent::NoteOn(note_on) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::NoteOn(0, note_on.note() as u8, note_on.velocity() as u8));
+                            }
+                            TrackEvent::NoteOff(note_off) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::NoteOff(0, note_off.note() as u8, 0));
+                            }
+                            TrackEvent::Controller(controller) => {
+                                match controller.controller() {
+                                    7 => { midi.insert_event(track_number, position, apres::MIDIEvent::Volume(0, controller.value() as u8)); }
+                                    10 => { midi.insert_event(track_number, position, apres::MIDIEvent::Pan(0, controller.value() as u8)); }
+                                    _ => {}
+                                }
+                            }
+                            TrackEvent::PitchBend(pitch_bend) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::PitchWheelChange(0, pitch_bend.value() as f64));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // end the midi track
+                    midi.insert_event(track_number, riff_length, apres::MIDIEvent::EndOfTrack);
+
+                    // increment the absolute position
+                    absolute_position += riff.length();
+                }
+
+                track_number += 1;
+            }
 
             midi.save(absolute_path);
+
+            true
+        }
+        else {
+            false
+        }
+    }
+
+    pub fn export_riffs_to_separate_midi_files(&self, path: std::path::PathBuf) -> bool {
+        if let Some(dir_path) = path.to_str() {
+            let bpm = self.project().song().tempo();
+
+            let mut track_number: usize = 1;
+            for track in self.project().song().tracks() {
+                for riff in track.riffs() {
+                    let mut single_track_events: Vec<TrackEvent> = vec![];
+                    let mut absolute_path_buffer = PathBuf::from(dir_path);
+                    let mut midi_file_name = if track_number < 10 {
+                        format!("0{}", track_number)
+                    }
+                    else {
+                        format!("{}", track_number)
+                    };
+
+                    midi_file_name.push('_');
+                    midi_file_name.push_str(self.project().song().name());
+                    midi_file_name.push('_');
+                    midi_file_name.push_str(track.name());
+                    midi_file_name.push('_');
+                    midi_file_name.push_str(riff.name());
+
+                    let midi_track_name = midi_file_name.to_string();
+
+                    midi_file_name.push_str(".mid");
+
+                    absolute_path_buffer.push(midi_file_name);
+
+                    let mut midi = MIDI::new();
+                    let parts_per_quarter_note = midi.get_ppqn();
+                    let microseconds_per_beat = (1.0 / bpm * 60.0 * 1000000.0) as u32;
+                    let riff_length = (riff.length() * (parts_per_quarter_note as f64)) as usize;
+
+                    midi.insert_event(0, 0, apres::MIDIEvent::SetTempo(microseconds_per_beat));
+                    midi.insert_event(0, 0, TrackName(midi_track_name));
+                    if let TrackType::InstrumentTrack(instrument_track) = track {
+                        midi.insert_event(0, 0, InstrumentName(instrument_track.instrument().name().to_string()));
+                    }
+
+                    for event in riff.events().iter() {
+                        let start_position_in_beats = event.position();
+
+                        match event {
+                            TrackEvent::Note(note) => {
+                                let end_position_in_beats = start_position_in_beats + note.length();
+
+                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(start_position_in_beats, note.note(), note.velocity())));
+                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(end_position_in_beats, note.note(), 0)));
+                            }
+                            _ => (),
+                        }
+                    }
+
+                    // sort the note ons and offs
+                    single_track_events.sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+
+                    for event in single_track_events.iter() {
+                        let mut position = (event.position() * (parts_per_quarter_note as f64)) as usize;
+
+                        if position >= riff_length {
+                            position = riff_length - 1;
+                        }
+
+                        match event {
+                            TrackEvent::NoteOn(note_on) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::NoteOn(0, note_on.note() as u8, note_on.velocity() as u8));
+                            }
+                            TrackEvent::NoteOff(note_off) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::NoteOff(0, note_off.note() as u8, 0));
+                            }
+                            TrackEvent::Controller(controller) => {
+                                match controller.controller() {
+                                    7 => { midi.insert_event(0, position, apres::MIDIEvent::Volume(0, controller.value() as u8)); }
+                                    10 => { midi.insert_event(0, position, apres::MIDIEvent::Pan(0, controller.value() as u8)); }
+                                    _ => {}
+                                }
+                            }
+                            TrackEvent::PitchBend(pitch_bend) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::PitchWheelChange(0, pitch_bend.value() as f64));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    midi.insert_event(0, riff_length, apres::MIDIEvent::EndOfTrack);
+
+                    if let Some(os_path) = absolute_path_buffer.to_str() {
+                        midi.save(os_path);
+                    }
+                }
+
+                track_number += 1;
+            }
             true
         }
         else {

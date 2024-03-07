@@ -234,6 +234,9 @@ pub enum TrackChangeType {
     RemoveAudioRouting(String), // route_uuid
 
     TrackMoveToPosition(usize),            // move to position
+
+    TrackDetails(bool), // show: true/false
+    UpdateTrackDetails,
 }
 
 #[derive(Clone)]
@@ -259,6 +262,7 @@ pub enum DAWEvents {
     ImportMidiFile(PathBuf),
     ExportMidiFile(PathBuf),
     ExportRiffsToMidiFile(PathBuf),
+    ExportRiffsToSeparateMidiFiles(PathBuf),
     ExportWaveFile(PathBuf),
     UpdateUI,
     UpdateState,
@@ -370,8 +374,6 @@ pub enum DAWEvents {
 
     RunLuaScript(String), // Lua script text
 
-    TrackDetails(String, bool), // track uuid string, show: true/false
-
     TrackGridVerticalScaleChanged(f64), // scale
 
     Shutdown,
@@ -379,6 +381,10 @@ pub enum DAWEvents {
     RepaintAutomationView,
     RepaintTrackGridView,
     RepaintPianoRollView,
+    RepaintSampleRollDrawingArea,
+    RepaintRiffArrangementBox,
+    RepaintRiffSetsBox,
+    RepaintRiffSequencesBox,
 }
 
 pub enum AudioLayerInwardEvent {

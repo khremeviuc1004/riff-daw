@@ -6405,7 +6405,7 @@ pub struct TrackEventRouting{
     uuid: Uuid,
     pub description: String,
     pub channel: u8,
-    pub note_range: (u8, u8), // start note, end note
+    pub note_range: (u8, u8), // start note, end no
     pub source: TrackEventRoutingNodeType,
     pub destination: TrackEventRoutingNodeType,
 }
@@ -6524,6 +6524,19 @@ impl AudioRouting {
     }
 }
 
+pub trait TrackEventProcessor {}
+
+pub struct BlockBufferTrackEventProcessor {
+
+}
+
+impl TrackEventProcessor for BlockBufferTrackEventProcessor {
+
+}
+
+impl BlockBufferTrackEventProcessor {
+
+}
 
 #[cfg(test)]
 mod tests {

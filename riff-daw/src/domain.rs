@@ -7086,7 +7086,7 @@ mod tests {
             1.0,
             GeneralTrackType::InstrumentTrack,
             vst_host_time_info,
-            Box::new(RiffBufferTrackEventProcessor::new())
+            Box::new(RiffBufferTrackEventProcessor::new(1024.0))
         );
 
         // create a 1 bar riff with a long note
@@ -7163,7 +7163,7 @@ mod tests {
             None
         };
 
-        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new();
+        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new(1024.0);
 
         let bpm = 140.0;
         let sample_rate = 44100.0;
@@ -7230,7 +7230,7 @@ mod tests {
                 }
 
                 debug!("Block: {}, start_sample: {}, end_sample: {}", x, start_sample, end_sample);
-                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, &mut transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample);
+                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample, 0);
             }
 
             if has_tail {
@@ -7238,7 +7238,7 @@ mod tests {
                 let mut end_sample = tail_size;
 
                 debug!("Block: {}, start_sample: {}, end_sample: {}", x, start_sample, end_sample);
-                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, &mut transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample);
+                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample, 0);
             }
 
             start_sample = start_sample + block_size as i32;
@@ -7262,7 +7262,7 @@ mod tests {
             None
         };
 
-        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new();
+        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new(1024.0);
 
         let bpm = 140.0;
         let sample_rate = 44100.0;
@@ -7356,7 +7356,7 @@ mod tests {
             None
         };
 
-        let mut riff_buffer_track_event_processor2 = RiffBufferTrackEventProcessor::new();
+        let mut riff_buffer_track_event_processor2 = RiffBufferTrackEventProcessor::new(1024.0);
 
         let bpm = 140.0;
         let sample_rate = 44100.0;

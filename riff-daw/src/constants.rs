@@ -21,3 +21,5 @@ pub const LUA_GLOBAL_STATE: &str = "state";
 
 pub const DAW_AUTO_SAVE_THREAD_NAME: &str = "DAW autosave";
 
+pub const EVENT_DELETION_BEAT_TOLERANCE: f64 = 0.05;
+

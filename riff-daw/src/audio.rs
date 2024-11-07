@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::convert::From;
+use std::ops::IndexMut;
 use std::sync::{Arc, Mutex};
 
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
@@ -6,6 +8,9 @@ use rb::RbConsumer;
 use vst::api::{TimeInfo, TimeInfoFlags};
 use vst::event::MidiEvent;
 
+use log::*;
+
+use crate::domain::AudioBlock;
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 
 const MAX_MIDI: usize = 3;
@@ -62,7 +67,7 @@ impl JackNotificationHandler {
         match self.jack_midi_sender.try_send(AudioLayerOutwardEvent::JackConnect(port_b_name.clone(), port_a_name.clone())) {
             Ok(_) => {}
             Err(_) => {
-                println!("Audio: problem notifying of new jack connection from={} to={}", port_b_name, port_a_name);
+                debug!("Audio: problem notifying of new jack connection from={} to={}", port_b_name, port_a_name);
             }
         }
     }
@@ -70,11 +75,11 @@ impl JackNotificationHandler {
 
 impl NotificationHandler for JackNotificationHandler {
     fn thread_init(&self, _: &Client) {
-        println!("JACK: async thread started");
+        debug!("JACK: async thread started");
     }
 
     fn shutdown(&mut self, status: ClientStatus, reason: &str) {
-        println!(
+        debug!(
             "JACK: shutdown with status {:?} because \"{}\"",
             status, reason
         );
@@ -89,19 +94,19 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn freewheel(&mut self, _: &Client, is_enabled: bool) {
-        println!(
+        debug!(
             "JACK: freewheel mode is {}",
             if is_enabled { "on" } else { "off" }
         );
     }
 
     fn sample_rate(&mut self, _: &Client, sample_rate: Frames) -> Control {
-        println!("JACK: sample rate changed to {}", sample_rate);
+        debug!("JACK: sample rate changed to {}", sample_rate);
         Control::Continue
     }
 
     fn client_registration(&mut self, _: &Client, name: &str, is_reg: bool) {
-        println!(
+        debug!(
             "JACK: {} client with name \"{}\"",
             if is_reg { "registered" } else { "unregistered" },
             name
@@ -109,7 +114,7 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn port_registration(&mut self, _: &Client, port_id: PortId, is_reg: bool) {
-        println!(
+        debug!(
             "JACK: {} port with id {}",
             if is_reg { "registered" } else { "unregistered" },
             port_id
@@ -123,7 +128,7 @@ impl NotificationHandler for JackNotificationHandler {
         old_name: &str,
         new_name: &str,
     ) -> Control {
-        println!(
+        debug!(
             "JACK: port with id {} renamed from {} to {}",
             port_id, old_name, new_name
         );
@@ -137,7 +142,7 @@ impl NotificationHandler for JackNotificationHandler {
         port_id_b: PortId,
         are_connected: bool,
     ) {
-        println!(
+        debug!(
             "JACK: ports with id {} and {} are {}",
             port_id_a,
             port_id_b,
@@ -151,31 +156,31 @@ impl NotificationHandler for JackNotificationHandler {
             let port_a = client.port_by_id(port_id_a);
             let port_b = client.port_by_id(port_id_b);
 
-            println!("Jack client name: {}", client.name());
+            debug!("Jack client name: {}", client.name());
 
             if let Some(port) = port_a {
                 if let Ok(port_a_name) = port.name() {
-                    println!("Jack port: name={}, flags={:?}", port_a_name, port.flags());
+                    debug!("Jack port: name={}, flags={:?}", port_a_name, port.flags());
                     if let Some(port) = port_b {
                         if let Ok(port_b_name) = port.name() {
                             let input_output = format!("{:?}", port.flags());
-                            println!("Jack port: name={}, flags={}", port_b_name, input_output );
+                            debug!("Jack port: name={}, flags={}", port_b_name, input_output );
                             if input_output.as_str() == "IS_OUTPUT" {
                                 self.notify_about_connected_ports(&port_b_name, &port_a_name);
-                                println!("Audio: jack connection from={} to={}", port_b_name, port_a_name);
+                                debug!("Audio: jack connection from={} to={}", port_b_name, port_a_name);
                             }
                             else {
                                 self.notify_about_connected_ports(&port_a_name, &port_b_name);
-                                println!("Audio: jack connection from={} to={}", port_a_name, port_b_name);
+                                debug!("Audio: jack connection from={} to={}", port_a_name, port_b_name);
                             }
                         }
                         else {
-                            println!("Jack port has no name.");
+                            debug!("Jack port has no name.");
                         }
                     }
                 }
                 else {
-                    println!("Jack port has no name.");
+                    debug!("Jack port has no name.");
                 }
             }
         }
@@ -185,12 +190,12 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn graph_reorder(&mut self, _: &Client) -> Control {
-        println!("JACK: graph reordered");
+        debug!("JACK: graph reordered");
         Control::Continue
     }
 
     fn xrun(&mut self, _: &Client) -> Control {
-        println!("JACK: under run occurred");
+        debug!("JACK: under run occurred");
         Control::Continue
     }
 }
@@ -198,13 +203,19 @@ impl NotificationHandler for JackNotificationHandler {
 pub struct Audio {
     audio_buffer_right: [f32; 1024],
     audio_buffer_left: [f32; 1024],
+    audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
+    audio_block_pool: Vec<AudioBlock>,
+    block_number_buffer: BTreeMap<i32, BTreeMap<i32, AudioBlock>>,
+    btree_map_pool: Vec<BTreeMap<i32, AudioBlock>>,
+    stuck_block_number: i32,
+    stuck_block_number_attempt_count: i32,
     jack_midi_buffer: [(u32, u8, u8, u8, bool); 1024],
     out_l: Port<AudioOut>,
     out_r: Port<AudioOut>,
     midi_out: Port<MidiOut>,
     midi_in: Port<MidiIn>,
     midi_control_in: Port<MidiIn>,
-    audio_consumers: Vec<AudioConsumerDetails<f32>>,
+    audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
     midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
     play: bool,
     block: i32,
@@ -221,6 +232,7 @@ pub struct Audio {
     low_priority_processing_delay_count: i32,
     rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
     jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+    jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
     coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
     custom_midi_out_ports: Vec<Port<MidiOut>>,
     keep_alive: bool,
@@ -233,12 +245,21 @@ impl Audio {
     pub fn new(client: &Client,
                rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+               jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
+        let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
+        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
+            audio_blocks: vec![],
+            audio_block_pool,
+            block_number_buffer: BTreeMap::new(),
+            btree_map_pool,
+            stuck_block_number: 0,
+            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -262,6 +283,7 @@ impl Audio {
             low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
+            jack_midi_sender_ui,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -274,14 +296,23 @@ impl Audio {
     pub fn new_with_consumers(client: &Client,
                               rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                               jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+                              jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                              audio_consumers: Vec<AudioConsumerDetails<f32>>,
+                              audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
                               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
+        let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
+        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
         Audio {
             audio_buffer_right: [0.0f32; 1024],
             audio_buffer_left: [0.0f32; 1024],
+            audio_blocks: vec![],
+            audio_block_pool,
+            block_number_buffer: BTreeMap::new(),
+            btree_map_pool,
+            stuck_block_number: 0,
+            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -305,6 +336,7 @@ impl Audio {
             low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
+            jack_midi_sender_ui,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -323,33 +355,34 @@ impl Audio {
             Ok(event) => match event {
                 AudioLayerInwardEvent::NewAudioConsumer(audio_consumer_detail) => {
                     self.audio_consumers.push(audio_consumer_detail);
-                    // println!("*************Added an audio consumer: {}", self.audio_consumers.len());
+                    // debug!("*************Added an audio consumer: {}", self.audio_consumers.len());
                 }
                 AudioLayerInwardEvent::NewMidiConsumer(midi_consumer_detail) => {
                     self.midi_consumers.push(midi_consumer_detail);
-                    println!("*************Added a midi consumer: {}", self.midi_consumers.len());
+                    debug!("*************Added a midi consumer: {}", self.midi_consumers.len());
                 }
                 AudioLayerInwardEvent::Play(start_play, number_of_blocks, start_block) => {
-                    // info!(root_logger, "*************Jack start play received: number_of_blocks={}", number_of_blocks);
+                    // debug!(root_logger, "*************Jack start play received: number_of_blocks={}", number_of_blocks);
                     self.play = start_play;
                     self.block = start_block;
                     self.play_position_in_frames = self.block as u32 * self.block_size as u32;
                     self.blocks_total = number_of_blocks;
                 }
                 AudioLayerInwardEvent::Stop => {
-                    // info!(root_logger, "*************Jack stop play received.");
+                    // debug!(root_logger, "*************Jack stop play received.");
                     self.play = false;
                     if self.block > -1 {
                         self.block = 0;
                     }
                     self.play_position_in_frames = 0;
+                    self.block_number_buffer.clear();
                 }
                 AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
-                    // info!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
+                    // debug!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
                     self.blocks_total = number_of_blocks;
                 }
                 AudioLayerInwardEvent::Tempo(new_tempo) => {
-                    // info!(root_logger, "*************Jack tempo received: tempo={}", tempo);
+                    // debug!(root_logger, "*************Jack tempo received: tempo={}", tempo);
                     self.tempo = new_tempo;
                     self.frames_per_beat = Audio::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
                 }
@@ -375,17 +408,17 @@ impl Audio {
                     self.midi_consumers.retain(|consumer_detail| *consumer_detail.track_uuid() != track_uuid);
                 }
                 AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid, midi_out_port) => {
-                    println!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
+                    debug!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
                     if let Some(midi_consumer_details) = self.midi_consumers.iter_mut().find(|midi_consumer_details| midi_consumer_details.track_uuid().clone() == track_uuid.clone()) {
                         midi_consumer_details.set_midi_out_port(Some(midi_out_port));
                     }
                     else {
                         // show an error message dialogue??
-                        println!("Failed to add a midi out port for track={}", track_uuid.as_str());
+                        debug!("Failed to add a midi out port for track={}", track_uuid.as_str());
                     }
                 }
                 AudioLayerInwardEvent::PreviewSample(file_name) => {
-                    println!("Audio layer received preview sample: file name = {}", file_name);
+                    debug!("Audio layer received preview sample: file name = {}", file_name);
                     self.preview_sample = Some(SampleData::new(file_name, self.sample_rate_in_frames as i32));
                     self.preview_sample_current_frame = 0;
                 }
@@ -422,58 +455,113 @@ impl Audio {
         }
 
         {
+            // the following breaks down when a consumer's producer takes too long to send audio blocks
+            // the block_number_buffer keeps filling up until all pool resources are consumed and there is no audio
+
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
 
-            for index in 0..self.audio_consumers.len() {
-                match self.audio_consumers.get_mut(index) {
-                    Some(consumer) => {
-                        let consumer_right = consumer.consumer_right_mut();
-                        match consumer_right.read(&mut self.audio_buffer_right) {
-                            Ok(read) => if read > 0 {
-                                let mut count = 0;
-                                for x in out_right.iter_mut() {
-                                    if count < read {
-                                        // info!(root_logger, "consumer_right index {}: {}", index, buffer_right[count]);
-                                        *x += (self.audio_buffer_right[count]) as f32 * self.master_volume * 2.0 * right_pan;
-                                        // print!("{} ", buffer_right[count]);
-                                        if *x > master_channel_right_level {
-                                            master_channel_right_level += *x;
-                                        }
-                                        count += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            },
-                            Err(_) => (), //info!(root_logger, "Problem reading from consumer right channel!"),
+            // if block number is 0 then dump all previous data and return audio blocks and btree maps to their respective pools - works when loop in the riff views
+            if self.block == 0 {
+                let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
+                for block_number in block_numbers.iter() {
+                    if let Some(mut tracks) = self.block_number_buffer.remove(&block_number) {
+                        let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                        for track_number in track_numbers.iter() {
+                            if let Some(audio_block) = tracks.remove(&track_number) {
+                                self.audio_block_pool.push(audio_block);
+                            }
                         }
-                        let consumer_left = consumer.consumer_left_mut();
-                        match consumer_left.read(&mut self.audio_buffer_left) {
-                            Ok(read) => if read > 0 {
-                                let mut count = 0;
-                                for x in out_left.iter_mut() {
-                                    if count < read {
-                                        *x += (self.audio_buffer_left[count]) as f32 * self.master_volume * 2.0 * left_pan;
-                                        // print!("{} ", buffer_left[count]);
-                                        if *x > master_channel_left_level {
-                                            master_channel_left_level += *x;
-                                        }
-                                        count += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                            },
-                            Err(_) => (), //info!(root_logger, "Problem reading from consumer left channel!"),
-                        }
+                        self.btree_map_pool.push(tracks);
                     }
-                    None => (), //info!(root_logger, "Problem getting consumer detail from consumers"),
                 }
             }
+
+            // read the consumers and store the audio blocks appropriately
+            // TODO this would work better for track deletes if the track uuid was used as the key
+            for (track_key, audio_consumer_details) in self.audio_consumers.iter_mut().enumerate() {
+                let consumer = audio_consumer_details.consumer();
+                if let Some(mut new_audio_block) = self.audio_block_pool.pop() {
+                    self.audio_blocks.push(new_audio_block);
+
+                    match consumer.read(&mut self.audio_blocks) {
+                        Ok(read) => {
+                            if read == 1 {
+                                if let Some(mut audio_block) = self.audio_blocks.pop() {
+                                    if self.block_number_buffer.contains_key(&audio_block.block) {
+                                        if let Some(tracks) = self.block_number_buffer.get_mut(&audio_block.block) {
+                                            tracks.insert(track_key as i32, audio_block);
+                                        }
+                                    } else if let Some(mut tracks) = self.btree_map_pool.pop() {
+                                        let block_number = audio_block.block;
+                                        tracks.insert(track_key as i32, audio_block);
+                                        self.block_number_buffer.insert(block_number, tracks);
+                                    }
+                                    else {
+                                        self.audio_block_pool.push(audio_block);
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            if let Some(audio_block) = self.audio_blocks.pop() {
+                                self.audio_block_pool.push(audio_block);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut key_to_remove = None;
+            if let Some((key, track_buffer)) = self.block_number_buffer.first_key_value() {
+                if self.stuck_block_number != *key {
+                    self.stuck_block_number = *key;
+                    self.stuck_block_number_attempt_count = 0;
+                }
+
+                if track_buffer.len() == self.audio_consumers.len() {
+                    for audio_block in track_buffer.values() {
+                        for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
+                            if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
+                                *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
+                                *right += audio_block.audio_data_right[index] * self.master_volume * 2.0 * right_pan;
+                                if *left > master_channel_left_level {
+                                    master_channel_left_level += *left;
+                                }
+                                if *right > master_channel_right_level {
+                                    master_channel_right_level += *right;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    key_to_remove = Some(*key);
+                }
+                else {
+                    self.stuck_block_number_attempt_count += 1;
+
+                    if self.stuck_block_number_attempt_count > 2 {
+                        key_to_remove = Some(*key);
+                    }
+                }
+            }
+
+            if let Some(key) = key_to_remove {
+                if let Some(mut tracks) = self.block_number_buffer.remove(&key) {
+                    let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                    for track_number in track_numbers.iter() {
+                        if let Some(audio_block) = tracks.remove(&track_number) {
+                            self.audio_block_pool.push(audio_block);
+                        }
+                    }
+                    self.btree_map_pool.push(tracks);
+                }
+            }
+            // debug!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
         }
 
-        let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
+        let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
 
         self.process_preview_sample(process_scope, frames_written, &mut number_of_consumers, left_pan, right_pan)
     }
@@ -515,8 +603,8 @@ impl Audio {
         let out_left = self.out_l.as_mut_slice(process_scope);
         let out_right = self.out_r.as_mut_slice(process_scope);
         for left_sample in left_samples.iter() {
-            out_left[frame] += (*left_sample / *number_of_consumers) as f32 * self.master_volume * 2.0 * left_pan;
-            out_right[frame] += (*right_samples.get(frame).unwrap() / *number_of_consumers) as f32 * self.master_volume * 2.0 * right_pan;
+            out_left[frame] += (*left_sample / *number_of_consumers) * self.master_volume * 2.0 * left_pan;
+            out_right[frame] += (*right_samples.get(frame).unwrap() / *number_of_consumers) * self.master_volume * 2.0 * right_pan;
             frame += 1;
         }
     }
@@ -526,13 +614,13 @@ impl Audio {
             let consumer_midi = midi_consumer_detail.consumer_mut();
             match consumer_midi.read(&mut self.jack_midi_buffer) {
                 Ok(read) => if read > 0 {
-                    // println!("Jack audio received some midi events: {}", read);
+                    // debug!("Jack audio received some midi events: {}", read);
                     if let Some(midi_output_port) = midi_consumer_detail.midi_out_port_mut() {
                         let mut midi_out_writer = midi_output_port.writer(process_scope.clone());
                         for count in 0..read {
                             let (frames, byte1, byte2, byte3, active) = self.jack_midi_buffer[count];
                             if active {
-                                // println!("Jack audio sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
+                                // debug!("Jack audio sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
                                 let bytes = [byte1, byte2, byte3];
                                 let event = RawMidi { time: frames, bytes:  &bytes};
                                 let _ = midi_out_writer.write(&event);
@@ -554,7 +642,7 @@ impl Audio {
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
-                delta_frames = self.block * 1024 + event.time as i32;
+                delta_frames = self.block * 1024 /* + event.time as i32 */;
             }
 
             if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
@@ -639,7 +727,7 @@ impl Audio {
                 };
 
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_on));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_on));
             }
             else if event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143 { // note off
                 let note_off = MidiEvent {
@@ -652,7 +740,7 @@ impl Audio {
                     note_off_velocity: 0,
                 };
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_off));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_off));
             }
             else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
                 let controller = Self::create_midi_event(event, &mut delta_frames);
@@ -664,7 +752,7 @@ impl Audio {
                 let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes));
             }
             else if event.bytes.len() == 3 {
-                println!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);
+                debug!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);
             }
         }
     }
@@ -694,7 +782,7 @@ impl Audio {
             }
 
             if self.play_position_in_frames % self.frames_per_beat < 1024 {
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
+                let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
             }
         }
         else if !self.play { // not playing anymore
@@ -742,7 +830,7 @@ impl Audio {
         &mut self.custom_midi_out_ports
     }
 
-    pub fn get_all_audio_consumers(&mut self) -> Vec<AudioConsumerDetails<f32>> {
+    pub fn get_all_audio_consumers(&mut self) -> Vec<AudioConsumerDetails<AudioBlock>> {
         let mut consumers = vec![];
         for _ in 0..self.audio_consumers.len() {
             consumers.push(self.audio_consumers.remove(0));

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, TrackEvent, TrackEventRouting, VstHost};
 
 #[derive(Clone)]
 pub enum CurrentView {
@@ -207,6 +207,7 @@ pub enum TrackChangeType {
     RiffCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
     RiffPasteSelected,
     RiffChangeLengthOfSelected(bool, f64, i32, f64, i32), // true to lengthen, false to shorten, window - x1, y1, x2, y2
+    RiffEventsSelected(f64, i32, f64, i32, bool),
 
     AutomationAdd(f64, i32),
     AutomationDelete(f64),
@@ -218,11 +219,12 @@ pub enum TrackChangeType {
         f64,
         i32,
     ), // window - x1, y1, x2, y2
-    AutomationQuantiseSelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
-    AutomationCut(f64, i32, f64, i32),              // window - x1, y1, x2, y2
-    AutomationCopy(f64, i32, f64, i32),             // window - x1, y1, x2, y2
+    AutomationQuantiseSelected,
+    AutomationCut,
+    AutomationCopy,
     AutomationPaste,
     AutomationTypeChange(AutomationChangeData),
+    AutomationSelected(f64, i32, f64, i32, bool),
 
     RouteMidiTo(TrackEventRouting),
     RemoveMidiRouting(String), // route_uuid
@@ -232,6 +234,9 @@ pub enum TrackChangeType {
     RemoveAudioRouting(String), // route_uuid
 
     TrackMoveToPosition(usize),            // move to position
+
+    TrackDetails(bool), // show: true/false
+    UpdateTrackDetails,
 }
 
 #[derive(Clone)]
@@ -257,6 +262,7 @@ pub enum DAWEvents {
     ImportMidiFile(PathBuf),
     ExportMidiFile(PathBuf),
     ExportRiffsToMidiFile(PathBuf),
+    ExportRiffsToSeparateMidiFiles(PathBuf),
     ExportWaveFile(PathBuf),
     UpdateUI,
     UpdateState,
@@ -368,15 +374,21 @@ pub enum DAWEvents {
 
     RunLuaScript(String), // Lua script text
 
-    TrackDetails(String, bool), // track uuid string, show: true/false
-
     TrackGridVerticalScaleChanged(f64), // scale
 
     Shutdown,
+
+    RepaintAutomationView,
+    RepaintTrackGridView,
+    RepaintPianoRollView,
+    RepaintSampleRollDrawingArea,
+    RepaintRiffArrangementBox,
+    RepaintRiffSetsBox,
+    RepaintRiffSequencesBox,
 }
 
 pub enum AudioLayerInwardEvent {
-    NewAudioConsumer(AudioConsumerDetails<f32>),
+    NewAudioConsumer(AudioConsumerDetails<AudioBlock>),
     NewMidiConsumer(MidiConsumerDetails<(u32, u8, u8, u8, bool)>), // frame, midi byte 1, midi byte 2, midi byte 3
     Play(bool, i32, i32), // play - true/false, number of blocks, start at block
     ExtentsChange(i32),
@@ -393,6 +405,11 @@ pub enum AudioLayerInwardEvent {
     PreviewSample(String), // absolute path sample file name
 }
 
+pub enum EventProcessorType {
+    RiffBufferEventProcessor,
+    BlockEventProcessor,
+}
+
 pub enum TrackBackgroundProcessorInwardEvent {
     SetSample(SampleData),
     SetEvents(
@@ -402,6 +419,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         ),
         bool,
     ), // instrument plugin events, instrument and effect plugin parameters, transition_to
+    SetEventProcessorType(EventProcessorType),
     GotoStart,
     MoveBack,
     Play(i32), // start at block number
@@ -474,7 +492,7 @@ pub enum TrackBackgroundProcessorOutwardEvent {
     InstrumentPluginWindowSize(String, i32, i32), // track uuid, width, height
     EffectPluginWindowSize(String, String, i32, i32), // track uuid, plugin uuid, width, height
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0
-    TrackRenderAudioConsumer(AudioConsumerDetails<f32>),
+    TrackRenderAudioConsumer(AudioConsumerDetails<AudioBlock>),
     ChannelLevels(String, f32, f32), // track_uuid, left channel level, right channel_level
 }
 

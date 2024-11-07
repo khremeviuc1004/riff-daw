@@ -13,6 +13,10 @@ button {
     font-size: small;
 }
 
+button:checked {
+    background-color: lightslategray;
+}
+
 combobox {
     padding: 0;
     font-size: small;

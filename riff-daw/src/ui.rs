@@ -20,7 +20,7 @@ use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_V
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType};
-use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler};
+use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType};
 use crate::state::DAWState;
 use crate::utils::DAWUtils;
 
@@ -71,6 +71,7 @@ pub struct Ui {
     pub menu_item_import_midi: MenuItem,
     pub menu_item_export_midi: MenuItem,
     pub menu_item_export_midi_riffs: MenuItem,
+    pub menu_item_export_midi_riffs_separate: MenuItem,
     pub menu_item_export_wave: MenuItem,
     pub menu_item_quit: MenuItem,
 
@@ -794,14 +795,14 @@ impl MainWindow {
                     let mut centre_split_pane_position= centre_split_pane.position();
                     let centre_split_pane_max_position = centre_split_pane.max_position();
 
-                    // info!("Centre split pane position: {}", centre_split_pane_position);
+                    // debug!("Centre split pane position: {}", centre_split_pane_position);
 
                     if centre_split_pane_position < 230 {
                         centre_split_pane.set_position(230);
                         centre_split_pane_position = 230;
                     }
 
-                    std::thread::spawn(move || {
+                    let _ = std::thread::Builder::new().name("Split position".into()).spawn(move || {
                         match state.lock() {
                             Ok(mut state) => {
                                 if centre_split_pane_position != centre_split_pane_max_position
@@ -831,9 +832,9 @@ impl MainWindow {
                             path.set_file_name(&file_name);
                             {
                                 let tx_from_ui = tx_from_ui.clone();
-                                std::thread::spawn(move || {
+                                let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
                                     if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
-                                        info!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
+                                        debug!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
                                     }
                                 });
                             }
@@ -851,8 +852,8 @@ impl MainWindow {
                 let tempo_value = tempo_spinner.value();
                 if let Ok(tempo) = tempo_value.to_value().get() {
                     match tx_from_ui.send(DAWEvents::TempoChange(tempo)) {
-                        Ok(_) => info!(""),
-                        Err(_) => info!("Couldn't send tempo change from ui - failed to send with sender."),
+                        Ok(_) => debug!(""),
+                        Err(_) => debug!("Couldn't send tempo change from ui - failed to send with sender."),
                     }
                 }
             });
@@ -1303,13 +1304,16 @@ impl MainWindow {
         midi_devices: Option<Vec<String>>,
         volume: f32,
         pan: f32,
-        _mute: bool,
-        _solo: bool,
+        mute: bool,
+        solo: bool,
     ) {
         let (entry_buffer, track_mute_toggle_state, track_solo_toggle_state) = {
             let tx_from_ui = tx_from_ui.clone();
             self.add_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone())
         };
+
+        track_mute_toggle_state.set_active(mute);
+        track_solo_toggle_state.set_active(solo);
 
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -1407,11 +1411,11 @@ impl MainWindow {
 
                 for riff_set_frame_child in riff_set_frame.children().iter() {
                     if riff_set_frame_child.widget_name() == "riff_set_blade_alignment_box" {
-                        info!("Found riff set blade widget: {}", riff_set_frame_child.widget_name());
+                        debug!("Found riff set blade widget: {}", riff_set_frame_child.widget_name());
 
                         if let Some(riff_set_blade_alignment_box) = riff_set_frame_child.dynamic_cast_ref::<Box>() {
                             for riff_set_blade_alignment_box_child in riff_set_blade_alignment_box.children().iter() {
-                                info!("Found widget: {}", riff_set_blade_alignment_box_child.widget_name());
+                                debug!("Found widget: {}", riff_set_blade_alignment_box_child.widget_name());
 
                                 if riff_set_blade_alignment_box_child.widget_name() == "riff_set_box" {
                                     if let Some(riff_set_box) = riff_set_blade_alignment_box_child.dynamic_cast_ref::<Box>() {
@@ -1452,7 +1456,7 @@ impl MainWindow {
         track_panel.track_number_text.set_label(track_number_label_txt.as_str());
         track_panel.track_name_text_ctrl.set_text(track_name);
 
-        info!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.allocation().height);
+        debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.allocation().height);
         
         track_panel.track_number_text.drag_source_set(
             gdk::ModifierType::BUTTON1_MASK, 
@@ -1462,7 +1466,7 @@ impl MainWindow {
         {
             let track_uuid = track_uuid.to_string();
             track_panel.track_number_text.connect_drag_data_get(move |_, _, selection_data, _, _| {
-                info!("Track drag data get called.");
+                debug!("Track drag data get called.");
                 selection_data.set_text(track_uuid.as_str());
             });
         }
@@ -1481,7 +1485,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.delete_button.connect_clicked(move |_delete_button| {
                  match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
             });
@@ -1500,7 +1504,7 @@ impl MainWindow {
             track_panel.solo_toggle_btn.connect_clicked(move |solo_toggle_btn| {
                 if solo_toggle_btn.is_active() {
                     match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::SoloOn, Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Failed to send message via tx when ui has changed solo for track."),
+                        Err(_) => debug!("Failed to send message via tx when ui has changed solo for track."),
                         _ => (),
                     }
                 }
@@ -1515,7 +1519,7 @@ impl MainWindow {
             track_panel.mute_toggle_btn.connect_clicked(move |mute_toggle_btn| {
                 if mute_toggle_btn.is_active() {
                     match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Mute, Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Failed to send message via tx when ui has changed mute for track."),
+                        Err(_) => debug!("Failed to send message via tx when ui has changed mute for track."),
                         _ => (),
                     }
                 }
@@ -1530,7 +1534,7 @@ impl MainWindow {
             track_panel.record_toggle_btn.connect_clicked(move |record_toggle_btn| {
                 if record_toggle_btn.is_active() {
                     match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Record(true), Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Failed to send message via tx when ui has changed record state for track."),
+                        Err(_) => debug!("Failed to send message via tx when ui has changed record state for track."),
                         _ => (),
                     }
                 }
@@ -1545,7 +1549,7 @@ impl MainWindow {
             let track_panel_vertical_boxes = vec![self.ui.top_level_vbox.clone(), self.ui.riff_sets_track_panel.clone(), self.ui.riff_sequences_track_panel.clone(), self.ui.riff_arrangement_track_panel.clone()];
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             track_panel.track_number_text.connect_clicked(move |_button| {
-                info!("Clicked on track: track number={}", track_uuid);
+                debug!("Clicked on track: track number={}", track_uuid);
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
@@ -1558,7 +1562,7 @@ impl MainWindow {
 
                 // notify that the track has been selected
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has selected a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
                 }
@@ -1568,8 +1572,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
             });
@@ -1579,7 +1583,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
             });
@@ -1589,7 +1593,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_panel.track_panel_copy_track_button.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::CopyTrack, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when copying track"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when copying track"),
                     _ => (),
                 }
             });
@@ -1630,11 +1634,14 @@ impl MainWindow {
         {
             let track_uuid = track_uuid.to_string();
             riff_set_track_panel.track_number_text.connect_drag_data_get(move |_, _, selection_data, _, _| {
-                info!("Track drag data get called.");
+                debug!("Track drag data get called.");
                 selection_data.set_text(track_uuid.as_str());
             });
         }
-    
+
+        riff_set_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_set_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+
         let _ = track_solo_toggle_state.bind_property("active", &riff_set_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_set_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
@@ -1652,7 +1659,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.delete_button.connect_clicked(move |_delete_button| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
             });
@@ -1662,7 +1669,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
             });
@@ -1673,7 +1680,7 @@ impl MainWindow {
             let track_panel_vertical_boxes = vec![self.ui.top_level_vbox.clone(), self.ui.riff_sets_track_panel.clone(), self.ui.riff_sequences_track_panel.clone(), self.ui.riff_arrangement_track_panel.clone()];
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             riff_set_track_panel.track_number_text.connect_clicked(move |_button| {
-                info!("Clicked on track: track number={}", track_uuid);
+                debug!("Clicked on track: track number={}", track_uuid);
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
@@ -1686,7 +1693,7 @@ impl MainWindow {
 
                 // notify that the track has been selected
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has selected a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
                 }
@@ -1696,8 +1703,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_set_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
             });
@@ -1715,7 +1722,7 @@ impl MainWindow {
         let riff_sequence_track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         riff_sequence_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
         riff_sequence_track_panel.delete_button.connect_clicked(|_item| {
-            info!("First delete button clicked.");
+            debug!("First delete button clicked.");
         });
         let track_panel: Frame = riff_sequence_track_panel.track_panel.clone();
         track_panel.set_height_request(RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT);
@@ -1732,10 +1739,13 @@ impl MainWindow {
         {
             let track_uuid = track_uuid.to_string();
             riff_sequence_track_panel.track_number_text.connect_drag_data_get(move |_, _, selection_data, _, _| {
-                info!("Track drag data get called.");
+                debug!("Track drag data get called.");
                 selection_data.set_text(track_uuid.as_str());
             });
         }
+
+        riff_sequence_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_sequence_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_sequence_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_sequence_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
@@ -1754,7 +1764,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.delete_button.connect_clicked(move |_delete_button| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
             });
@@ -1764,7 +1774,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
             });
@@ -1775,7 +1785,7 @@ impl MainWindow {
             let track_panel_vertical_boxes = vec![self.ui.top_level_vbox.clone(), self.ui.riff_sets_track_panel.clone(), self.ui.riff_sequences_track_panel.clone(), self.ui.riff_arrangement_track_panel.clone()];
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             riff_sequence_track_panel.track_number_text.connect_clicked(move |_button| {
-                info!("Clicked on track: track number={}", track_uuid);
+                debug!("Clicked on track: track number={}", track_uuid);
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
@@ -1788,7 +1798,7 @@ impl MainWindow {
 
                 // notify that the track has been selected
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has selected a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
                 }
@@ -1798,8 +1808,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
             });
@@ -1821,7 +1831,7 @@ impl MainWindow {
         riff_arrangement_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
 
         riff_arrangement_track_panel.delete_button.connect_clicked(|_item| {
-            info!("First delete button clicked.");
+            debug!("First delete button clicked.");
         });
         let track_panel: Frame = riff_arrangement_track_panel.track_panel.clone();
         track_panel.set_height_request(RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT);
@@ -1838,10 +1848,13 @@ impl MainWindow {
         {
             let track_uuid = track_uuid.to_string();
             riff_arrangement_track_panel.track_number_text.connect_drag_data_get(move |_, _, selection_data, _, _| {
-                info!("Track drag data get called.");
+                debug!("Track drag data get called.");
                 selection_data.set_text(track_uuid.as_str());
             });
         }
+
+        riff_arrangement_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        riff_arrangement_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_arrangement_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_arrangement_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
@@ -1860,7 +1873,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.delete_button.connect_clicked(move |_delete_button| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Deleted, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has deleted a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has deleted a track."),
                     _ => (),
                 }
             });
@@ -1870,7 +1883,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
             });
@@ -1881,7 +1894,7 @@ impl MainWindow {
             let track_panel_vertical_boxes = vec![self.ui.top_level_vbox.clone(), self.ui.riff_sets_track_panel.clone(), self.ui.riff_sequences_track_panel.clone(), self.ui.riff_arrangement_track_panel.clone()];
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             riff_arrangement_track_panel.track_number_text.connect_clicked(move |_button| {
-                info!("Clicked on track: track number={}", track_uuid);
+                debug!("Clicked on track: track number={}", track_uuid);
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
@@ -1894,7 +1907,7 @@ impl MainWindow {
 
                 // notify that the track has been selected
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Selected, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Failed to send message via tx when ui has selected a track."),
+                    Err(_) => debug!("Failed to send message via tx when ui has selected a track."),
                     _ => {
                     },
                 }
@@ -1904,8 +1917,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_track_panel.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
             });
@@ -1932,6 +1945,9 @@ impl MainWindow {
         mixer_blade_volume_scale.set_value((volume * 100.0) as f64);
         let mixer_blade_track_pan_scale: Scale = mixer_blade.mixer_blade_track_pan_scale.clone();
         mixer_blade_track_pan_scale.set_value((pan * 50.0) as f64);
+
+        mixer_blade.mixer_blade_track_solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
+        mixer_blade.mixer_blade_track_mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
@@ -2077,8 +2093,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             mixer_blade.track_details_btn.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), true)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when showing track details dialog requested"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(true), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when showing track details dialog requested"),
                     _ => (),
                 }
             });
@@ -2147,10 +2163,10 @@ impl MainWindow {
             track_details_dialogue.track_riff_choice.connect_changed(move |track_riff_choice| {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
-                        info!("Selected riff: id={:?}, text={:?}",
+                        debug!("Selected riff: id={:?}, text={:?}",
                         active_id.to_value(), track_riff_choice.active_text().unwrap().to_value());
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSelect(active_id.to_string()), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a riff has been selected."),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been selected."),
                             _ => (),
                         }
                     },
@@ -2164,10 +2180,10 @@ impl MainWindow {
             track_details_dialogue.track_midi_channel_choice.connect_changed(move |track_midi_channel_choice| {
                 match track_midi_channel_choice.active_id() {
                     Some(active_id) => {
-                        info!("Selected midi channel: id={:?}, text={:?}",
+                        debug!("Selected midi channel: id={:?}, text={:?}",
                              active_id.to_value(), track_midi_channel_choice.active_text().unwrap().to_value());
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::MidiOutputChannelChanged(active_id.to_string().parse::<i32>().unwrap()), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a track midi channel has been selected."),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track midi channel has been selected."),
                             _ => (),
                         }
                     },
@@ -2181,10 +2197,10 @@ impl MainWindow {
             track_details_dialogue.track_midi_device_choice.connect_changed(move |track_midi_device_choice| {
                 match track_midi_device_choice.active_id() {
                     Some(active_id) => {
-                        info!("Selected midi device: id={:?}, text={:?}",
+                        debug!("Selected midi device: id={:?}, text={:?}",
                                  active_id.to_value(), track_midi_device_choice.active_text().unwrap().to_value());
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::MidiOutputDeviceChanged(active_id.to_string()), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a track midi device has been selected."),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track midi device has been selected."),
                             _ => (),
                         }
                     },
@@ -2198,18 +2214,18 @@ impl MainWindow {
         //     let track_riff_choice = track_details_panel.track_riff_choice.clone();
         //     track_details_panel.track_riff_choice_entry.connect_activate(move |track_riff_choice_entry| {
         //         let new_text = String::from(track_riff_choice_entry.text().as_str());
-        //         info!("############################track riff choice entry enter hit: {}", new_text.as_str());
+        //         debug!("############################track riff choice entry enter hit: {}", new_text.as_str());
         //         let kev  = track_riff_choice.active_id();
         //         if let Some(id) = track_riff_choice.active_id() {
         //             // track_riff_choice.
         //             match tx_from_ui.try_lock() {
         //                 Ok(tx) => {
         //                     match tx.send(DAWEvents::TrackChange(TrackChangeType::RiffNameChange(id.to_string(), new_text), Some(track_uuid.to_string()))) {
-        //                         Err(_) => info!("Problem sending message with tx from ui lock when a riff has had a name change."),
+        //                         Err(_) => debug!("Problem sending message with tx from ui lock when a riff has had a name change."),
         //                         _ => (),
         //                     }
         //                 },
-        //                 Err(_) => info!("Problem getting tx from ui lock when a track riff has had a name change"),
+        //                 Err(_) => debug!("Problem getting tx from ui lock when a track riff has had a name change"),
         //             }
         //         }
         //     });
@@ -2220,16 +2236,16 @@ impl MainWindow {
             track_details_dialogue.track_riff_length_choice.connect_changed(move |_track_riff_length_choice| {
                 // match track_riff_length_choice.active() {
                 //     Some(selected_riff_index) => {
-                //         info!("Selected riff: index={}, id={:?}, text={:?}",
+                //         debug!("Selected riff: index={}, id={:?}, text={:?}",
                 //             selected_riff_index, track_riff_length_choice.active_id().unwrap().to_value(), track_riff_length_choice.active_text().unwrap().to_value());
                 //         match tx_from_ui.try_lock() {
                 //             Ok(tx) => {
                 //                 match tx.send(DAWEvents::TrackChange(TrackChangeType::RIFF_LENGTH_CHANGED(1.0), None, Some(track_number - 1))) {
-                //                     Err(_) => info!("Problem sending message with tx from ui lock when riff length has changed."),
+                //                     Err(_) => debug!("Problem sending message with tx from ui lock when riff length has changed."),
                 //                     _ => (),
                 //                 }
                 //             },
-                //             Err(_) => info!("Problem getting tx from ui lock when riff length has changed"),
+                //             Err(_) => debug!("Problem getting tx from ui lock when riff length has changed"),
                 //         }
                 //     },
                 //     None => (),
@@ -2242,7 +2258,7 @@ impl MainWindow {
             track_details_dialogue.track_detail_track_colour_button.connect_color_set(move |track_detail_track_colour_button| {
                 let selected_colour = track_detail_track_colour_button.rgba();
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when the track colour has been changed."),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when the track colour has been changed."),
                     _ => (),
                 }
             });
@@ -2256,7 +2272,7 @@ impl MainWindow {
                     Some(active_id) => {
                         let selected_colour = track_detail_riff_colour_button.rgba();
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffColourChanged(active_id.to_string(),selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a riff colour has been changed."),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a riff colour has been changed."),
                             _ => (),
                         }
                     },
@@ -2369,7 +2385,7 @@ impl MainWindow {
                 track_midi_routing_dialogue.track_midi_routing_dialogue.hide();
 
                 if return_value == gtk::ResponseType::Close {
-                    info!("track_midi_routing_dialogue Close on hide.");
+                    debug!("track_midi_routing_dialogue Close on hide.");
                 }
             });
         }
@@ -2478,7 +2494,7 @@ impl MainWindow {
                 track_audio_routing_dialogue.track_audio_routing_dialogue.hide();
 
                 if return_value == gtk::ResponseType::Close {
-                    info!("track_audio_routing_dialogue Close on hide.");
+                    debug!("track_audio_routing_dialogue Close on hide.");
                 }
             });
         }
@@ -2486,7 +2502,7 @@ impl MainWindow {
         {
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
             track_details_dialogue.track_details_riff_choice_entry.connect_focus_in_event(move |track_riff_choice_entry, _| {
-                info!("track_details_dialogue.track_details_riff_choice_entry.connect_focus_in_event...");
+                debug!("track_details_dialogue.track_details_riff_choice_entry.connect_focus_in_event...");
 
                 if let Some(active_id) = track_riff_choice.active_id() {
                     unsafe {
@@ -2503,7 +2519,7 @@ impl MainWindow {
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
             let track_riff_length_choice = track_details_dialogue.track_riff_length_choice.clone();
             track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event(move |track_riff_choice_entry, event| {
-                info!("track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event...");
+                debug!("track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event...");
                 if event.event_type() == EventType::KeyRelease {
                     if let Some(key_name) = event.keyval().name() {
                         if key_name.as_str() == "Return" {
@@ -2522,7 +2538,7 @@ impl MainWindow {
                             }
 
                             match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAdd(uuid, riff_name.clone(), riff_length), Some(track_uuid.to_string()))) {
-                                Err(_) => info!("Problem sending message with tx from ui lock when a riff has been added"),
+                                Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been added"),
                                 _ => {
                                     track_riff_choice.append( Some(id.as_str()), &riff_name);
                                     track_riff_choice.set_active_id(Some(id.as_str()));
@@ -2536,7 +2552,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event: no selected riff.");
+                    debug!("track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event: no selected riff.");
                 }
 
                 gtk::Inhibit(false)
@@ -2548,7 +2564,7 @@ impl MainWindow {
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
             let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
             track_details_dialogue.track_copy_riff_btn.connect_clicked(move |_| {
-                info!("track_details_dialogue.track_copy_riff_btn.connect_clicked...");
+                debug!("track_details_dialogue.track_copy_riff_btn.connect_clicked...");
                 if let Some(uuid_to_copy) = track_riff_choice.active_id() {
                     let uuid = Uuid::new_v4();
                     let id = uuid.to_string();
@@ -2557,7 +2573,7 @@ impl MainWindow {
                         riff_name.push_str(text.as_str());
                     }
                     match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopy(uuid_to_copy.to_string(), uuid, riff_name.clone()), Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Problem sending message with tx from ui lock when a riff has been copied"),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been copied"),
                         _ => {
                             track_riff_choice.append( Some(id.as_str()), riff_name.as_str());
                             track_riff_choice.set_active_id(Some(id.as_str()));
@@ -2569,7 +2585,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("track_details_dialogue.track_copy_riff_btn.connect_clicked: no selected item.");
+                    debug!("track_details_dialogue.track_copy_riff_btn.connect_clicked: no selected item.");
                 }
             });
         }
@@ -2580,12 +2596,12 @@ impl MainWindow {
             track_details_dialogue.track_delete_riff_btn.connect_clicked(move |_| {
                 if let Some(riff_uuid) = track_riff_choice.active_id() {
                     match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDelete(riff_uuid.to_string()), Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Problem sending message with tx from ui lock when a riff has been deleted"),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been deleted"),
                         _ => {},
                     }
                 }
                 else {
-                    info!("No riff selected delete.");
+                    debug!("No riff selected delete.");
                 }
             });
         }
@@ -2603,10 +2619,10 @@ impl MainWindow {
                 };
                 match track_riff_choice.active_id() {
                     Some(riff_uuid) => match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffLengthChange(riff_uuid.to_string(), riff_length), Some(track_uuid.to_string()))) {
-                        Err(_) => info!("Problem sending message with tx from ui lock when nominating to edit a riff"),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when nominating to edit a riff"),
                         _ => (),
                     },
-                    None => info!("No riff selected."),
+                    None => debug!("No riff selected."),
                 }
             });
         }
@@ -2616,7 +2632,7 @@ impl MainWindow {
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
             let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
             track_details_dialogue.track_details_riff_save_name_btn.connect_clicked(move |_| {
-                info!("track_details_dialogue.track_details_riff_save_name_btn.connect_clicked...");
+                debug!("track_details_dialogue.track_details_riff_save_name_btn.connect_clicked...");
                 let selected_riff_uuid_option: Option<NonNull<String>> = unsafe {
                     track_details_riff_choice_entry.data("selected_riff_uuid")
                 };
@@ -2626,7 +2642,7 @@ impl MainWindow {
 
                     unsafe {
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffNameChange((*selected_riff_uuid).clone(), track_details_riff_choice_entry.text().to_string()), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when changing a riff name"),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when changing a riff name"),
                             _ => (),
                         }
                     }
@@ -2653,7 +2669,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("track_details_dialogue.track_details_riff_save_name_btn.connect_clicked: no selected riff.");
+                    debug!("track_details_dialogue.track_details_riff_save_name_btn.connect_clicked: no selected riff.");
                 }
             });
         }
@@ -2664,10 +2680,10 @@ impl MainWindow {
                 match track_instrument_choice.active_id() {
                     Some(instrument_shared_library_file) => {
                         let file = instrument_shared_library_file.to_string();
-                        info!("Selected instrument: id={:?}, text={:?}", file.as_str(), track_instrument_choice.active_text().unwrap().to_string());
+                        debug!("Selected instrument: id={:?}, text={:?}", file.as_str(), track_instrument_choice.active_text().unwrap().to_string());
 
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::InstrumentChanged(file), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a a track instrument has been selected."),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a a track instrument has been selected."),
                             _ => (),
                         }
                     },
@@ -2689,7 +2705,7 @@ impl MainWindow {
                         let uuid = Uuid::new_v4();
                         let name = track_effects_choice.active_text().unwrap().to_string();
 
-                        info!("Add effect: id={}, text={}, uuid={}", file.as_str(), name.as_str(), uuid);
+                        debug!("Add effect: id={}, text={}, uuid={}", file.as_str(), name.as_str(), uuid);
 
                         track_effects_list_store.insert_with_values(None, &[
                             (0, &name),
@@ -2701,11 +2717,11 @@ impl MainWindow {
                         track_effects_list.show_all();
 
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when a track effect is being added"),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track effect is being added"),
                             _ => (),
                         }
                     },
-                    None => info!("No riff selected."),
+                    None => debug!("No riff selected."),
                 }
             });
         }
@@ -2734,7 +2750,7 @@ impl MainWindow {
                                     track_effects_list_store.remove(&tree_iterator);
                                     track_effects_list.set_model(Some(&track_effects_list_store));
                                 },
-                                Err(_) => info!("Couldn't send effect delete message."),
+                                Err(_) => debug!("Couldn't send effect delete message."),
                             }
                         }
                     }
@@ -2746,7 +2762,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_details_dialogue.track_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling instrument window visibility"),
                     _ => (),
                 }
             });
@@ -2755,10 +2771,10 @@ impl MainWindow {
 
         {
             track_details_dialogue.track_effect_list.connect_cursor_changed(move |tree_view| {
-                info!("Track effect list row selected.");
+                debug!("Track effect list row selected.");
                 let selection = tree_view.selection();
                 if let Some((model, iter)) = selection.selected() {
-                    info!("{}, {}, {}",
+                    debug!("{}, {}, {}",
                         model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
                         model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
                         model.value(&iter, 2).get::<String>().expect("Tree view selection, column 2"),
@@ -2771,17 +2787,17 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let track_effect_list = track_details_dialogue.track_effect_list.clone();
             track_details_dialogue.track_effect_window_visibility_toggle_btn.connect_clicked(move |_| {
-                info!("Track effect toggle visibility clicked.");
+                debug!("Track effect toggle visibility clicked.");
                 let selection = track_effect_list.selection();
                 if let Some((model, iter)) = selection.selected() {
-                    info!("{}, {}, {}",
+                    debug!("{}, {}, {}",
                         model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
                         model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
                         model.value(&iter, 2).get::<String>().expect("Tree view selection, column 2"),
                     );
                     if let Ok(effect_uuid) = model.value(&iter, 2).get::<String>() {
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
-                            Err(_) => info!("Problem sending message with tx from ui lock when toggling effect window visibility"),
+                            Err(_) => debug!("Problem sending message with tx from ui lock when toggling effect window visibility"),
                             _ => (),
                         }
                     }
@@ -2792,8 +2808,8 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             track_details_dialogue.track_detail_close_button.connect_clicked(move |_| {
-                match tx_from_ui.send(DAWEvents::TrackDetails(track_uuid.to_string(), false)) {
-                    Err(_) => info!("Problem sending message with tx from ui lock when requesting hide track details"),
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackDetails(false), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when requesting hide track details"),
                     _ => (),
                 }
             });
@@ -2820,7 +2836,7 @@ impl MainWindow {
                 match track_midi_routing_track_combobox_text.active_id() {
                     Some(active_id) => {
                         let routing_description = track_midi_routing_track_combobox_text.active_text().unwrap().to_string();
-                        info!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
+                        debug!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
 
                         let track_midi_routing_panel_glade_src = include_str!("track_midi_routing_panel.glade");
                         let track_midi_routing_panel: TrackMidiRoutingPanel = TrackMidiRoutingPanel::from_string(track_midi_routing_panel_glade_src).unwrap();
@@ -2859,7 +2875,7 @@ impl MainWindow {
                 match track_audio_routing_track_combobox_text.active_id() {
                     Some(active_id) => {
                         let routing_description = track_audio_routing_track_combobox_text.active_text().unwrap().to_string();
-                        info!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
+                        debug!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
 
                         let track_audio_routing_panel_glade_src = include_str!("track_audio_routing_panel.glade");
                         let track_audio_routing_panel: TrackAudioRoutingPanel = TrackAudioRoutingPanel::from_string(track_audio_routing_panel_glade_src).unwrap();
@@ -2925,7 +2941,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_save.connect_button_press_event(move |_, _| {
-                info!("Menu item save clicked!");
+                debug!("Menu item save clicked!");
                 let _ = tx_from_ui.send(DAWEvents::Save);
                 Inhibit(true)
             });
@@ -2935,7 +2951,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_save_as.connect_button_press_event(move |_menu_item, _btn| {
-                info!("Menu item save as clicked!");
+                debug!("Menu item save as clicked!");
                 let dialog = FileChooserDialog::new(Some("DAW save as project file"),     Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/json");
@@ -3029,6 +3045,24 @@ impl MainWindow {
         }
 
         {
+            let tx_from_ui = tx_from_ui.clone();
+            let window = self.ui.get_wnd_main().clone();
+            self.ui.menu_item_export_midi_riffs_separate.connect_button_press_event(move |_menu_item, _btn|{
+                let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."),     Some(&window), FileChooserAction::SelectFolder);
+                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                let result = dialog.run();
+                if result == gtk::ResponseType::Ok {
+                    let directory = dialog.current_folder();
+                    let _ = tx_from_ui.send(DAWEvents::ExportRiffsToSeparateMidiFiles(directory.unwrap()));
+                }
+                dialog.hide();
+
+                Inhibit(true)
+            });
+        }
+
+        {
             let tx_from_ui = tx_from_ui;
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_export_wave.connect_button_press_event(move |_menu_item, _btn|{
@@ -3094,7 +3128,7 @@ impl MainWindow {
             self.ui.toolbar_add_track.connect_clicked(move |_button|{
                 // need to check the ui.toolbar_add_track_combobox for the track type and propagate it
                 if let Some(track_type) = toolbar_add_track_combobox.active_id() {
-                    info!("ui.toolbar_add_track.connect_clicked: sending track add msg...");
+                    debug!("ui.toolbar_add_track.connect_clicked: sending track add msg...");
                     match track_type.to_string().as_str() {
                         "audio_track" => {
                             let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Added(GeneralTrackType::AudioTrack), None));
@@ -3107,7 +3141,7 @@ impl MainWindow {
                         },
                         _ => {}
                     }
-                    info!("ui.toolbar_add_track.connect_clicked: sent track add msg.");
+                    debug!("ui.toolbar_add_track.connect_clicked: sent track add msg.");
                 }
             });
         }
@@ -3123,7 +3157,6 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui;
             self.ui.toolbar_redo.connect_clicked(move |_|{
                 let _ = tx_from_ui.send(DAWEvents::Redo);
-                let _ = tx_from_ui.send(DAWEvents::Redo);
             });
         }
     }
@@ -3136,7 +3169,7 @@ impl MainWindow {
         {
             let loop_combobox_text = self.ui.loop_combobox_text.clone();
             self.ui.loop_combobox_text_entry.connect_focus_in_event(move |loop_combobox_text_entry, _| {
-                info!("loop_combobox_text_entry.connect_focus_in_event...");
+                debug!("loop_combobox_text_entry.connect_focus_in_event...");
 
                 if let Some(active_id) = loop_combobox_text.active_id() {
                     unsafe {
@@ -3152,7 +3185,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let loop_combobox_text = self.ui.loop_combobox_text.clone();
             self.ui.loop_combobox_text_entry.connect_key_release_event(move |loop_combobox_text_entry, event| {
-                info!("loop_combobox_text_entry.connect_key_release_event...");
+                debug!("loop_combobox_text_entry.connect_key_release_event...");
                 if event.event_type() == EventType::KeyRelease {
                     if let Some(key_name) = event.keyval().name() {
                         if key_name.as_str() == "Return" {
@@ -3165,7 +3198,7 @@ impl MainWindow {
                             }
 
                             match tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::Added(loop_name.clone()), uuid)) {
-                                Err(_) => info!("Problem sending message with tx from ui lock when a loop has been added"),
+                                Err(_) => debug!("Problem sending message with tx from ui lock when a loop has been added"),
                                 _ => {
                                     loop_combobox_text.append( Some(id.as_str()), &loop_name);
                                     loop_combobox_text.set_active_id(Some(id.as_str()));
@@ -3179,7 +3212,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("loop_combobox_text_entry.connect_key_release_event: no selected loop.");
+                    debug!("loop_combobox_text_entry.connect_key_release_event: no selected loop.");
                 }
 
                 gtk::Inhibit(false)
@@ -3190,7 +3223,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let loop_combobox_text = self.ui.loop_combobox_text.clone();
             self.ui.delete_loop_btn.connect_clicked(move |_button| {
-                info!("ui.toolbar_delete_loop.connect_clicked: sending loop delete msg...");
+                debug!("ui.toolbar_delete_loop.connect_clicked: sending loop delete msg...");
                 if let Some(id) = loop_combobox_text.active_id() {
                     match Uuid::parse_str(id.as_str()) {
                         Ok(uuid) => {
@@ -3198,14 +3231,14 @@ impl MainWindow {
                             if let Some(active_index) = loop_combobox_text.active() {
                                 gtk::prelude::ComboBoxTextExt::remove(&loop_combobox_text, active_index as i32);
                             }
-                            info!("ui.toolbar_delete_loop.connect_clicked: sent delete loop msg.");
+                            debug!("ui.toolbar_delete_loop.connect_clicked: sent delete loop msg.");
 
                         },
-                        Err(error) => info!("Could not parse loop uuid from combobox: {}", error),
+                        Err(error) => debug!("Could not parse loop uuid from combobox: {}", error),
                     }
                 }
                 else {
-                    info!("ui.toolbar_delete_loop.connect_clicked: no selected item.");
+                    debug!("ui.toolbar_delete_loop.connect_clicked: no selected item.");
                 }
             });
         }
@@ -3213,18 +3246,18 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.loop_combobox_text.connect_changed(move |combo| {
-                info!("ui.toolbar_loop_combo.connect_changed: sending loop select msg...");
+                debug!("ui.toolbar_loop_combo.connect_changed: sending loop select msg...");
                 if let Some(id) = combo.active_id() {
                     match Uuid::parse_str(id.as_str()) {
                         Ok(uuid) => {
                             let _ = tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::ActiveLoopChanged(Some(uuid)), uuid));
-                            info!("ui.toolbar_loop_combo.connect_changed: sent loop select msg.");
+                            debug!("ui.toolbar_loop_combo.connect_changed: sent loop select msg.");
                         },
-                        Err(error) => info!("Could not parse loop uuid from combobox: {}", error),
+                        Err(error) => debug!("Could not parse loop uuid from combobox: {}", error),
                     }
                 }
                 else {
-                    info!("ui.toolbar_loop_combo.connect_changed: no selected item.");
+                    debug!("ui.toolbar_loop_combo.connect_changed: no selected item.");
                 }
             });
         }
@@ -3234,7 +3267,7 @@ impl MainWindow {
             let loop_combobox_text = self.ui.loop_combobox_text.clone();
             let loop_combobox_text_entry = self.ui.loop_combobox_text_entry.clone();
             self.ui.save_loop_name_change_btn.connect_clicked(move |_| {
-                info!("ui.save_loop_name_change_btn.connect_clicked: sending loop name change msg...");
+                debug!("ui.save_loop_name_change_btn.connect_clicked: sending loop name change msg...");
                 let selected_loop_uuid_option: Option<NonNull<String>> = unsafe {
                     loop_combobox_text_entry.data("selected_loop_uuid")
                 };
@@ -3246,7 +3279,7 @@ impl MainWindow {
                         match Uuid::parse_str((*selected_loop_uuid).to_string().as_str()) {
                             Ok(uuid) => {
                                 match tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::NameChanged(loop_combobox_text_entry.text().to_string()), uuid)) {
-                                    Err(_) => info!("Problem sending message with tx from ui lock when changing a loop name"),
+                                    Err(_) => debug!("Problem sending message with tx from ui lock when changing a loop name"),
                                     _ => (),
                                 }
                             },
@@ -3276,7 +3309,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("ui.save_loop_name_change_btn.connect_clicked: no loop riff.");
+                    debug!("ui.save_loop_name_change_btn.connect_clicked: no loop riff.");
                 }
             });
         }
@@ -3285,10 +3318,10 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.panic_btn.connect_clicked(move |_| {
-                info!("ui.toolbar_panic_btn.connect_clicked: sending panic msg...");
+                debug!("ui.toolbar_panic_btn.connect_clicked: sending panic msg...");
                 match tx_from_ui.send(DAWEvents::Panic) {
                     Ok(_) => (),
-                    Err(error) => info!("Problem sending panic message: {}", error),
+                    Err(error) => debug!("Problem sending panic message: {}", error),
                 }
             });
         }
@@ -3306,13 +3339,14 @@ impl MainWindow {
         let track_grid = BeatGrid::new_with_custom(
             0.04,
             1.0,
-            19.0,
+            18.0,
             50.0,
             4,
             Some(std::boxed::Box::new(track_grid_custom_painter)),
             Some(std::boxed::Box::new(TrackGridMouseCoordHelper)),
             tx_from_ui.clone(),
-            true
+            true,
+            Some(DrawingAreaType::TrackGrid),
         );
         let track_grid_arc = Arc::new( Mutex::new(track_grid));
 
@@ -3350,7 +3384,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button3
                 };
-                // info!("Track grid mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                // debug!("Track grid mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 match track_grid.lock() {
                     Ok(mut grid) => {
                         grid.handle_mouse_motion(coords.0, coords.1, track_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -3380,7 +3414,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button1
                 };
-                info!("Track grid mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                debug!("Track grid mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 match track_grid.lock() {
                     Ok(mut grid) => {
                         grid.handle_mouse_press(coords.0, coords.1, track_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -3407,7 +3441,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button3
                 };
-                info!("Track grid mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                debug!("Track grid mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
 
                 track_grid_drawing_area.grab_focus();
 
@@ -3434,7 +3468,7 @@ impl MainWindow {
                 let key_pressed_value = event_key.keyval().name();
 
                 if let Some(key_name) = key_pressed_value {
-                    info!("Track grid key press: Key name={}, Shift key: {}, Control key: {}, Alt key: {}", key_name.as_str(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                    debug!("Track grid key press: Key name={}, Shift key: {}, Control key: {}, Alt key: {}", key_name.as_str(), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                     if key_name == "c" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the track grid copy message
@@ -3466,8 +3500,8 @@ impl MainWindow {
                     else if key_name == "a" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the track grid select all message
                         match track_grid.lock() {
-                            Ok(mut grid) => {
-                                info!("Not implemented yet!");
+                            Ok(_grid) => {
+                                debug!("Not implemented yet!");
                             }
                             Err(_) => {}
                         }
@@ -3513,7 +3547,7 @@ impl MainWindow {
                 let scroll_direction = event_scroll.scroll_direction();
 
                 if let Some(scroll_direction) = scroll_direction {
-                    info!("Track grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                    debug!("Track grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                     if scroll_direction == ScrollDirection::Up && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                         track_grid_vertical_zoom_adjustment.set_value(track_grid_vertical_zoom_adjustment.value() + track_grid_vertical_zoom_adjustment.minimum_increment());
@@ -3670,7 +3704,7 @@ impl MainWindow {
         {
             // track_grid_vertical_zoom_scale
             let track_grid = track_grid_arc.clone();
-            let track_drawing_area = self.ui.track_drawing_area.clone();
+            let _track_drawing_area = self.ui.track_drawing_area.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.track_grid_vertical_zoom_scale.connect_value_changed(move |track_grid_vertical_zoom_scale| {
                 let scale = track_grid_vertical_zoom_scale.value();
@@ -3753,10 +3787,10 @@ impl MainWindow {
                         let snap_position_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_start_to_text.as_str(), 4.0);
                         match track_grid.try_lock() {
                             Ok(mut track_grid) => track_grid.set_snap_position_in_beats(snap_position_in_beats),
-                            Err(_) => info!("Unable to lock the track grid in order to set the snap in beats."),
+                            Err(_) => debug!("Unable to lock the track grid in order to set the snap in beats."),
                         };
                     },
-                    None => info!("Track grid: Unable to extract a quantise start value from the ComboBox - is there an active item?"),
+                    None => debug!("Track grid: Unable to extract a quantise start value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -3770,10 +3804,10 @@ impl MainWindow {
                         let snap_length_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_length_to_text.as_str(), 4.0);
                         match track_grid.try_lock() {
                             Ok(mut track_grid) => track_grid.set_new_entity_length_in_beats(snap_length_in_beats),
-                            Err(_) => info!("Unable to lock the track grid in order to set the new entity length in beats."),
+                            Err(_) => debug!("Unable to lock the track grid in order to set the new entity length in beats."),
                         };
                     },
-                    None => info!("Track grid: Unable to extract a quantise length value from the ComboBox - is there an active item?"),
+                    None => debug!("Track grid: Unable to extract a quantise length value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -3880,7 +3914,8 @@ impl MainWindow {
             Some(std::boxed::Box::new(automation_custom_painter)),
             Some(std::boxed::Box::new(AutomationMouseCoordHelper)),
             tx_from_ui.clone(),
-            true
+            true,
+            Some(DrawingAreaType::Automation),
         );
         let automation_grid_arc = Arc::new( Mutex::new(automation_grid));
         self.set_automation_grid(Some(automation_grid_arc.clone()));
@@ -4035,7 +4070,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button3
                 };
-                // info!("Controller mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                // debug!("Controller mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 match automation_grid.lock() {
                     Ok(mut grid) => {
                         grid.handle_mouse_motion(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -4062,9 +4097,9 @@ impl MainWindow {
                 else {
                     MouseButton::Button1
                 };
-                info!("Controller mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                debug!("Controller mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 // let event_state = event_btn.state();
-                // info!("Event modifier: {:?}", event_state);
+                // debug!("Event modifier: {:?}", event_state);
                 match automation_grid.lock() {
                     Ok(mut grid) => {
                         grid.handle_mouse_press(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -4091,7 +4126,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button3
                 };
-                info!("Controller mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                debug!("Controller mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 match automation_grid.lock() {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
@@ -4163,10 +4198,10 @@ impl MainWindow {
                         let snap_position_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_start_to_text.as_str(), 4.0);
                         match automation_grid.try_lock() {
                             Ok(mut grid) => grid.set_snap_position_in_beats(snap_position_in_beats),
-                            Err(_) => info!("Unable to lock the controller grid in order to set the snap in beats."),
+                            Err(_) => debug!("Unable to lock the controller grid in order to set the snap in beats."),
                         };
                     },
-                    None => info!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4181,7 +4216,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::Velocity)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4196,7 +4231,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::NoteExpression)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4211,7 +4246,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::Controller)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4226,7 +4261,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::InstrumentParameter)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4241,7 +4276,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::EffectParameter)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4251,7 +4286,7 @@ impl MainWindow {
             self.ui.automation_grid_edit_track.connect_clicked(move |_|{
                 match tx_from_ui.send(DAWEvents::AutomationEditTypeChange(AutomationEditType::Track)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4261,7 +4296,7 @@ impl MainWindow {
             self.ui.automation_grid_edit_riff.connect_clicked(move |_|{
                 match tx_from_ui.send(DAWEvents::AutomationEditTypeChange(AutomationEditType::Riff)) {
                     Ok(_) => (),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
             });
         }
@@ -4277,7 +4312,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a controller type value from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a controller type value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4293,7 +4328,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => ()/* info!("Unable to extract an instrument parameter index value from the ComboBox - is there an active item?") */,
+                    None => ()/* debug!("Unable to extract an instrument parameter index value from the ComboBox - is there an active item?") */,
                 };
             });
         }
@@ -4309,7 +4344,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract an effect parameter index value from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract an effect parameter index value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4325,7 +4360,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract an effect uuid value from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract an effect uuid value from the ComboBox - is there an active item?"),
                 };
             });
             self.automation_effects_choice_signal_handler_id = Some(sig_handler_id);
@@ -4343,7 +4378,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a note expression type from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a note expression type from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4360,7 +4395,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a note expression id from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a note expression id from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4377,7 +4412,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a note expression port index from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a note expression port index from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4394,7 +4429,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a note expression channel from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a note expression channel from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4411,7 +4446,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     },
-                    None => info!("Unable to extract a note expression key from the ComboBox - is there an active item?"),
+                    None => debug!("Unable to extract a note expression key from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4498,7 +4533,7 @@ impl MainWindow {
             self.ui.piano_roll_piano_keyboard_drawing_area.connect_draw(move |drawing_area, context| {
                 match piano_ref.lock() {
                     Ok(piano_ref) => piano_ref.paint(context, drawing_area),
-                    Err(error) => info!("Could not lock piano for drawing: {}", error),
+                    Err(error) => debug!("Could not lock piano for drawing: {}", error),
                 }
                 Inhibit(false)
             });
@@ -4522,10 +4557,10 @@ impl MainWindow {
                         else {
                             MouseButton::Button3
                         };
-                        // info!("Piano keyboard mouse press: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                        // debug!("Piano keyboard mouse press: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                         piano_ref.handle_mouse_press(coords.0, coords.1, drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
                     },
-                    Err(error) => info!("Could not lock piano keyboard for drawing: {}", error),
+                    Err(error) => debug!("Could not lock piano keyboard for drawing: {}", error),
                 }
                 Inhibit(false)
             });
@@ -4549,10 +4584,10 @@ impl MainWindow {
                         else {
                             MouseButton::Button3
                         };
-                        // info!("Piano keyboard mouse press: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                        // debug!("Piano keyboard mouse release: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                         piano_ref.handle_mouse_release(coords.0, coords.1, drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from(""));
                     },
-                    Err(error) => info!("Could not lock piano keyboard for drawing: {}", error),
+                    Err(error) => debug!("Could not lock piano keyboard for drawing: {}", error),
                 }
                 Inhibit(false)
             });
@@ -4584,7 +4619,8 @@ impl MainWindow {
                 Some(std::boxed::Box::new(piano_roll_custom_vertical_scale_painter)),
                 Some(std::boxed::Box::new(PianoRollMouseCoordHelper)),
                 tx_from_ui.clone(),
-                true
+                true,
+                Some(DrawingAreaType::PianoRoll),
             );
             let piano_roll_grid_arc = Arc::new( Mutex::new(piano_roll_grid));
 
@@ -4622,7 +4658,7 @@ impl MainWindow {
                     else {
                         MouseButton::Button3
                     };
-                    // info!("Piano roll mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                    // debug!("Piano roll mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                     match piano_roll_grid.lock() {
                         Ok(mut grid) => {
                             grid.handle_mouse_motion(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -4652,9 +4688,9 @@ impl MainWindow {
                     else {
                         MouseButton::Button1
                     };
-                    info!("Piano roll mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                    debug!("Piano roll mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                     // let event_state = event_btn.state();
-                    // info!("Event modifier: {:?}", event_state);
+                    // debug!("Event modifier: {:?}", event_state);
                     match piano_roll_grid.lock() {
                         Ok(mut grid) => {
                             grid.handle_mouse_press(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -4684,7 +4720,7 @@ impl MainWindow {
 
                     piano_roll_drawing_area.grab_focus();
 
-                    info!("Piano roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                    debug!("Piano roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                     match piano_roll_grid.lock() {
                         Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                         Err(_) => (),
@@ -4708,7 +4744,7 @@ impl MainWindow {
                     let key_pressed_value = event_key.keyval().name();
 
                     if let Some(key_name) = key_pressed_value {
-                        info!("Piano roll key press: Key name={}, Shift key: {}, Control key: {}, Alt key: {}", key_name.as_str(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                        debug!("Piano roll key press: Key name={}, Shift key: {}, Control key: {}, Alt key: {}", key_name.as_str(), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                         if key_name == "c" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                             // send the piano roll copy message
@@ -4740,8 +4776,8 @@ impl MainWindow {
                         else if key_name == "a" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                             // send the piano roll select all message
                             match piano_roll_grid.lock() {
-                                Ok(mut grid) => {
-                                    info!("Not implemented yet!");
+                                Ok(_grid) => {
+                                    debug!("Not implemented yet!");
                                 }
                                 Err(_) => {}
                             }
@@ -4787,7 +4823,7 @@ impl MainWindow {
                     let scroll_direction = event_scroll.scroll_direction();
 
                     if let Some(scroll_direction) = scroll_direction {
-                        info!("Piano roll mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                        debug!("Piano roll mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                         if scroll_direction == ScrollDirection::Up && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                             piano_roll_vertical_zoom_adjustment.set_value(piano_roll_vertical_zoom_adjustment.value() + piano_roll_vertical_zoom_adjustment.minimum_increment());
@@ -4861,7 +4897,7 @@ impl MainWindow {
                     piano_roll_drawing_area.queue_draw();
                     if let Ok(mut piano) =  piano.lock() {
                         piano.set_vertical_zoom(piano_roll_vertical_zoom_scale.value());
-                        info!("Piano keyboard vertical zoom level; {}", piano.zoom_vertical());
+                        debug!("Piano keyboard vertical zoom level; {}", piano.zoom_vertical());
                         piano_keyboard_drawing_area.set_height_request((piano.entity_height_in_pixels() * piano.zoom_vertical() * 127.0) as i32);
                     }
                     piano_keyboard_drawing_area.queue_draw();
@@ -5021,10 +5057,10 @@ impl MainWindow {
                             let snap_position_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_start_to_text.as_str(), 4.0);
                             match piano_roll_grid.try_lock() {
                                 Ok(mut piano_roll_grid) => piano_roll_grid.set_snap_position_in_beats(snap_position_in_beats),
-                                Err(_) => info!("Unable to lock the piano grid in order to set the snap in beats."),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the snap in beats."),
                             };
                         },
-                        None => info!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
+                        None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
                     };
                 });
             }
@@ -5038,10 +5074,10 @@ impl MainWindow {
                             let snap_length_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_length_to_text.as_str(), 4.0);
                             match piano_roll_grid.try_lock() {
                                 Ok(mut piano_roll_grid) => piano_roll_grid.set_new_entity_length_in_beats(snap_length_in_beats),
-                                Err(_) => info!("Unable to lock the piano grid in order to set the new entity length in beats."),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the new entity length in beats."),
                             };
                         },
-                        None => info!("Unable to extract a quantise length value from the ComboBox - is there an active item?"),
+                        None => debug!("Unable to extract a quantise length value from the ComboBox - is there an active item?"),
                     };
                 });
             }
@@ -5054,10 +5090,10 @@ impl MainWindow {
                             let length_increment_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(note_increment_length_to_text.as_str(), 4.0);
                             match piano_roll_grid.try_lock() {
                                 Ok(mut piano_roll_grid) => piano_roll_grid.set_entity_length_increment_in_beats(length_increment_in_beats),
-                                Err(_) => info!("Unable to lock the piano grid in order to set the new length increment in beats."),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the new length increment in beats."),
                             };
                         }
-                        None => info!("Unable to extract a length increment value from the ComboBox - is there an active item?"),
+                        None => debug!("Unable to extract a length increment value from the ComboBox - is there an active item?"),
                     };
                 });
             }
@@ -5139,7 +5175,7 @@ impl MainWindow {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
-                            info!("Sample library file choose: selected file name={:?}", file_name);
+                            debug!("Sample library file choose: selected file name={:?}", file_name);
                             match tx_from_ui.send(DAWEvents::PreviewSample(file_name.to_str().unwrap().to_string())) {
                                 Ok(_) => {}
                                 Err(_) => {}
@@ -5159,7 +5195,7 @@ impl MainWindow {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
-                            info!("Sample library file choose: selected file name={:?}", file_name);
+                            debug!("Sample library file choose: selected file name={:?}", file_name);
                             match tx_from_ui.send(DAWEvents::SampleAdd(file_name.to_str().unwrap().to_string())) {
                                 Ok(_) => {}
                                 Err(_) => {}
@@ -5203,7 +5239,7 @@ impl MainWindow {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
-                            info!("Scripting file chooser: selected file name={:?}", file_name);
+                            debug!("Scripting file chooser: selected file name={:?}", file_name);
                             match std::fs::read_to_string(file_name.clone()) {
                                 Ok(script_text) => {
                                     scripting_script_name_label.set_label(file_name.to_str().expect("Could not get file name."));
@@ -5229,7 +5265,7 @@ impl MainWindow {
 
                 if let Some(script) = script_text {
                     if script.len() > 0 {
-                        info!("Scripting - running: selected file name={:?}", file_name);
+                        debug!("Scripting - running: selected file name={:?}", file_name);
 
                         match tx_from_ui.send(DAWEvents::RunLuaScript(script.to_string())) {
                             Ok(_) => {}
@@ -5237,7 +5273,7 @@ impl MainWindow {
                         }
                     }
                     else {
-                        info!("Script is empty.");
+                        debug!("Script is empty.");
                     }
                 }
             });
@@ -5253,7 +5289,7 @@ impl MainWindow {
 
                 if let Some(script) = script_text {
                     if script.len() > 0 {
-                        info!("Scripting - running console input");
+                        debug!("Scripting - running console input");
                         if let Some(console_output_text_buffer) = scripting_console_output_text_view.buffer() {
                             let console_input_text = format!(">> {}\n", script.as_str());
                             console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_input_text.as_str());
@@ -5267,7 +5303,7 @@ impl MainWindow {
                         console_input_text_buffer.set_text("");
                     }
                     else {
-                        info!("Script is empty.");
+                        debug!("Script is empty.");
                     }
                 }
             });
@@ -5286,11 +5322,11 @@ impl MainWindow {
                                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
                                 if let Some(script) = script_text {
-                                    info!("Saving file name={}", file_name);
+                                    debug!("Saving file name={}", file_name);
 
                                     if let Ok(mut file) = std::fs::File::create(file_name) {
                                         if let Err(error) = file.write_all(script.as_bytes()) {
-                                            info!("Could not write script to a file: {}", error);
+                                            debug!("Could not write script to a file: {}", error);
                                         }
                                     }
                                 }
@@ -5299,7 +5335,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    info!("Could not save the script because there is no file name.");
+                    debug!("Could not save the script because there is no file name.");
                 }
             });
         }
@@ -5324,11 +5360,11 @@ impl MainWindow {
                                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
                                 if let Some(script) = script_text {
-                                    info!("Saving as file name={}", file_name);
+                                    debug!("Saving as file name={}", file_name);
 
                                     if let Ok(mut file) = std::fs::File::create(file_name) {
                                         if let Err(error) = file.write_all(script.as_bytes()) {
-                                            info!("Could not write script to a file: {}", error);
+                                            debug!("Could not write script to a file: {}", error);
                                         }
                                         else {
                                             scripting_script_name_label.set_label(file_name);
@@ -5377,7 +5413,7 @@ impl MainWindow {
     pub fn update_sample_roll_sample_browser(&mut self, sample_uuid: String, sample_name: String) {
         if let Some(sample_roll_available_samples_list_store) = self.ui.sample_roll_available_samples.model() {
             if let Some(list_store) = sample_roll_available_samples_list_store.dynamic_cast_ref::<ListStore>() {
-                info!("Updating the sample roll sample browser...");
+                debug!("Updating the sample roll sample browser...");
                 list_store.insert_with_values(None, &[
                     (0, &sample_name),
                     (1, &sample_uuid),
@@ -5407,7 +5443,8 @@ impl MainWindow {
                 Some(std::boxed::Box::new(sample_roll_custom_painter)),
                 Some(std::boxed::Box::new(SampleRollMouseCoordHelper)),
                 tx_from_ui.clone(),
-                true
+                true,
+                None,
             );
             let sample_roll_grid_arc = Arc::new( Mutex::new(sample_roll_grid));
 
@@ -5473,9 +5510,9 @@ impl MainWindow {
                     else {
                         MouseButton::Button1
                     };
-                    info!("Sample roll mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                    debug!("Sample roll mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                     // let event_state = event_btn.state();
-                    // info!("Event modifier: {:?}", event_state);
+                    // debug!("Event modifier: {:?}", event_state);
                     match sample_roll_grid.lock() {
                         Ok(mut grid) => {
                             grid.handle_mouse_press(coords.0, coords.1, &sample_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
@@ -5504,12 +5541,12 @@ impl MainWindow {
                     else {
                         MouseButton::Button3
                     };
-                    info!("Sample roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                    debug!("Sample roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
 
                     // get the selected sample
                     let selection = sample_roll_available_samples.selection();
                     if let Some((model, iter)) = selection.selected() {
-                        info!("{}, {}",
+                        debug!("{}, {}",
                                  model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
                                  model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
                         );
@@ -5725,10 +5762,10 @@ impl MainWindow {
                             let snap_position_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_start_to_text.as_str(), 4.0);
                             match sample_roll_grid.try_lock() {
                                 Ok(mut sample_roll_grid) => sample_roll_grid.set_snap_position_in_beats(snap_position_in_beats),
-                                Err(_) => info!("Unable to lock the piano grid in order to set the snap in beats."),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the snap in beats."),
                             };
                         },
-                        None => info!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
+                        None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
                     };
                 });
             }
@@ -5742,10 +5779,10 @@ impl MainWindow {
                             let snap_length_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_length_to_text.as_str(), 4.0);
                             match sample_roll_grid.try_lock() {
                                 Ok(mut sample_roll_grid) => sample_roll_grid.set_new_entity_length_in_beats(snap_length_in_beats),
-                                Err(_) => info!("Unable to lock the piano grid in order to set the new entity length in beats."),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the new entity length in beats."),
                             };
                         },
-                        None => info!("Unable to extract a quantise length value from the ComboBox - is there an active item?"),
+                        None => debug!("Unable to extract a quantise length value from the ComboBox - is there an active item?"),
                     };
                 });
             }
@@ -5823,7 +5860,7 @@ impl MainWindow {
     ) -> Arc<Mutex<BeatGrid>> {
         let state_arc = state_arc;
         let custom_painter = RiffSetTrackCustomPainter::new(state_arc);
-        let beat_grid = BeatGrid::new_with_custom(
+        let mut beat_grid = BeatGrid::new_with_custom(
             10.0,
             1.0,
             drawing_area.height_request() as f64 / 127.0,
@@ -5832,8 +5869,10 @@ impl MainWindow {
             Some(std::boxed::Box::new(custom_painter)),
             Some(std::boxed::Box::new(PianoRollMouseCoordHelper)),
             tx_from_ui,
-            false
+            false,
+            Some(DrawingAreaType::Riff),
         );
+        beat_grid.draw_play_cursor = false;
         let beat_grid_arc = Arc::new( Mutex::new(beat_grid));
 
         {
@@ -5865,7 +5904,7 @@ impl MainWindow {
                 else {
                     MouseButton::Button3
                 };
-                info!("Piano roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                debug!("Piano roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
                 match grid.lock() {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, &drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
@@ -5918,7 +5957,7 @@ impl MainWindow {
 
                     match tx_from_ui.send(DAWEvents::RiffSetAdd(riff_set_uuid)) {
                         Ok(_) => (),
-                        Err(error) => info!("Failed to send add riff set event: {}", error),
+                        Err(error) => debug!("Failed to send add riff set event: {}", error),
                     }
 
                     riff_set_blade_head.riff_set_name_entry.set_text(new_riff_set_name_entry.text().as_str());
@@ -5963,8 +6002,8 @@ impl MainWindow {
     
         {
             let riff_set_uuid = riff_set_uuid.clone();
-            riff_set_blade_head.riff_set_drag_btn.connect_drag_data_get(move |riff_set_drag_btn, drag_context, selection_data, info, time| {
-                info!("Riff set drag data get called.");
+            riff_set_blade_head.riff_set_drag_btn.connect_drag_data_get(move |_riff_set_drag_btn, _drag_context, selection_data, _info, _time| {
+                debug!("Riff set drag data get called.");
                 selection_data.set_text(riff_set_uuid.as_str());
             });
         }
@@ -6049,21 +6088,21 @@ impl MainWindow {
                     RiffSetType::RiffSet => {
                         match tx_from_ui.send(DAWEvents::RiffSetDelete(riff_set_uuid)) {
                             Ok(_) => (),
-                            Err(error) => info!("Failed to send delete riff set event: {}", error),
+                            Err(error) => debug!("Failed to send delete riff set event: {}", error),
                         }
                     }
                     RiffSetType::RiffSequence(riff_set_sequence_uuid) => {
                         let event_to_send = DAWEvents::RiffSequenceRiffSetDelete(riff_set_sequence_uuid, riff_set_instance_id.clone());
                         match tx_from_ui.send(event_to_send) {
                             Ok(_) => (),
-                            Err(error) => info!("Failed to send delete riff set from riff sequence event: {}", error),
+                            Err(error) => debug!("Failed to send delete riff set from riff sequence event: {}", error),
                         }
                     }
                     RiffSetType::RiffArrangement(riff_set_arrangement_uuid) => {
                         let event_to_send = DAWEvents::RiffArrangementRiffSetDelete(riff_set_arrangement_uuid, riff_set_instance_id.clone());
                         match tx_from_ui.send(event_to_send) {
                             Ok(_) => (),
-                            Err(error) => info!("Failed to send delete riff set from riff arrangement event: {}", error),
+                            Err(error) => debug!("Failed to send delete riff set from riff arrangement event: {}", error),
                         }
                     }
                 };
@@ -6087,7 +6126,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffSetPlay(uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send play riff set event: {}", error),
+                    Err(error) => debug!("Failed to send play riff set event: {}", error),
                 }
             });
         }
@@ -6108,7 +6147,7 @@ impl MainWindow {
                 }
 
                 match tx_from_ui.send(DAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid)) {
-                    Err(error) => info!("Failed to send riff sets view copy selected riff set contents to track view cursor position event: {}", error),
+                    Err(error) => debug!("Failed to send riff sets view copy selected riff set contents to track view cursor position event: {}", error),
                     _ => (),
                 }
             });
@@ -6125,7 +6164,7 @@ impl MainWindow {
                 if event_key.keyval() == gdk::keys::constants::Return {
                     match tx_from_ui.send(DAWEvents::RiffSetNameChange(uuid, name)) {
                         Ok(_) => (),
-                        Err(error) => info!("Failed to send riff set name change: {}", error),
+                        Err(error) => debug!("Failed to send riff set name change: {}", error),
                     }
                 }
 
@@ -6179,11 +6218,11 @@ impl MainWindow {
 
                             match tx_from_ui.send(DAWEvents::RiffSetCopy(riff_set_uuid, riff_set_uuid_for_copy)) {
                                 Ok(_) => (),
-                                Err(error) => info!("Failed to send copy riff set event: {}", error),
+                                Err(error) => debug!("Failed to send copy riff set event: {}", error),
                             }
                         }
                         Err(error) => {
-                            info!("Problem copying riff set: {}", error);
+                            debug!("Problem copying riff set: {}", error);
                         }
                     }
                 });
@@ -6249,10 +6288,10 @@ impl MainWindow {
             let riff_sequences_box = self.ui.riff_sequences_box.clone();
             self.ui.sequence_combobox.connect_changed(move |sequence_combobox| {
                 if let Some(uuid) = sequence_combobox.active_id() {
-                    info!("ui.sequence_combobox.active_id={}", uuid);
+                    debug!("ui.sequence_combobox.active_id={}", uuid);
                     riff_sequences_box.children().iter_mut().for_each(|child| child.hide());
                     riff_sequences_box.children().iter_mut().for_each(|child| {
-                        info!("Found sequence uuid={}", child.widget_name());
+                        debug!("Found sequence uuid={}", child.widget_name());
                         if child.widget_name() == uuid {
                             child.show();
                         }
@@ -6309,7 +6348,7 @@ impl MainWindow {
         {
             let riff_sequence_uuid = uuid.to_string();
             riff_sequence_blade.riff_sequence_drag_btn.connect_drag_data_get(move |_, _, selection_data, _, _| {
-                info!("Riff sequence drag data get called.");
+                debug!("Riff sequence drag data get called.");
                 selection_data.set_text(riff_sequence_uuid.as_str());
             });
         }
@@ -6332,7 +6371,7 @@ impl MainWindow {
                 if let Ok(name) = name.to_value().get() {
                     match tx_from_ui.send(DAWEvents::RiffSequenceNameChange(uuid, name)) {
                         Ok(_) => (),
-                        Err(error) => info!("Failed to send riff sequence name change: {}", error),
+                        Err(error) => debug!("Failed to send riff sequence name change: {}", error),
                     }
                 }
             });
@@ -6354,7 +6393,7 @@ impl MainWindow {
                     }
                 }
                 Err(error) => {
-                    info!("Problem populating riff sequence blade riff sets combobox: {}", error);
+                    debug!("Problem populating riff sequence blade riff sets combobox: {}", error);
                 }
             }
         }
@@ -6396,11 +6435,11 @@ impl MainWindow {
 
                             match tx_from_ui.send(DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid.to_string(), riff_set_reference_uuid)) {
                                 Ok(_) => (),
-                                Err(error) => info!("Failed to send riff sequence add riff set: {}", error),
+                                Err(error) => debug!("Failed to send riff sequence add riff set: {}", error),
                             }
                         }
                         Err(error) => {
-                            info!("Problem getting lock on state when adding a riff set to a rff sequence in the ui: {}", error);
+                            debug!("Problem getting lock on state when adding a riff set to a rff sequence in the ui: {}", error);
                         }
                     }
                 }
@@ -6427,7 +6466,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(event_to_send) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send delete riff sequence: {}", error),
+                    Err(error) => debug!("Failed to send delete riff sequence: {}", error),
                 }
             });
         }
@@ -6455,7 +6494,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(event_to_send) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send move left riff sequence: {}", error),
+                    Err(error) => debug!("Failed to send move left riff sequence: {}", error),
                 }
             });
         }
@@ -6482,7 +6521,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(event_to_send) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send move right riff sequence: {}", error),
+                    Err(error) => debug!("Failed to send move right riff sequence: {}", error),
                 }
             });
         }
@@ -6504,7 +6543,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffSequencePlay(riff_sequence_uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send riff sequence play: {}", error),
+                    Err(error) => debug!("Failed to send riff sequence play: {}", error),
                 }
             });
         }
@@ -6525,7 +6564,7 @@ impl MainWindow {
                 }
 
                 match tx_from_ui.send(DAWEvents::RiffSequenceCopySelectedToTrackViewCursorPosition(riff_sequence_uuid)) {
-                    Err(error) => info!("Failed to send riff sets view copy selected riff sequence contents to track view cursor position event: {}", error),
+                    Err(error) => debug!("Failed to send riff sets view copy selected riff sequence contents to track view cursor position event: {}", error),
                     _ => (),
                 }
             });
@@ -6544,7 +6583,7 @@ impl MainWindow {
             let new_arrangement_name_entry = self.ui.new_arrangement_name_entry.clone();
             let arrangement_sequence_combobox = self.ui.arrangements_combobox.clone();
             let state_arc = state_arc.clone();
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             let selected_track_style_provider = self.selected_track_style_provider.clone();
             let riff_arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
             let _arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
@@ -6586,12 +6625,13 @@ impl MainWindow {
         {
             let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
             let state = state_arc.clone();
+            let tx_from_ui = tx_from_ui.clone();
             self.ui.arrangements_combobox.connect_changed(move |arrangements_combobox| {
                 if let Some(uuid) = arrangements_combobox.active_id() {
-                    info!("ui.arrangements_combobox.active_id={}", uuid);
+                    debug!("ui.arrangements_combobox.active_id={}", uuid);
                     riff_arrangement_box.children().iter_mut().for_each(|child| child.hide());
                     riff_arrangement_box.children().iter_mut().for_each(|child| {
-                        info!("Found arrangement uuid={}", child.widget_name());
+                        debug!("Found arrangement uuid={}", child.widget_name());
                         if child.widget_name() == uuid {
                             child.show();
                         }
@@ -6599,10 +6639,12 @@ impl MainWindow {
 
                     {
                         let state = state.clone();
-                        std::thread::spawn(move || {
+                        let tx_from_ui = tx_from_ui.clone();
+                        let _ = std::thread::Builder::new().name("Set sel riffarr".into()).spawn(move || {
                             // update the state
                             if let Ok(mut state) = state.lock() {
                                 state.set_selected_riff_arrangement_uuid(Some(uuid.to_string()));
+                                let _ = tx_from_ui.send(DAWEvents::RepaintAutomationView);
                             }
                         });
                     }
@@ -6659,7 +6701,7 @@ impl MainWindow {
                 if let Ok(name) = name.to_value().get() {
                     match tx_from_ui.send(DAWEvents::RiffArrangementNameChange(uuid, name)) {
                         Ok(_) => (),
-                        Err(error) => info!("Failed to send riff arrangement name change: {}", error),
+                        Err(error) => debug!("Failed to send riff arrangement name change: {}", error),
                     }
                 }
             });
@@ -6681,7 +6723,7 @@ impl MainWindow {
                     }
                 }
                 Err(error) => {
-                    info!("Problem populating riff arrangement blade riff sets combobox: {}", error);
+                    debug!("Problem populating riff arrangement blade riff sets combobox: {}", error);
                 }
             }
         }
@@ -6702,7 +6744,7 @@ impl MainWindow {
                     }
                 }
                 Err(error) => {
-                    info!("Problem populating riff arrangement blade riff sequences combobox: {}", error);
+                    debug!("Problem populating riff arrangement blade riff sequences combobox: {}", error);
                 }
             }
         }
@@ -6748,11 +6790,11 @@ impl MainWindow {
 
                             match tx_from_ui.send(DAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_set_uuid.to_string())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Failed to send riff arrangement add riff set: {}", error),
+                                Err(error) => debug!("Failed to send riff arrangement add riff set: {}", error),
                             }
                         }
                         Err(error) => {
-                            info!("Problem getting lock on state when adding a riff set to a rff arrangement in the ui: {}", error);
+                            debug!("Problem getting lock on state when adding a riff set to a rff arrangement in the ui: {}", error);
                         }
                     }
                 }
@@ -6822,11 +6864,11 @@ impl MainWindow {
 
                             match tx_from_ui.send(DAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid.to_string(), riff_sequence_uuid.to_string())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Failed to send riff arrangement add riff sequence: {}", error),
+                                Err(error) => debug!("Failed to send riff arrangement add riff sequence: {}", error),
                             }
                         }
                         Err(error) => {
-                            info!("Problem getting lock on state when adding a riff sequence to a rff arrangement in the ui: {}", error);
+                            debug!("Problem getting lock on state when adding a riff sequence to a rff arrangement in the ui: {}", error);
                         }
                     }
                 }
@@ -6847,7 +6889,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementDelete(riff_arrangement_uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send riff arrangement delete riff arrangement: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangement delete riff arrangement: {}", error),
                 }
             });
         }
@@ -6869,7 +6911,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send riff arrangement move left riff arrangement: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangement move left riff arrangement: {}", error),
                 }
             });
         }
@@ -6891,7 +6933,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send riff arrangement move right riff arrangement: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangement move right riff arrangement: {}", error),
                 }
             });
         }
@@ -6913,7 +6955,7 @@ impl MainWindow {
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementPlay(riff_arrangement_uuid)) {
                     Ok(_) => (),
-                    Err(error) => info!("Failed to send riff arrangement play: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangement play: {}", error),
                 }
             });
         }
@@ -6934,7 +6976,7 @@ impl MainWindow {
                 }
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementCopy(riff_arrangement_uuid)) {
-                    Err(error) => info!("Failed to send riff arrangements view copy selected riff arrangement event: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangements view copy selected riff arrangement event: {}", error),
                     _ => (),
                 }
             });
@@ -6956,7 +6998,7 @@ impl MainWindow {
                 }
 
                 match tx_from_ui.send(DAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(riff_arrangement_uuid)) {
-                    Err(error) => info!("Failed to send riff arrangements view copy selected riff arrangement contents to track view cursor position event: {}", error),
+                    Err(error) => debug!("Failed to send riff arrangements view copy selected riff arrangement contents to track view cursor position event: {}", error),
                     _ => (),
                 }
             });
@@ -7043,7 +7085,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportGotoStart) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7054,7 +7096,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportMoveBack) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7065,7 +7107,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportStop) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7076,7 +7118,7 @@ impl MainWindow {
                 if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportPlay) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7087,13 +7129,13 @@ impl MainWindow {
                 if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportRecordOn) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
                 else {
                     match tx_from_ui.send(DAWEvents::TransportRecordOff) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7109,7 +7151,7 @@ impl MainWindow {
                 };
                 match tx_from_ui.send(DAWEvents::LoopChange(loop_change, Uuid::new_v4())) {
                     Ok(_) => (),
-                    Err(error) => info!("Problem sending loop on/off change: {:?}", error),
+                    Err(error) => debug!("Problem sending loop on/off change: {:?}", error),
                 }
             });
         }
@@ -7119,7 +7161,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportPause) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7130,7 +7172,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportMoveForward) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7141,7 +7183,7 @@ impl MainWindow {
                 if button.is_active() && button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportGotoEnd) {
                         Ok(_) => (),
-                        Err(error) => info!("{:?}", error),
+                        Err(error) => debug!("{:?}", error),
                     }
                 }
             });
@@ -7163,7 +7205,7 @@ impl MainWindow {
 
         self.ui.song_tempo_spinner.set_value(song.tempo());
 
-        info!("main_window.update_ui_from_state() start - number of riff sequences={}", song.riff_sequences_mut().len());
+        debug!("main_window.update_ui_from_state() start - number of riff sequences={}", song.riff_sequences_mut().len());
 
         let mut track_details = HashMap::new();
         for track in song.tracks_mut() {
@@ -7218,106 +7260,7 @@ impl MainWindow {
                     );
                 }
             }
-            match self.track_details_dialogues.get_mut(&track.uuid_string()) {
-                Some(track_details_dialogue) => {
-                    // clear and add the riffs
-                    let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
-                    track_riff_choice.remove_all();
-                    let mut first_riff = true;
-                    for riff in track.riffs().iter() {
-                        if riff.name() != "empty" {
-                            let uuid = riff.uuid().to_string();
-                            track_riff_choice.append( Some(uuid.as_str()), riff.name());
-
-                            if first_riff {
-                                track_riff_choice.set_active_id(Some(uuid.as_str()));
-                                first_riff = false;
-                            }
-                        }
-                    }
-
-                    match track  {
-                        TrackType::InstrumentTrack(track) => {
-                            // select the instrument
-                            let track_instrument_choice = track_details_dialogue.track_instrument_choice.clone();
-                            let mut instrument_id = track.instrument().file().to_string();
-                            instrument_id.push(':');
-                            if let Some(sub_plugin_id) = track.instrument().sub_plugin_id() {
-                                instrument_id.push_str(sub_plugin_id.as_str());
-                            }
-                            instrument_id.push(':');
-                            instrument_id.push_str(track.instrument().plugin_type());
-
-                            // re-populate the track instrument choice
-                            track_instrument_choice.remove_all();
-                            for (key, value) in instrument_plugins.iter() {
-                                let adjusted_key = key.replace(char::from(0), "");
-                                let adjusted_value = value.replace(char::from(0), "");
-                                // info!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
-                                track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
-                            }
-
-                            // set the active element without generating an event
-                            if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") {
-                                if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track.uuid_string()) {
-                                    track_instrument_choice.block_signal(signal_handler_id);
-
-                                    if !track_instrument_choice.set_active_id(Some(instrument_id.as_str())) {
-                                        info!("failed to set the active id for: track={}, instrument={} taking the shell plugin id off and trying again", track_number, instrument_id.as_str());
-                                        let adjusted_instrument_id = instrument_id.replace(char::from(0), "");
-                                        let tokens: Vec<&str> = adjusted_instrument_id.split(':').collect();
-
-                                        if tokens.len() == 2 {
-                                            let library_file_only = tokens.first().unwrap().to_string();
-
-                                            if !track_instrument_choice.set_active_id(Some(library_file_only.as_str())) {
-                                                info!("Fallback failed to set the active id for: track={}, instrument={}", track_number, library_file_only.as_str());
-                                            }
-                                        }
-                                    }
-
-                                    track_instrument_choice.unblock_signal(signal_handler_id);
-                                    track_instrument_choice.show_all();
-                                    track_instrument_choice.activate();
-                                }
-                            }
-
-                            // clear and add the effects
-                            let track_effects_list = track_details_dialogue.track_effect_list.clone();
-                            if let Some(track_effects_list_store) = track_effects_list.model() {
-                                if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
-                                    model.clear();
-                                    for effect in track.effects().iter() {
-                                        model.insert_with_values(None, &[
-                                            (0, &effect.name().to_string()),
-                                            (1, &effect.file().to_string()),
-                                            (2, &effect.uuid().to_string()),
-                                            (3, &(RGBA::black())),
-                                            (4, &(RGBA::white())),
-                                        ]);
-                                    }
-                                    track_effects_list.set_model(Some(model));
-                                }
-                            }
-                        },
-                        TrackType::AudioTrack(_track) => {
-
-                        },
-                        TrackType::MidiTrack(track) => {
-                            track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
-
-                            // populate the possible midi connections
-                            track_details_dialogue.track_midi_device_choice.remove_all();
-                            for midi_in_port in midi_input_devices.iter() {
-                                track_details_dialogue.track_midi_device_choice.append(Some(midi_in_port.as_str()), midi_in_port.as_str());
-                            }
-
-                            track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
-                        },
-                    };
-                }
-                None => (),
-            }
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut track_number, &track);
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -7378,7 +7321,7 @@ impl MainWindow {
                         let key = track.uuid().to_string();
                         if let Some(track_plugins) = plugins_params.get(&key) {
                             if let Some(plugin_params) = track_plugins.get(&instrument_uuid) {
-                                info!("instrument plugin param count={}", plugin_params.len());
+                                debug!("instrument plugin param count={}", plugin_params.len());
                                 plugin_params.iter().for_each(|param| {
                                     self.ui.automation_instrument_parameters_combobox.append(Some(param.index.to_string().as_str()), param.name());
                                 });
@@ -7403,7 +7346,7 @@ impl MainWindow {
                                     self.ui.automation_effect_parameters_combobox.remove_all();
                                     if let Some(track_plugins) = plugins_params.get(&key) {
                                         if let Some(plugin_params) = track_plugins.get(effect_uuid.as_str()) {
-                                            info!("effect plugin param count={}", plugin_params.len());
+                                            debug!("effect plugin param count={}", plugin_params.len());
                                             plugin_params.iter().for_each(|param| {
                                                 self.ui.automation_effect_parameters_combobox.append(Some(param.index.to_string().as_str()), param.name());
                                             });
@@ -7566,7 +7509,110 @@ impl MainWindow {
 
         self.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
 
-        info!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
+        debug!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
+    }
+
+    pub fn update_track_details_dialogue(&mut self, midi_input_devices: &Vec<String>, instrument_plugins: &mut IndexMap<String, String>, track_number: &mut i32, track: &&mut TrackType) {
+        let track_uuid = track.uuid().to_string();
+        
+        match self.track_details_dialogues.get_mut(&track_uuid) {
+            Some(track_details_dialogue) => {
+                // clear and add the riffs
+                let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
+                track_riff_choice.remove_all();
+                let mut first_riff = true;
+                for riff in track.riffs().iter() {
+                    if riff.name() != "empty" {
+                        let uuid = riff.uuid().to_string();
+                        track_riff_choice.append(Some(uuid.as_str()), riff.name());
+
+                        if first_riff {
+                            track_riff_choice.set_active_id(Some(uuid.as_str()));
+                            first_riff = false;
+                        }
+                    }
+                }
+
+                match track {
+                    TrackType::InstrumentTrack(track) => {
+                        // select the instrument
+                        let track_instrument_choice = track_details_dialogue.track_instrument_choice.clone();
+                        let mut instrument_id = track.instrument().file().to_string();
+                        instrument_id.push(':');
+                        if let Some(sub_plugin_id) = track.instrument().sub_plugin_id() {
+                            instrument_id.push_str(sub_plugin_id.as_str());
+                        }
+                        instrument_id.push(':');
+                        instrument_id.push_str(track.instrument().plugin_type());
+
+                        // re-populate the track instrument choice
+                        track_instrument_choice.remove_all();
+                        for (key, value) in instrument_plugins.iter() {
+                            let adjusted_key = key.replace(char::from(0), "");
+                            let adjusted_value = value.replace(char::from(0), "");
+                            // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
+                            track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                        }
+
+                        // set the active element without generating an event
+                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") {
+                            if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track_uuid) {
+                                track_instrument_choice.block_signal(signal_handler_id);
+
+                                if !track_instrument_choice.set_active_id(Some(instrument_id.as_str())) {
+                                    debug!("failed to set the active id for: track={}, instrument={} taking the shell plugin id off and trying again", track_number, instrument_id.as_str());
+                                    let adjusted_instrument_id = instrument_id.replace(char::from(0), "");
+                                    let tokens: Vec<&str> = adjusted_instrument_id.split(':').collect();
+
+                                    if tokens.len() == 2 {
+                                        let library_file_only = tokens.first().unwrap().to_string();
+
+                                        if !track_instrument_choice.set_active_id(Some(library_file_only.as_str())) {
+                                            debug!("Fallback failed to set the active id for: track={}, instrument={}", track_number, library_file_only.as_str());
+                                        }
+                                    }
+                                }
+
+                                track_instrument_choice.unblock_signal(signal_handler_id);
+                                track_instrument_choice.show_all();
+                                track_instrument_choice.activate();
+                            }
+                        }
+
+                        // clear and add the effects
+                        let track_effects_list = track_details_dialogue.track_effect_list.clone();
+                        if let Some(track_effects_list_store) = track_effects_list.model() {
+                            if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
+                                model.clear();
+                                for effect in track.effects().iter() {
+                                    model.insert_with_values(None, &[
+                                        (0, &effect.name().to_string()),
+                                        (1, &effect.file().to_string()),
+                                        (2, &effect.uuid().to_string()),
+                                        (3, &(RGBA::black())),
+                                        (4, &(RGBA::white())),
+                                    ]);
+                                }
+                                track_effects_list.set_model(Some(model));
+                            }
+                        }
+                    },
+                    TrackType::AudioTrack(_track) => {},
+                    TrackType::MidiTrack(track) => {
+                        track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
+
+                        // populate the possible midi connections
+                        track_details_dialogue.track_midi_device_choice.remove_all();
+                        for midi_in_port in midi_input_devices.iter() {
+                            track_details_dialogue.track_midi_device_choice.append(Some(midi_in_port.as_str()), midi_in_port.as_str());
+                        }
+
+                        track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
+                    },
+                };
+            }
+            None => (),
+        }
     }
 
     pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &IndexMap<String, String>, effect_plugins: &IndexMap<String, String>) {
@@ -7576,14 +7622,14 @@ impl MainWindow {
             for (key, value) in instrument_plugins.iter() {
                 let adjusted_key = key.replace(char::from(0), "");
                 let adjusted_value = value.replace(char::from(0), "");
-                // info!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
+                // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
                 panel.track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
             }
             if let Some(active_instrument_id) = active_instrument_id {
                 if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(track_uuid) {
                     panel.track_instrument_choice.block_signal(signal_handler_id);
                     if !panel.track_instrument_choice.set_active_id(Some(active_instrument_id.as_str())) {
-                        info!("Failed to set the active id for: track={}, instrument={}", track_uuid, active_instrument_id.as_str());
+                        debug!("Failed to set the active id for: track={}, instrument={}", track_uuid, active_instrument_id.as_str());
                     }
                     panel.track_instrument_choice.unblock_signal(signal_handler_id);
                     panel.track_instrument_choice.show_all();
@@ -7879,7 +7925,7 @@ impl MainWindow {
                 self.ui.automation_effect_parameters_combobox.remove_all();
                 if let Some(track_plugins) = plugins_params.get(&track_uuid) {
                     if let Some(plugin_params) = track_plugins.get(effect_uuid.as_str()) {
-                        info!("effect plugin param count={}", plugin_params.len());
+                        debug!("effect plugin param count={}", plugin_params.len());
                         plugin_params.iter().for_each(|param| {
                             self.ui.automation_effect_parameters_combobox.append(Some(param.index.to_string().as_str()), param.name());
                         });
@@ -7909,17 +7955,17 @@ impl MainWindow {
                         let key = track.uuid().to_string();
                         if let Some(track_plugins) = plugins_params.get(&key) {
                             if let Some(plugin_params) = track_plugins.get(&instrument_uuid) {
-                                info!("Instrument plugin param count={}", plugin_params.len());
+                                debug!("Instrument plugin param count={}", plugin_params.len());
                                 plugin_params.iter().for_each(|param| {
                                     self.ui.automation_instrument_parameters_combobox.append(Some(param.index.to_string().as_str()), param.name());
                                 });
                             }
                             else {
-                                info!("Instrument plugin param count={}", 0);
+                                debug!("Instrument plugin param count={}", 0);
                             }
                         }
                         else {
-                            info!("No track instrument plugin found.");
+                            debug!("No track instrument plugin found.");
                         }
 
                         // update the automation view effect list based on the selected track
@@ -7942,17 +7988,17 @@ impl MainWindow {
                                     self.ui.automation_effect_parameters_combobox.remove_all();
                                     if let Some(track_plugins) = plugins_params.get(&key) {
                                         if let Some(plugin_params) = track_plugins.get(effect_uuid.as_str()) {
-                                            info!("effect plugin param count={}", plugin_params.len());
+                                            debug!("effect plugin param count={}", plugin_params.len());
                                             plugin_params.iter().for_each(|param| {
                                                 self.ui.automation_effect_parameters_combobox.append(Some(param.index.to_string().as_str()), param.name());
                                             });
                                         }
                                         else {
-                                            info!("Effect plugin param count={}", 0);
+                                            debug!("Effect plugin param count={}", 0);
                                         }
                                     }
                                     else {
-                                        info!("No track effect plugins found.");
+                                        debug!("No track effect plugins found.");
                                     }
                                 }
                             }
@@ -8103,7 +8149,7 @@ impl MainWindow {
                track_midi_routing_scrolled_box.queue_draw();
    
                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RemoveMidiRouting(route_uuid), Some(track_uuid.to_string()))) {
-                   Err(_) => info!("Problem sending message with tx from ui lock when removing a midi routing."),
+                   Err(_) => debug!("Problem sending message with tx from ui lock when removing a midi routing."),
                    _ => (),
                }
            });
@@ -8125,7 +8171,7 @@ impl MainWindow {
                                start_note.as_str().parse::<i32>().unwrap(), 
                                end_note.as_str().parse::<i32>().unwrap()
                            ), Some(track_uuid.to_string()))) {
-                               Err(_) => info!("Problem sending message with tx from ui lock when updating a midi routing."),
+                               Err(_) => debug!("Problem sending message with tx from ui lock when updating a midi routing."),
                                _ => (),
                            }
                        }
@@ -8150,7 +8196,7 @@ impl MainWindow {
                                start_note.as_str().parse::<i32>().unwrap(), 
                                end_note.as_str().parse::<i32>().unwrap()
                            ), Some(track_uuid.to_string()))) {
-                               Err(_) => info!("Problem sending message with tx from ui lock when updating a midi routing."),
+                               Err(_) => debug!("Problem sending message with tx from ui lock when updating a midi routing."),
                                _ => (),
                            }
                        }
@@ -8175,7 +8221,7 @@ impl MainWindow {
                                start_note.as_str().parse::<i32>().unwrap(), 
                                end_note.as_str().parse::<i32>().unwrap()
                            ), Some(track_uuid.to_string()))) {
-                               Err(_) => info!("Problem sending message with tx from ui lock when updating a midi routing."),
+                               Err(_) => debug!("Problem sending message with tx from ui lock when updating a midi routing."),
                                _ => (),
                            }
                        }
@@ -8184,7 +8230,7 @@ impl MainWindow {
            });
        }
        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RouteMidiTo(midi_routing), Some(track_uuid.to_string()))) {
-           Err(_) => info!("Problem sending message with tx from ui lock when routing midi to a track and plugin has been selected."),
+           Err(_) => debug!("Problem sending message with tx from ui lock when routing midi to a track and plugin has been selected."),
            _ => (),
        }
    }
@@ -8220,7 +8266,7 @@ impl MainWindow {
                track_audio_routing_scrolled_box.queue_draw();
    
                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RemoveAudioRouting(route_uuid), Some(track_uuid.to_string()))) {
-                   Err(_) => info!("Problem sending message with tx from ui lock when removing an audio routing."),
+                   Err(_) => debug!("Problem sending message with tx from ui lock when removing an audio routing."),
                    _ => (),
                }
            });
@@ -8240,7 +8286,7 @@ impl MainWindow {
                         //     left_channel_input_index.as_str().parse::<i32>().unwrap(), 
                         //     right_channel_input_index.as_str().parse::<i32>().unwrap()
                         // ), Some(track_uuid.to_string()))) {
-                        //     Err(_) => info!("Problem sending message with tx from ui lock when updating an audio routing."),
+                        //     Err(_) => debug!("Problem sending message with tx from ui lock when updating an audio routing."),
                         //     _ => (),
                         // }
                     }
@@ -8261,7 +8307,7 @@ impl MainWindow {
                         //     left_channel_input_index.as_str().parse::<i32>().unwrap(), 
                         //     right_channel_input_index.as_str().parse::<i32>().unwrap()
                         // ), Some(track_uuid.to_string()))) {
-                        //     Err(_) => info!("Problem sending message with tx from ui lock when updating an audio routing."),
+                        //     Err(_) => debug!("Problem sending message with tx from ui lock when updating an audio routing."),
                         //     _ => (),
                         // }
                     }
@@ -8269,7 +8315,7 @@ impl MainWindow {
            });
        }
        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RouteAudioTo(audio_routing), Some(track_uuid.to_string()))) {
-           Err(_) => info!("Problem sending message with tx from ui lock when routing audio to a track and plugin has been selected."),
+           Err(_) => debug!("Problem sending message with tx from ui lock when routing audio to a track and plugin has been selected."),
            _ => (),
        }
     }
@@ -8287,12 +8333,12 @@ impl MainWindow {
             DRAG_N_DROP_TARGETS.as_ref(), 
             gdk::DragAction::COPY);
 
-        riff_set_heads_box.connect_drag_motion(move |_, _ , x , y, _| {
+        riff_set_heads_box.connect_drag_motion(move |_, _ , x , _y, _| {
             if let Some(window) = riff_sets_view_port.window() {
                 let view_port_width = window.width();
                 let horizontal_adjustment_position = riff_set_horizontal_adjustment.value() as i32;
 
-                // info!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
+                // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
     
                 if (horizontal_adjustment_position + view_port_width - x) <= 50 {
                     riff_set_horizontal_adjustment.set_value((horizontal_adjustment_position + 50) as f64);
@@ -8307,7 +8353,7 @@ impl MainWindow {
     
         {
             riff_set_heads_box.connect_drag_data_received(move |riff_set_heads_box, _, x, y, selection_data, _, _| {
-                // info!("drag data received: x={}, y={}, info={}, time={}", x, y, info, time);
+                // debug!("drag data received: x={}, y={}, info={}, time={}", x, y, info, time);
                 if let Some(riff_set_uuid) = selection_data.text() {
                     // get the child at x and y
                     for child in riff_set_heads_box.children().iter() {
@@ -8359,7 +8405,7 @@ impl MainWindow {
         item_box: Box, 
         horizontal_adjustment: Adjustment,
         view_port: Viewport,
-        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
+        _tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ){
         item_box.drag_dest_set(
             DestDefaults::ALL, 
@@ -8367,12 +8413,12 @@ impl MainWindow {
             gdk::DragAction::COPY
         );
 
-        item_box.connect_drag_motion(move |_, _ , x , y, _| {
+        item_box.connect_drag_motion(move |_, _ , x , _y, _| {
             if let Some(window) = view_port.window() {
                 let view_port_width = window.width();
                 let horizontal_adjustment_position = horizontal_adjustment.value() as i32;
 
-                // info!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
+                // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
     
                 if (horizontal_adjustment_position + view_port_width - x) <= 50 {
                     horizontal_adjustment.set_value((horizontal_adjustment_position + 50) as f64);
@@ -8386,7 +8432,7 @@ impl MainWindow {
         });
 
         item_box.connect_drag_data_received(move |item_box, _, x, y, selection_data, _, _| {
-            info!("riff view drag data received: x={}, y={}", x, y);
+            debug!("riff view drag data received: x={}, y={}", x, y);
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in item_box.children().iter() {
@@ -8428,7 +8474,7 @@ impl MainWindow {
                 let view_port_width = window.width();
                 let vertical_adjustment_position = vertical_adjustment.value() as i32;
 
-                info!("Dragging a track: view_port_width={}, tracks_vertical_adjustment_position={}, x={}, y={}, tracks_vertical_adjustment_position + view_port_width - y={}, y - tracks_vertical_adjustment_position={}", view_port_width, vertical_adjustment.value(), x, y, vertical_adjustment_position + view_port_width - y, y - vertical_adjustment_position);
+                debug!("Dragging a track: view_port_width={}, tracks_vertical_adjustment_position={}, x={}, y={}, tracks_vertical_adjustment_position + view_port_width - y={}, y - tracks_vertical_adjustment_position={}", view_port_width, vertical_adjustment.value(), x, y, vertical_adjustment_position + view_port_width - y, y - vertical_adjustment_position);
     
                 if (vertical_adjustment_position + view_port_width - y) <= 50 {
                     vertical_adjustment.set_value((vertical_adjustment_position + 50) as f64);
@@ -8443,7 +8489,7 @@ impl MainWindow {
 
         let tx_from_ui = tx_from_ui.clone();
         vertical_box.connect_drag_data_received(move |vertical_box, _, x, y, selection_data, _, _| {
-            info!("track drag data received: x={}, y={}", x, y);
+            debug!("track drag data received: x={}, y={}", x, y);
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in vertical_box.children().iter() {

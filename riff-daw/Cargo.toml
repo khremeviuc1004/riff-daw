@@ -12,7 +12,7 @@ serde = { version = "1.0.132", features = ["derive"] }
 serde_json = { version = "1.0.73", features = ["preserve_order"] }
 cairo-rs = "0.14.9"
 jack = "0.10.0"
-rb = "0.3.2"
+rb = "0.4.1"
 vst = { path = "../lib/vst-rs" }
 simple-clap-host-helper-lib = { path = "../lib/simple-clap-host-helper-lib" }
 raw-window-handle = "0.4.2"
@@ -28,7 +28,7 @@ flexi_logger = {version = "0.25.1", features=["async"]}
 log = "0.4.17"
 factor = "0.4.0"
 wav_io = "0.1.8"
-mlua = { versiorn = "0.8.3", features = ["lua54", "vendored", "macros"] }
+mlua = { version = "0.8.3", features = ["lua54", "vendored", "macros"] }
 sndfile = "0.1.1"
 samplerate-rs = "0.1.0"
 crossbeam = "0.8.2"
@@ -47,3 +47,14 @@ anyhow = "1.0.58"
 strum = "0.24.1"
 strum_macros = "0.24.1"
 pathsearch = "0.2.0"
+tikv-jemallocator = "0.5.0"
+geo = "0.26.0"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+codegen-units = 1
+lto = true
+# lto = "thin"
+opt-level = 3

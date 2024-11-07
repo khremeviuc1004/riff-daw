@@ -1,8 +1,10 @@
+use std::any::Any;
 use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
-use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_MIDI, clap_event_midi, clap_event_note, clap_event_note_expression, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME};
+use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_MIDI, clap_event_midi, clap_event_note, clap_event_note_expression, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, clap_event_param_value, CLAP_EVENT_PARAM_VALUE, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME};
 use vst::event::*;
+use log::*;
 
 use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength};
 use crate::DAWState;
@@ -10,6 +12,32 @@ use crate::DAWState;
 pub struct DAWUtils;
 
 impl DAWUtils {
+
+    pub fn sort_track_events(a: &TrackEvent, b: &TrackEvent) -> Ordering {
+        // match a {
+        //     TrackEvent::NoteOn(note_on) => debug!("Note on: position={}", note_on.position()),
+        //     TrackEvent::NoteOff(note_off) => debug!("Note off: position={}", note_off.position()),
+        //     TrackEvent::Measure(measure) => debug!("Measure: position={}", measure.position()),
+        //     _ => debug!("Unknown event type")
+        // }
+        if (a.position() - b.position()) > f64::EPSILON {
+            Ordering::Greater
+        }
+        else if (b.position() - a.position()) > f64::EPSILON {
+            Ordering::Less
+        }
+        else {
+            if let TrackEvent::Measure(measure) = &a {
+                Ordering::Less
+            }
+            else if let TrackEvent::Measure(measure) = &b {
+                Ordering::Greater
+            }
+            else {
+                Ordering::Equal
+            }
+        }
+    }
 
     pub fn get_snap_quantise_value_in_seconds_from_choice_text(
         choice_text_value: &str,
@@ -147,10 +175,10 @@ impl DAWUtils {
         // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - 1024.0; 
         let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
 
-        println!("util-convert_to_event_blocks2: passage_length_in_frames={}", passage_length_in_frames);
+        debug!("util - convert_to_event_blocks: passage_length_in_frames={}", passage_length_in_frames);
 
         let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel);
-        println!("Number of riff ref events extracted for track: {}", track_events.len());
+        debug!("Number of riff ref events extracted for track: {}", track_events.len());
         let plugin_parameter_events = Self::convert_automation_events(automation, bpm, sample_rate, &mut track_events, midi_channel);
 
         let event_blocks = Self::create_track_event_blocks(block_size_in_samples, passage_length_in_frames, &mut track_events);
@@ -221,7 +249,7 @@ impl DAWUtils {
             // adjust the delta frames back from absolute frames to block relative delta frames
             for event in track_events.iter() {
                 let absolute_delta_frames = event.position() as i32;
-                // println!("create_track_event_blocks: event position={}, current_start_frame={}, current_end_frame={}", event.position(), current_start_frame, current_end_frame);
+                // debug!("create_track_event_blocks: event position={}, current_start_frame={}, current_end_frame={}", event.position(), current_start_frame, current_end_frame);
                 if current_start_frame <= absolute_delta_frames && absolute_delta_frames < current_end_frame {
                     let mut adjusted_event = event.clone();
                     adjusted_event.set_position((absolute_delta_frames - current_start_frame) as f64);
@@ -233,7 +261,7 @@ impl DAWUtils {
                 }
             }
 
-            // println!("Created track event block length: {}", event_block.len());
+            // debug!("Created track event block length: {}", event_block.len());
             event_blocks.push(event_block);
         }
         event_blocks
@@ -315,11 +343,11 @@ impl DAWUtils {
         for riff_ref in riff_refs {
             for riff in riffs.iter() {
                 if riff.uuid().to_string() == riff_ref.linked_to() {
-                    println!("util-convert_to_vst_events: riff name={}", riff.name());
+                    debug!("util-convert_to_vst_events: riff name={}", riff.name());
                     for event in riff.events().iter() {
                         match event {
                             TrackEvent::Note(note) => {
-                                println!("DAWUtils.convert_riff_ref_events_to_vst: note off - riff_ref.position={}, note.end position={}, note.duration={}", riff_ref.position(), note.position(), note.length());
+                                debug!("DAWUtils.convert_riff_ref_events_to_vst: note off - riff_ref.position={}, note.end position={}, note.duration={}", riff_ref.position(), note.position(), note.length());
                                 let note_on_position_in_frames = (riff_ref.position() + note.position()) / bpm * 60.0 * sample_rate;
                                 let note_on = MidiEvent {
                                     data: [144 + (midi_channel as u8), note.note() as u8, note.velocity() as u8],
@@ -414,7 +442,7 @@ impl DAWUtils {
                             note_off_velocity: 0,
                         };
                         events_all.push(measure_boundary_marker);
-                        println!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
+                        debug!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
                     }
 
                     // somehow add the full play out loop point marker
@@ -446,7 +474,7 @@ impl DAWUtils {
                 track_events.push(TrackEvent::PitchBend(PitchBend::new_from_midi_bytes(event.delta_frames as f64, event.data[1], event.data[2])));
             } 
             else {
-                println!("Attempted to convert unknown VST24 event: frame={}, midi type={}", event.delta_frames , event.data[0]);
+                debug!("Attempted to convert unknown VST24 event: frame={}, midi type={}", event.delta_frames , event.data[0]);
             }
         }
 
@@ -656,13 +684,45 @@ impl DAWUtils {
         events_all
     }
 
-    fn extract_riff_ref_events(riffs: &Vec<Riff>, riff_refs: &Vec<RiffReference>, bpm: f64, sample_rate: f64, _midi_channel: i32) -> Vec<TrackEvent> {
+    pub fn convert_param_events_with_timing_in_frames_to_clap(plugin_param_events: &Vec<&PluginParameter>, midi_channel: i32, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) -> Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> {
+        let mut events_all: Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> = Vec::new();
+
+        for event in plugin_param_events.iter() {
+            debug!("Plugin parameter value: {}", event.value);
+            if let Some(param) = param_info.get(&(event.index as u32)) {
+                let param_value = event.value as f64 * (param.range.end() - param.range.start());
+                debug!("Plugin parameter info: original value={}, value={}, start={}, end={}", event.value, param_value, param.range.start(), param.range.end());
+                let clap_event = clap_event_param_value {
+                    header: clap_event_header {
+                        size: std::mem::size_of::<clap_event_param_value>() as u32,
+                        time: 0,
+                        space_id: CLAP_CORE_EVENT_SPACE_ID,
+                        type_: CLAP_EVENT_PARAM_VALUE,
+                        flags: 0,
+                    },
+                    param_id: event.index as u32,
+                    cookie: param.cookie,
+                    note_id: -1,
+                    port_index: 0,
+                    channel: -1,
+                    key: -1,
+                    value: param_value,
+                };
+                events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::ParamValue(clap_event));
+            }
+        }
+
+        // events_all.sort_by(|a, b| a.delta_frames.cmp(&b.delta_frames));
+        events_all
+    }
+
+    pub fn extract_riff_ref_events(riffs: &Vec<Riff>, riff_refs: &Vec<RiffReference>, bpm: f64, sample_rate: f64, _midi_channel: i32) -> Vec<TrackEvent> {
         let mut events_all: Vec<TrackEvent> = Vec::new();
 
         for riff_ref in riff_refs {
             for riff in riffs.iter() {
                 if riff.uuid().to_string() == riff_ref.linked_to() {
-                    println!("util-extract_riff_ref_events: riff name={}", riff.name());
+                    debug!("util-extract_riff_ref_events: riff name={}", riff.name());
                     for event in riff.events().iter() {
                         if let TrackEvent::Note(note) = event {
                             // create a note on and a note off event
@@ -689,7 +749,8 @@ impl DAWUtils {
                     for measure_number in 0..number_of_measures {
                         let measure_boundary_marker = Measure::new((riff_ref.position() + ((measure_number + 1) * 4) as f64) / bpm * 60.0 * sample_rate);
                         events_all.push(TrackEvent::Measure(measure_boundary_marker));
-                        println!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
+
+                        debug!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
                     }
 
                     // somehow add the full play out loop point marker
@@ -700,17 +761,8 @@ impl DAWUtils {
             }
         }
 
-        events_all.sort_by(|a, b| {
-            if a.position() > b.position() {
-                Ordering::Greater
-            }
-            else if a.position() < b.position() {
-                Ordering::Less
-            }
-            else {
-                Ordering::Equal
-            }
-        });
+        events_all.sort_by(&DAWUtils::sort_track_events);
+
         events_all
     }
 
@@ -936,6 +988,7 @@ impl DAWUtils {
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
+    use log::*;
 
     use crate::DAWUtils;
     // use {DAWEventPosition, Riff, RiffReference, Track, TrackEvent, VstPluginParameter};
@@ -1081,7 +1134,7 @@ mod tests {
 
         let mut event_index = 1;
         for event in midi_events.iter() {
-            println!("Event: index={}, frame={}, data[0]={}, data[1]={}, data[2]={}", event_index, event.delta_frames, event.data[0], event.data[1], event.data[2]);
+            debug!("Event: index={}, frame={}, data[0]={}, data[1]={}, data[2]={}", event_index, event.delta_frames, event.data[0], event.data[1], event.data[2]);
             if event_index == 13 {
                 event_index = 1;
             }

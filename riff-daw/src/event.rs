@@ -405,6 +405,11 @@ pub enum AudioLayerInwardEvent {
     PreviewSample(String), // absolute path sample file name
 }
 
+pub enum EventProcessorType {
+    RiffBufferEventProcessor,
+    BlockEventProcessor,
+}
+
 pub enum TrackBackgroundProcessorInwardEvent {
     SetSample(SampleData),
     SetEvents(
@@ -414,6 +419,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         ),
         bool,
     ), // instrument plugin events, instrument and effect plugin parameters, transition_to
+    SetEventProcessorType(EventProcessorType),
     GotoStart,
     MoveBack,
     Play(i32), // start at block number

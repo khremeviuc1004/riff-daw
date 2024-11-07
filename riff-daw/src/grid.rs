@@ -781,7 +781,7 @@ impl BeatGrid {
         let bottom_right_x = self.x_selection_window_position.max(self.x_selection_window_position2);
         let bottom_right_y = self.y_selection_window_position.max(self.y_selection_window_position2);
 
-        // info!("Window select: top_left_x={}, top_left_y={}, bottom_right_x={}, bottom_right_y={}", top_left_x, top_left_y, bottom_right_x, bottom_right_y);
+        // debug!("Window select: top_left_x={}, top_left_y={}, bottom_right_x={}, bottom_right_y={}", top_left_x, top_left_y, bottom_right_x, bottom_right_y);
 
         (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
     }
@@ -823,7 +823,7 @@ impl MouseHandler for BeatGrid {
         self.alt_key_active = alt_key;
         self.mouse_pointer_position = (x, y);
 
-        // info!("Mouse motion: x={}, y={}", x, y);
+        // debug!("Mouse motion: x={}, y={}", x, y);
 
         match mouse_button {
             MouseButton::Button1 => {
@@ -844,7 +844,7 @@ impl MouseHandler for BeatGrid {
 
                     },
                     OperationModeType::Change => {
-                        info!("Mouse motion: changed to EditDragCycle::Dragging");
+                        debug!("Mouse motion: changed to EditDragCycle::Dragging");
                         self.edit_drag_cycle = DragCycle::Dragging;
                         drawing_area.queue_draw();
                     },
@@ -874,7 +874,7 @@ impl MouseHandler for BeatGrid {
                         self.select_drag_cycle = DragCycle::MousePressed;
                     }
                     OperationModeType::Change => {
-                        info!("Mouse pressed: changed to EditDragCycle::MousePressed");
+                        debug!("Mouse pressed: changed to EditDragCycle::MousePressed");
                         self.edit_drag_cycle = DragCycle::MousePressed;
                         self.mouse_pointer_previous_position = (x, y);
                         drawing_area.queue_draw();
@@ -960,7 +960,7 @@ impl MouseHandler for BeatGrid {
                     },
                     OperationModeType::Change => {
                         self.edit_drag_cycle = DragCycle::MouseReleased;
-                        info!("Mouse release: changed to EditDragCycle::MouseReleased");
+                        debug!("Mouse release: changed to EditDragCycle::MouseReleased");
                         drawing_area.queue_draw();
                     },
                     OperationModeType::PointMode => {
@@ -977,7 +977,7 @@ impl MouseHandler for BeatGrid {
                                 }
                             }
                             else {
-                                info!("Not enough elements to extract riff set and track uuids.")
+                                debug!("Not enough elements to extract riff set and track uuids.")
                             }
                         }
                         else if let DragCycle::Dragging = self.select_drag_cycle {
@@ -1005,7 +1005,7 @@ impl MouseHandler for BeatGrid {
                                 let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                 match self.tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::LoopLimitLeftChanged(snap_position), Uuid::new_v4())) {
                                     Ok(_) => (),
-                                    Err(error) => info!("Problem setting loop left - could sender event: {}", error),
+                                    Err(error) => debug!("Problem setting loop left - could sender event: {}", error),
                                 }
                             },
                             None => (),
@@ -1035,9 +1035,9 @@ impl MouseHandler for BeatGrid {
             },
             MouseButton::Button2 => {
                 match self.operation_mode {
-                    OperationModeType::Add => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Delete => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Change => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::Add => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::Delete => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::Change => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
                     OperationModeType::PointMode => {
                         if drawing_area.widget_name().to_string().starts_with("riffset_") {
                             let widget_name = drawing_area.widget_name().to_string();
@@ -1058,26 +1058,26 @@ impl MouseHandler for BeatGrid {
                                 }
                             }
                             else {
-                                info!("Not enough elements to extract riff set and track uuids.")
+                                debug!("Not enough elements to extract riff set and track uuids.")
                             }
                         }
 
                     },
-                    OperationModeType::LoopPointMode => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::DeleteSelected => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::CopySelected => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::PasteSelected => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::SelectAll => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::DeselectAll => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Undo => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Redo => info!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::LoopPointMode => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::DeleteSelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::CopySelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::PasteSelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::SelectAll => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::DeselectAll => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::Undo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::Redo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
                 }
             },
             MouseButton::Button3 => {
                 match self.operation_mode {
-                    OperationModeType::Add => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Delete => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Change => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::Add => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::Delete => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::Change => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
                     OperationModeType::PointMode => {
                         if drawing_area.widget_name().to_string().starts_with("riffset_") {
                             let widget_name = drawing_area.widget_name().to_string();
@@ -1091,7 +1091,7 @@ impl MouseHandler for BeatGrid {
                                 }
                             }
                             else {
-                                info!("Not enough elements to extract riff set and track uuids.")
+                                debug!("Not enough elements to extract riff set and track uuids.")
                             }
                         }
                         else if shift_key {
@@ -1150,18 +1150,18 @@ impl MouseHandler for BeatGrid {
                             let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                             match self.tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::LoopLimitRightChanged(snap_position), Uuid::new_v4())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Problem setting loop left - could sender event: {}", error),
+                                Err(error) => debug!("Problem setting loop left - could sender event: {}", error),
                             }
                         },
                         None => (),
                     },
-                    OperationModeType::DeleteSelected => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::CopySelected => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::PasteSelected => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::SelectAll => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::DeselectAll => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Undo => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Redo => info!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::DeleteSelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::CopySelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::PasteSelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::SelectAll => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::DeselectAll => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::Undo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::Redo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
                 }
             },
         }
@@ -1172,7 +1172,7 @@ impl Grid for BeatGrid {
     fn paint(&mut self, context: &Context, drawing_area: &DrawingArea) {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         
-        // info!("painting beatgrid - {} is visible={}, x={}, y={}, width={}, height={} - clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={}", 
+        // debug!("painting beatgrid - {} is visible={}, x={}, y={}, width={}, height={} - clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={}",
         //     drawing_area.widget_name(), 
         //     drawing_area.is_visible(), 
         //     drawing_area.allocation().x,
@@ -2187,7 +2187,7 @@ impl CustomPainter for PianoRollCustomPainter {
                     None => (),
                 }
             },
-            Err(_) => info!("Piano Roll custom painter could not get state lock."),
+            Err(_) => debug!("Piano Roll custom painter could not get state lock."),
         }
 
         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
@@ -2287,7 +2287,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                 if found_item_being_changed {
                     if let Some(dragged_item) = self.dragged_item.as_ref() {
-                        info!("Dragged item found.");
+                        debug!("Dragged item found.");
                         let vertical_index = if allow_vertical_drag {
                             dragged_item.vertical_index() as f64
                         }
@@ -2320,7 +2320,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     // change the prompt
                     if let Some(window) = drawing_area.window() {
                         window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::LeftSide)));
-                        // info!("drawing left side prompt.");
+                        // debug!("drawing left side prompt.");
                     }
                 }
                 // draw drag position adjust handle if required
@@ -2336,7 +2336,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     // change the prompt
                     if let Some(window) = drawing_area.window() {
                         window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Hand1)));
-                        // info!("drawing hand prompt.");
+                        // debug!("drawing hand prompt.");
                     }
                 }
                 // draw right length adjust handle if required
@@ -2352,13 +2352,13 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     // change the prompt
                     if let Some(window) = drawing_area.window() {
                         window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::RightSide)));
-                        // info!("drawing right side prompt.");
+                        // debug!("drawing right side prompt.");
                     }
                 }
 
                 match edit_mode {
                     EditMode::Inactive => {
-                        info!("EditMode::Inactive");
+                        debug!("EditMode::Inactive");
                     }
                     _ => {
                         match edit_drag_cycle {
@@ -2456,7 +2456,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                             y as i32
                                                         };
                                                         
-                                                        info!("Setting dragged item vertical index to: {}", vertical_index);
+                                                        debug!("Setting dragged item vertical index to: {}", vertical_index);
                                                         dragged_item.set_vertical_index(vertical_index + 1);
                                                     }
 
@@ -2578,7 +2578,7 @@ impl CustomPainter for SampleRollCustomPainter {
                     None => (),
                 }
             },
-            Err(_) => info!("Piano Roll custom painter could not get state lock."),
+            Err(_) => debug!("Piano Roll custom painter could not get state lock."),
         }
     }
 
@@ -2634,7 +2634,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                     _edit_drag_cycle: &DragCycle,
                     _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
-        // info!("RiffSetTrackCustomPainter::paint_custom - entered");
+        // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
         match self.state.lock() {
             Ok( state) => {
                 let mut adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
@@ -2746,10 +2746,10 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                     }
                 }
             },
-            Err(_) => info!("Riff set track custom painter could not get state lock."),
+            Err(_) => debug!("Riff set track custom painter could not get state lock."),
         }
 
-        info!("RiffSetTrackCustomPainter::paint_custom - entered");
+        // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -2911,7 +2911,7 @@ impl CustomPainter for TrackGridCustomPainter {
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                 ) {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
-        // info!("TrackGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
+        // debug!("TrackGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
         let clip_rectangle = Rect::new(
             coord!{x: clip_x1, y: clip_y1}, 
             coord!{x: clip_x2, y: clip_y2}
@@ -2949,11 +2949,11 @@ impl CustomPainter for TrackGridCustomPainter {
                                     coord!{x: x + width, y: y + adjusted_entity_height_in_pixels}
                                 );
                         
-                                // info!("Part: x1={}, y1={}, x2={}, y2={},", x, y, x + width, y + adjusted_entity_height_in_pixels);
+                                // debug!("Part: x1={}, y1={}, x2={}, y2={},", x, y, x + width, y + adjusted_entity_height_in_pixels);
 
                                 // if x >= clip_x1 && x <= clip_x2 && y >= clip_y1 && y <= clip_y2 {
                                 if riff_rect.intersects(&clip_rectangle) {
-                                    // info!("Part in clip region");
+                                    // debug!("Part in clip region");
 
                                     if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
                                         select_window_top_left_y <= y && (y + adjusted_entity_height_in_pixels) <= select_window_bottom_right_y {
@@ -3025,7 +3025,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                                 // draw note
                                                 if self.show_note {
                                                     let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
-                                                    // info!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
+                                                    // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
                                                     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                     context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
                                                     let _ = context.fill();
@@ -3035,7 +3035,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                                 if self.show_note_velocity {
                                                     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                     let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
-                                                    // info!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                    // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
                                                     context.move_to(note_x, velocity_y_start);
                                                     context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
                                                     let _ = context.stroke();
@@ -3062,7 +3062,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                     }
                                 }
                                 // else {
-                                //     info!("Part not in clip region");
+                                //     debug!("Part not in clip region");
                                 // }
                                 break;
                             }
@@ -3117,9 +3117,9 @@ impl CustomPainter for TrackGridCustomPainter {
                     }
                 }
             },
-            Err(_) => info!("Track grid custom painter could not get state lock."),
+            Err(_) => debug!("Track grid custom painter could not get state lock."),
         }
-        // info!("TrackGridCustomPainter::paint_custom - exited.");
+        // debug!("TrackGridCustomPainter::paint_custom - exited.");
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -3315,12 +3315,12 @@ impl CustomPainter for AutomationCustomPainter {
                                                         context.line_to(x, y_velocity + 5.0);
                                                         match context.stroke() {
                                                             Ok(_) => (),
-                                                            Err(error) => info!("Problem drawing note velocity in controller view: {:?}", error),
+                                                            Err(error) => debug!("Problem drawing note velocity in controller view: {:?}", error),
                                                         }
                                                         context.arc(x, y_velocity, 5.0, 0.0, 6.3 /* 2 * PI */);
                                                         match context.fill() {
                                                             Ok(_) => (),
-                                                            Err(error) => info!("Problem drawing note velocity circle in controller view: {:?}", error),
+                                                            Err(error) => debug!("Problem drawing note velocity circle in controller view: {:?}", error),
                                                         }
                                                         context.rectangle(x, y_note, note_width, adjusted_entity_height_in_pixels);
                                                         let _ = context.fill();
@@ -3423,7 +3423,7 @@ impl CustomPainter for AutomationCustomPainter {
 
                                                         match context.stroke() {
                                                             Ok(_) => (),
-                                                            Err(error) => info!("Problem drawing not controller in the automation view: {:?}", error),
+                                                            Err(error) => debug!("Problem drawing not controller in the automation view: {:?}", error),
                                                         }
                                                     }
                                                 }
@@ -3450,7 +3450,7 @@ impl CustomPainter for AutomationCustomPainter {
 
                                                         match context.stroke() {
                                                             Ok(_) => (),
-                                                            Err(error) => info!("Problem drawing instrument plugin parameter in the automation view: {:?}", error),
+                                                            Err(error) => debug!("Problem drawing instrument plugin parameter in the automation view: {:?}", error),
                                                         }
                                                     }
                                                 }
@@ -3480,7 +3480,7 @@ impl CustomPainter for AutomationCustomPainter {
 
                                                             match context.stroke() {
                                                                 Ok(_) => (),
-                                                                Err(error) => info!("Problem drawing effect plugin parameter in the automation view: {:?}", error),
+                                                                Err(error) => debug!("Problem drawing effect plugin parameter in the automation view: {:?}", error),
                                                             }
                                                         }
                                                     }
@@ -3506,7 +3506,7 @@ impl CustomPainter for AutomationCustomPainter {
 
                                                 match context.stroke() {
                                                     Ok(_) => (),
-                                                    Err(error) => info!("Problem drawing note expression vallue in the automation view: {:?}", error),
+                                                    Err(error) => debug!("Problem drawing note expression vallue in the automation view: {:?}", error),
                                                 }
                                             }
                                         }
@@ -3518,7 +3518,7 @@ impl CustomPainter for AutomationCustomPainter {
                     }
                 }
             },
-            Err(_) => info!("Piano Roll custom painter could not get state lock."),
+            Err(_) => debug!("Piano Roll custom painter could not get state lock."),
         }
 
         if draw_mode_on {

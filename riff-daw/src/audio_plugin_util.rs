@@ -3,6 +3,8 @@ use std::{path::Path};
 use std::path::PathBuf;
 use std::process::{Command};
 
+use log::*;
+
 use pathsearch::find_executable_in_path;
 
 use simple_clap_host_helper_lib::{plugin::{instance::process::{AudioBuffers, OutOfPlaceAudioBuffers, ProcessConfig, ProcessData}, library::PluginLibrary, ext::audio_ports::AudioPorts}, host::{DAWCallback}};
@@ -45,7 +47,7 @@ pub fn create_vst24_audio_plugin(
         }
     }
 
-    println!("Loading {}...", path.to_str().unwrap());
+    debug!("Loading {}...", path.to_str().unwrap());
     match vst24_plugin_loaders.lock() {
         Ok(mut loaders) => {
             let mut plugin_identifier = library_path.to_owned();
@@ -64,7 +66,7 @@ pub fn create_vst24_audio_plugin(
                         loaders.get_mut(&plugin_identifier)
                     },
                     Err(error) => {
-                        println!("{:?}", error);
+                        debug!("{:?}", error);
                         panic!()
                     }
                 };
@@ -74,7 +76,7 @@ pub fn create_vst24_audio_plugin(
             let mut instance = vst_loader.instance().unwrap();
             let info = instance.get_info();
 
-            println!(
+            debug!(
                 "Loaded '{}':\n\t\
                     Vendor: {}\n\t\
                     Presets: {}\n\t\
@@ -187,7 +189,7 @@ pub fn create_vst24_audio_plugin(
 
             let presets = instance.get_parameter_object();
             for index in 0..info.presets {
-                println!("Preset: Number={}, Name={}", index, presets.get_preset_name(index));
+                debug!("Preset: Number={}, Name={}", index, presets.get_preset_name(index));
             }
 
             instance.init();
@@ -197,7 +199,7 @@ pub fn create_vst24_audio_plugin(
             (host, instance)
         },
         Err(error) => {
-            println!("Couldn't lock vst24_plugin_loaders: path={} error={:?}", path.to_str().unwrap(), error);
+            debug!("Couldn't lock vst24_plugin_loaders: path={} error={:?}", path.to_str().unwrap(), error);
             panic!()
         },
     }
@@ -214,7 +216,7 @@ pub fn create_vst24_audio_plugin(
  ) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
     let path = Path::new(audio_plugin_path.clone());
 
-    println!("Loading {}...", path.to_str().unwrap());
+    debug!("Loading {}...", path.to_str().unwrap());
     match plugin_libraries.lock() {
         Ok(mut libraries) => {
             let plugin_identifier = audio_plugin_path.to_owned();
@@ -229,7 +231,7 @@ pub fn create_vst24_audio_plugin(
                             libraries.get_mut(&plugin_identifier)
                         },
                         Err(error) => {
-                            println!("{:?}", error);
+                            debug!("{:?}", error);
                             panic!()
                         }
                     };
@@ -328,14 +330,14 @@ fn scan_for_audio_plugins_of_type(
                     if file_type.is_file() || file_type.is_symlink() {
                         if let Some(path) = entry.path().to_str() {
                             if path.ends_with(".so") || path.ends_with(".clap") {
-                                println!("Found shared library: {}", path);
+                                debug!("Found shared library: {}", path);
                                 let plugin_path = path.to_string();
 
                                 if let Ok(output) = Command::new(audio_plugin_checker)
                                     .arg(format!("\"{}\"", plugin_path.as_str()))
                                     .output() {
                                     if let Ok(command_output) = std::str::from_utf8(&output.stdout) {
-                                        println!("{}", command_output);
+                                        debug!("{}", command_output);
                                         if command_output.contains("##########") {
                                             for line in command_output.lines() {
                                                 if line.starts_with("##########") {
@@ -393,7 +395,7 @@ fn scan_for_audio_plugins_of_type(
                                         }
                                     }
                                     else {
-                                        println!("Couldn't process command output.");
+                                        debug!("Couldn't process command output.");
                                     }
                                 }
                             }

@@ -8,6 +8,8 @@ use rb::RbConsumer;
 use vst::api::{TimeInfo, TimeInfoFlags};
 use vst::event::MidiEvent;
 
+use log::*;
+
 use crate::domain::AudioBlock;
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 
@@ -65,7 +67,7 @@ impl JackNotificationHandler {
         match self.jack_midi_sender.try_send(AudioLayerOutwardEvent::JackConnect(port_b_name.clone(), port_a_name.clone())) {
             Ok(_) => {}
             Err(_) => {
-                println!("Audio: problem notifying of new jack connection from={} to={}", port_b_name, port_a_name);
+                debug!("Audio: problem notifying of new jack connection from={} to={}", port_b_name, port_a_name);
             }
         }
     }
@@ -73,11 +75,11 @@ impl JackNotificationHandler {
 
 impl NotificationHandler for JackNotificationHandler {
     fn thread_init(&self, _: &Client) {
-        println!("JACK: async thread started");
+        debug!("JACK: async thread started");
     }
 
     fn shutdown(&mut self, status: ClientStatus, reason: &str) {
-        println!(
+        debug!(
             "JACK: shutdown with status {:?} because \"{}\"",
             status, reason
         );
@@ -92,19 +94,19 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn freewheel(&mut self, _: &Client, is_enabled: bool) {
-        println!(
+        debug!(
             "JACK: freewheel mode is {}",
             if is_enabled { "on" } else { "off" }
         );
     }
 
     fn sample_rate(&mut self, _: &Client, sample_rate: Frames) -> Control {
-        println!("JACK: sample rate changed to {}", sample_rate);
+        debug!("JACK: sample rate changed to {}", sample_rate);
         Control::Continue
     }
 
     fn client_registration(&mut self, _: &Client, name: &str, is_reg: bool) {
-        println!(
+        debug!(
             "JACK: {} client with name \"{}\"",
             if is_reg { "registered" } else { "unregistered" },
             name
@@ -112,7 +114,7 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn port_registration(&mut self, _: &Client, port_id: PortId, is_reg: bool) {
-        println!(
+        debug!(
             "JACK: {} port with id {}",
             if is_reg { "registered" } else { "unregistered" },
             port_id
@@ -126,7 +128,7 @@ impl NotificationHandler for JackNotificationHandler {
         old_name: &str,
         new_name: &str,
     ) -> Control {
-        println!(
+        debug!(
             "JACK: port with id {} renamed from {} to {}",
             port_id, old_name, new_name
         );
@@ -140,7 +142,7 @@ impl NotificationHandler for JackNotificationHandler {
         port_id_b: PortId,
         are_connected: bool,
     ) {
-        println!(
+        debug!(
             "JACK: ports with id {} and {} are {}",
             port_id_a,
             port_id_b,
@@ -154,31 +156,31 @@ impl NotificationHandler for JackNotificationHandler {
             let port_a = client.port_by_id(port_id_a);
             let port_b = client.port_by_id(port_id_b);
 
-            println!("Jack client name: {}", client.name());
+            debug!("Jack client name: {}", client.name());
 
             if let Some(port) = port_a {
                 if let Ok(port_a_name) = port.name() {
-                    println!("Jack port: name={}, flags={:?}", port_a_name, port.flags());
+                    debug!("Jack port: name={}, flags={:?}", port_a_name, port.flags());
                     if let Some(port) = port_b {
                         if let Ok(port_b_name) = port.name() {
                             let input_output = format!("{:?}", port.flags());
-                            println!("Jack port: name={}, flags={}", port_b_name, input_output );
+                            debug!("Jack port: name={}, flags={}", port_b_name, input_output );
                             if input_output.as_str() == "IS_OUTPUT" {
                                 self.notify_about_connected_ports(&port_b_name, &port_a_name);
-                                println!("Audio: jack connection from={} to={}", port_b_name, port_a_name);
+                                debug!("Audio: jack connection from={} to={}", port_b_name, port_a_name);
                             }
                             else {
                                 self.notify_about_connected_ports(&port_a_name, &port_b_name);
-                                println!("Audio: jack connection from={} to={}", port_a_name, port_b_name);
+                                debug!("Audio: jack connection from={} to={}", port_a_name, port_b_name);
                             }
                         }
                         else {
-                            println!("Jack port has no name.");
+                            debug!("Jack port has no name.");
                         }
                     }
                 }
                 else {
-                    println!("Jack port has no name.");
+                    debug!("Jack port has no name.");
                 }
             }
         }
@@ -188,12 +190,12 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn graph_reorder(&mut self, _: &Client) -> Control {
-        println!("JACK: graph reordered");
+        debug!("JACK: graph reordered");
         Control::Continue
     }
 
     fn xrun(&mut self, _: &Client) -> Control {
-        println!("JACK: under run occurred");
+        debug!("JACK: under run occurred");
         Control::Continue
     }
 }
@@ -353,21 +355,21 @@ impl Audio {
             Ok(event) => match event {
                 AudioLayerInwardEvent::NewAudioConsumer(audio_consumer_detail) => {
                     self.audio_consumers.push(audio_consumer_detail);
-                    // println!("*************Added an audio consumer: {}", self.audio_consumers.len());
+                    // debug!("*************Added an audio consumer: {}", self.audio_consumers.len());
                 }
                 AudioLayerInwardEvent::NewMidiConsumer(midi_consumer_detail) => {
                     self.midi_consumers.push(midi_consumer_detail);
-                    println!("*************Added a midi consumer: {}", self.midi_consumers.len());
+                    debug!("*************Added a midi consumer: {}", self.midi_consumers.len());
                 }
                 AudioLayerInwardEvent::Play(start_play, number_of_blocks, start_block) => {
-                    // info!(root_logger, "*************Jack start play received: number_of_blocks={}", number_of_blocks);
+                    // debug!(root_logger, "*************Jack start play received: number_of_blocks={}", number_of_blocks);
                     self.play = start_play;
                     self.block = start_block;
                     self.play_position_in_frames = self.block as u32 * self.block_size as u32;
                     self.blocks_total = number_of_blocks;
                 }
                 AudioLayerInwardEvent::Stop => {
-                    // info!(root_logger, "*************Jack stop play received.");
+                    // debug!(root_logger, "*************Jack stop play received.");
                     self.play = false;
                     if self.block > -1 {
                         self.block = 0;
@@ -376,11 +378,11 @@ impl Audio {
                     self.block_number_buffer.clear();
                 }
                 AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
-                    // info!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
+                    // debug!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
                     self.blocks_total = number_of_blocks;
                 }
                 AudioLayerInwardEvent::Tempo(new_tempo) => {
-                    // info!(root_logger, "*************Jack tempo received: tempo={}", tempo);
+                    // debug!(root_logger, "*************Jack tempo received: tempo={}", tempo);
                     self.tempo = new_tempo;
                     self.frames_per_beat = Audio::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
                 }
@@ -406,17 +408,17 @@ impl Audio {
                     self.midi_consumers.retain(|consumer_detail| *consumer_detail.track_uuid() != track_uuid);
                 }
                 AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid, midi_out_port) => {
-                    println!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
+                    debug!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
                     if let Some(midi_consumer_details) = self.midi_consumers.iter_mut().find(|midi_consumer_details| midi_consumer_details.track_uuid().clone() == track_uuid.clone()) {
                         midi_consumer_details.set_midi_out_port(Some(midi_out_port));
                     }
                     else {
                         // show an error message dialogue??
-                        println!("Failed to add a midi out port for track={}", track_uuid.as_str());
+                        debug!("Failed to add a midi out port for track={}", track_uuid.as_str());
                     }
                 }
                 AudioLayerInwardEvent::PreviewSample(file_name) => {
-                    println!("Audio layer received preview sample: file name = {}", file_name);
+                    debug!("Audio layer received preview sample: file name = {}", file_name);
                     self.preview_sample = Some(SampleData::new(file_name, self.sample_rate_in_frames as i32));
                     self.preview_sample_current_frame = 0;
                 }
@@ -556,7 +558,7 @@ impl Audio {
                     self.btree_map_pool.push(tracks);
                 }
             }
-            // println!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
+            // debug!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
         }
 
         let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
@@ -612,13 +614,13 @@ impl Audio {
             let consumer_midi = midi_consumer_detail.consumer_mut();
             match consumer_midi.read(&mut self.jack_midi_buffer) {
                 Ok(read) => if read > 0 {
-                    // println!("Jack audio received some midi events: {}", read);
+                    // debug!("Jack audio received some midi events: {}", read);
                     if let Some(midi_output_port) = midi_consumer_detail.midi_out_port_mut() {
                         let mut midi_out_writer = midi_output_port.writer(process_scope.clone());
                         for count in 0..read {
                             let (frames, byte1, byte2, byte3, active) = self.jack_midi_buffer[count];
                             if active {
-                                // println!("Jack audio sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
+                                // debug!("Jack audio sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
                                 let bytes = [byte1, byte2, byte3];
                                 let event = RawMidi { time: frames, bytes:  &bytes};
                                 let _ = midi_out_writer.write(&event);
@@ -750,7 +752,7 @@ impl Audio {
                 let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes));
             }
             else if event.bytes.len() == 3 {
-                println!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);
+                debug!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);
             }
         }
     }

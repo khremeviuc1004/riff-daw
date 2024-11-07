@@ -4,7 +4,7 @@ use std::thread;
 use apres::MIDI;
 use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, VST_PATH_ENVIRONMENT_VARIABLE_NAME, CLAP_PATH_ENVIRONMENT_VARIABLE_NAME, DAW_AUTO_SAVE_THREAD_NAME};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use flexi_logger::{Logger};
+use flexi_logger::{LogSpecification, Logger};
 use gtk::{Adjustment, ButtonsType, ComboBoxText, DrawingArea, Frame, glib, MessageDialog, MessageType, prelude::{ActionMapExt, AdjustmentExt, ApplicationExt, Cast, ComboBoxExtManual, ComboBoxTextExt, ContainerExt, DialogExt, EntryExt, GtkWindowExt, LabelExt, ProgressBarExt, ScrolledWindowExt, SpinButtonExt, TextBufferExt, TextViewExt, ToggleToolButtonExt, WidgetExt}, SpinButton, Window, WindowType};
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -57,7 +57,7 @@ fn main() {
     let mut history_manager = Arc::new(Mutex::new(HistoryManager::new()));
 
     // setup logging
-    let logger_init_result = Logger::try_with_str("debug");
+    let logger_init_result = Logger::try_with_env();
     let _logger = if let Ok(logger) = logger_init_result {
         let logger = logger
             // .log_to_file(FileSpec::default())
@@ -293,12 +293,12 @@ fn main() {
 pub fn build_ui(application: &gtk::Application) {
     let test_action = gio::SimpleAction::new("test", None);
     test_action.connect_activate(move |_, _| {
-        println!("%%%%%%%%%%%%%%%%%%%%%% Test action executed!");
+        debug!("%%%%%%%%%%%%%%%%%%%%%% Test action executed!");
     });
     application.add_action(&test_action);
     let quit_action = gio::SimpleAction::new("quit", None);
     quit_action.connect_activate(move |_, _| {
-        println!("%%%%%%%%%%%%%%%%%%%%%% Quit action executed!");
+        debug!("%%%%%%%%%%%%%%%%%%%%%% Quit action executed!");
     });
     application.add_action(&quit_action);
 }
@@ -316,7 +316,7 @@ fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
             let mut track_uuid = None;
             match state.get_project().song_mut().tracks_mut().last().unwrap() {
                 TrackType::InstrumentTrack(track) => {
-                    info!("Adding a track to GUI...");
+                    debug!("Adding a track to GUI...");
                     track_uuid = Some(track.uuid().to_string());
                     gui_ref.add_track(track.name(),
                                       track.uuid(),
@@ -328,7 +328,7 @@ fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
                                       0.0,
                                       false,
                                       false);
-                    info!("Added a track to the GUI.");
+                    debug!("Added a track to the GUI.");
                 },
                 TrackType::AudioTrack(_) => (),
                 TrackType::MidiTrack(_) => (),
@@ -381,7 +381,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             // remove the consumer from the audio layer
                             match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
+                                Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
                             }
                         }
 
@@ -425,18 +425,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         gui.ui.track_drawing_area.queue_draw();
                         match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.project().song().block_size())) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                         }
                         match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
                         }
                         match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.project().song().sample_rate())) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send sample rate message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send sample rate message to jack layer: {}", error),
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - New File - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - New File - could not get lock on state"),
                 }
             },
             DAWEvents::OpenFile(path) => {
@@ -476,7 +476,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 // remove the consumer from the audio layer
                                 match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
                                     Ok(_) => (),
-                                    Err(error) => info!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
+                                    Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
                                 }
                             }
 
@@ -509,18 +509,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.project().song().block_size())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
                             match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
                             match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.project().song().sample_rate())) {
                                 Ok(_) => (),
-                                Err(error) => info!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Open File - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Open File - could not get lock on state"),
                     }
 
                     match state_arc2.lock() {
@@ -531,7 +531,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     if let Ok(midi_out_port) = jack_client.register_port(track_uuid.as_str(), MidiOut::default()) {
                                         match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
                                             Ok(_) => (),
-                                            Err(error) => info!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
+                                            Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
                                         }
                                     }
                                 }
@@ -564,11 +564,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         thread::sleep(Duration::from_millis(1000));
                         match state.lock() {
                             Ok(state) => {
-                                info!("main - DAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
+                                debug!("main - DAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
                                 let mut state = state;
                                 state.save();
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - Save File - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Save File - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -596,7 +596,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut state = state;
                                 state.save_as(path.to_str().unwrap());
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -635,7 +635,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             let mut instrument_track_receivers2 = HashMap::new();
 
                                             for track in midi.get_tracks().iter() {
-                                                info!("Track: {}", track_number);
+                                                debug!("Track: {}", track_number);
                                                 let mut freedom_daw_track = InstrumentTrack::new();
                                                 let mut current_notes = HashMap::new();
                                                 let riff = Riff::new_with_name_and_length(Uuid::new_v4(), "unknown".to_owned(), 4.0);
@@ -651,7 +651,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     let position = midi.get_event_position(*event_id);
                                                     match midi.get_event(*event_id) {
                                                         Some(event) => {
-                                                            info!("Found event: {:?}", event);
+                                                            debug!("Found event: {:?}", event);
                                                             match event {
                                                                 apres::MIDIEvent::SequenceNumber(_) => (),
                                                                 apres::MIDIEvent::Text(_) => (),
@@ -664,7 +664,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::ChannelPrefix(_) => (),
                                                                 apres::MIDIEvent::SetTempo(tempo_value) => {
                                                                     tempo = tempo_value;
-                                                                    info!("Tempo: {}", tempo);
+                                                                    debug!("Tempo: {}", tempo);
                                                                 },
                                                                 apres::MIDIEvent::SMPTEOffset(_, _, _, _, _) => (),
                                                                 apres::MIDIEvent::TimeSignature(_, _, _, _) => (),
@@ -783,7 +783,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::Reset => (),
                                                             }
                                                         },
-                                                        None => info!("Could not find event."),
+                                                        None => debug!("Could not find event."),
                                                     }
                                                 }
 
@@ -809,11 +809,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                             state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
                                         },
-                                        Err(error) => info!("Couldn't read midi file: {:?}", error),
+                                        Err(error) => debug!("Couldn't read midi file: {:?}", error),
                                     }
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - Import Midi File - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Import Midi File - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -839,13 +839,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let _ = thread::Builder::new().name("Export midi file".into()).spawn(move || {
                         match state.lock() {
                             Ok(state) => {
-                                info!("Main - rx_ui processing loop - Export Midi File - attempting to export.");
+                                debug!("Main - rx_ui processing loop - Export Midi File - attempting to export.");
                                 if !state.export_to_midi_file(path) {
                                     let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                                     let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not export midi file.".to_string()));
                                 }
                             }
-                            Err(_) => info!("Main - rx_ui processing loop - Export Midi File - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Export Midi File - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -869,13 +869,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let _ = thread::Builder::new().name("Export riffs to midi file".into()).spawn(move || {
                         match state.lock() {
                             Ok(state) => {
-                                info!("Main - rx_ui processing loop - Export riffs to midi file - attempting to export.");
+                                debug!("Main - rx_ui processing loop - Export riffs to midi file - attempting to export.");
                                 if !state.export_riffs_to_midi_file(path) {
                                     let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                                     let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not export riffs to midi file.".to_string()));
                                 }
                             }
-                            Err(_) => info!("Main - rx_ui processing loop - Export riffs to midi file - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Export riffs to midi file - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -899,13 +899,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let _ = thread::Builder::new().name("Export riffs to separate midi files".into()).spawn(move || {
                         match state.lock() {
                             Ok(state) => {
-                                info!("Main - rx_ui processing loop - Export riffs to separate midi files - attempting to export.");
+                                debug!("Main - rx_ui processing loop - Export riffs to separate midi files - attempting to export.");
                                 if !state.export_riffs_to_separate_midi_files(path) {
                                     let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                                     let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not export riffs to separate midi files.".to_string()));
                                 }
                             }
-                            Err(_) => info!("Main - rx_ui processing loop - Export riffs to separate midi files - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Export riffs to separate midi files - could not get lock on state"),
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
@@ -924,10 +924,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 match state.lock() {
                     Ok(mut state) => {
-                        info!("Main - rx_ui processing loop - Export Wave File - attempting to export.");
+                        debug!("Main - rx_ui processing loop - Export Wave File - attempting to export.");
                         state.export_to_wave_file(path, tx_to_audio, track_audio_coast, tx_from_ui);
                     }
-                    Err(_) => info!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }
             }
             DAWEvents::UpdateUI => {
@@ -936,7 +936,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
                     }
-                    Err(_) => info!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }
 
                 gui.ui.track_drawing_area.queue_draw();
@@ -944,7 +944,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.sample_roll_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            DAWEvents::UpdateState => info!("Event: update state"),
+            DAWEvents::UpdateState => debug!("Event: update state"),
             DAWEvents::Notification(notification_type, message) => {
                 let message_type = match notification_type {
                     NotificationType::Info => { MessageType::Info }
@@ -975,12 +975,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 match state.lock() {
                     Ok(mut state) => state.set_automation_view_mode(type_to_show),
-                    Err(error) => info!("Error: {}", error),
+                    Err(error) => debug!("Error: {}", error),
                 }
                 gui.ui.automation_drawing_area.queue_draw();
             },
             DAWEvents::LoopChange(change_type, uuid) => {
-                info!("Event: LoopChange");
+                debug!("Event: LoopChange");
                 match change_type {
                     LoopChangeType::LoopOn => {
                         match state.lock() {
@@ -997,14 +997,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 start_block = (active_loop.start_position() * 44100.0 / 1024.0) as i32;
                                                 end_block = (active_loop.end_position() * 44100.0 / 1024.0) as i32;
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                     },
-                                    None => info!("No active loop found to set left position."),
+                                    None => debug!("No active loop found to set left position."),
                                 }
                                 match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(end_block - start_block)) {
                                     Ok(_) => (),
-                                    Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning looping on: {}", error),
+                                    Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning looping on: {}", error),
                                 }
                                 for track in tracks {
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
@@ -1016,7 +1016,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.set_looping(true);
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     }
@@ -1031,7 +1031,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     }
@@ -1050,10 +1050,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 start_block = (active_loop.start_position() * 44100.0 / 1024.0) as i32;
                                                 end_block = (active_loop.end_position() * 44100.0 / 1024.0) as i32;
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                     },
-                                    None => info!("No loop found to mark as active."),
+                                    None => debug!("No loop found to mark as active."),
                                 }
                                 for track in tracks {
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
@@ -1063,7 +1063,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.set_active_loop(uuid);
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     },
@@ -1082,20 +1082,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
                                                 }
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                         let mut state = state;
                                         match state.get_project().song_mut().loops_mut().iter_mut().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
                                                 active_loop.set_start_position(start_position);
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                     },
-                                    None => info!("No active loop found to set left position."),
+                                    None => debug!("No active loop found to set left position."),
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - loop add - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - loop add - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     },
@@ -1114,20 +1114,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
                                                 }
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                         let mut state = state;
                                         match state.get_project().song_mut().loops_mut().iter_mut().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
                                                 active_loop.set_end_position(end_position);
                                             },
-                                            None => info!("Could not find the active loop."),
+                                            None => debug!("Could not find the active loop."),
                                         }
                                     },
-                                    None => info!("No active loop found to set right position."),
+                                    None => debug!("No active loop found to set right position."),
                                 }
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - loop add - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - loop add - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     },
@@ -1137,7 +1137,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut state = state;
                                 state.get_project().song_mut().add_loop(Loop::new_with_uuid_and_name(uuid, loop_name));
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - loop add - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - loop add - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     }
@@ -1147,7 +1147,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut state = state;
                                 state.get_project().song_mut().delete_loop(uuid);
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - loop delete - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - loop delete - could not get lock on state"),
                         }
                         gui.ui.track_drawing_area.queue_draw();
                     }
@@ -1157,12 +1157,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut state = state;
                                 state.get_project().song_mut().change_loop_name(uuid, name);
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - loop name change - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - loop name change - could not get lock on state"),
                         }
                     },
                 }
             },
-            DAWEvents::ProjectChange(_) => info!("Event: ProjectChange"),
+            DAWEvents::ProjectChange(_) => debug!("Event: ProjectChange"),
             DAWEvents::PianoRollSetTrackName(name) => {
                 gui.set_piano_roll_selected_track_name_label(name.as_str());
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -1191,7 +1191,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             match track_change_track_type {
                                 GeneralTrackType::InstrumentTrack => {
-                                    info!("Adding an instrument track to the state...");
+                                    debug!("Adding an instrument track to the state...");
                                     let track = InstrumentTrack::new();
                                     track_uuid = Some(track.uuid().to_string());
                                     gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
@@ -1210,15 +1210,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             vst_host_time_info,
                                         );
                                     }
-                                    info!("Added an instrument track to the state.");
+                                    debug!("Added an instrument track to the state.");
                                 }
                                 GeneralTrackType::AudioTrack => {
-                                    info!("Adding an audio track to the state...");
+                                    debug!("Adding an audio track to the state...");
                                     let track = AudioTrack::new();
                                     track_uuid = Some(track.uuid().to_string());
                                     gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::AudioTrack(track));
-                                    info!("Added an audio track to the state.");
+                                    debug!("Added an audio track to the state.");
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
                                         DAWState::init_track(
                                             vst24_plugin_loaders,
@@ -1235,7 +1235,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
                                 GeneralTrackType::MidiTrack => {
-                                    info!("Adding a midi track to the state...");
+                                    debug!("Adding a midi track to the state...");
                                     let track = MidiTrack::new();
                                     let uuid = track.uuid().to_string();
 
@@ -1261,11 +1261,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         if let Ok(midi_out_port) = jack_client.register_port(uuid.as_str(), MidiOut::default()) {
                                             match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(uuid, midi_out_port)) {
                                                 Ok(_) => (),
-                                                Err(error) => info!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
+                                                Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
                                             }
                                         }
                                     }
-                                    info!("Added a midi track to the state.");
+                                    debug!("Added a midi track to the state.");
                                 }
                                 _ => {}
                             }
@@ -1273,7 +1273,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.update_track_senders_and_receivers(instrument_track_senders_local, instrument_track_receivers_local);
                             gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Track Added - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Track Added - could not get lock on state"),
                     }
                 }
                 TrackChangeType::Deleted => {
@@ -1286,14 +1286,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.delete_track_from_ui(track_uuid.clone());
                                     state.get_project().song_mut().delete_track(track_uuid);
                                 },
-                                None => info!("Main - rx_ui processing loop - Track Deleted - could not find track"),
+                                None => debug!("Main - rx_ui processing loop - Track Deleted - could not find track"),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Track Deleted - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Track Deleted - could not get lock on state"),
                     }
                     gui.ui.track_drawing_area.queue_draw();
                 }
-                TrackChangeType::Modified => info!("TrackChangeType::Modified not yet implemented!"),
+                TrackChangeType::Modified => debug!("TrackChangeType::Modified not yet implemented!"),
                 TrackChangeType::SoloOn => {
                     match state.lock() {
                         Ok(mut state) => {
@@ -1320,11 +1320,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(uuid, TrackBackgroundProcessorInwardEvent::Unmute);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - SoloOn - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - SoloOn - could not get lock on state"),
                     }
                 }
                 TrackChangeType::SoloOff => {
-                    info!("Main - rx_ui processing loop - turn solo off - received event from the UI.");
+                    debug!("Main - rx_ui processing loop - turn solo off - received event from the UI.");
                     match state.lock() {
                         Ok(mut state) => {
                             let mut tracks_to_mute = vec![];
@@ -1354,7 +1354,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(uuid, TrackBackgroundProcessorInwardEvent::Mute);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - SoloOff - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - SoloOff - could not get lock on state"),
                     }
                 }
                 TrackChangeType::Mute => {
@@ -1368,7 +1368,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             };
                             state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::Mute);
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
                     }
                 }
                 TrackChangeType::Unmute => {
@@ -1382,7 +1382,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             };
                             state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::Unmute);
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
                     }
                 }
                 TrackChangeType::MidiOutputDeviceChanged(midi_device_name) => {
@@ -1406,10 +1406,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                             state.jack_midi_connection_add(track_uuid, midi_device_name);
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
                     }
                 },
-                TrackChangeType::MidiInputDeviceChanged => info!("TrackChangeType::MidiInputDeviceChanged not yet implemented!"),
+                TrackChangeType::MidiInputDeviceChanged => debug!("TrackChangeType::MidiInputDeviceChanged not yet implemented!"),
                 TrackChangeType::MidiOutputChannelChanged(midi_channel) => {
                     let track_uuid = track_uuid.unwrap();
                     match state.lock() {
@@ -1425,10 +1425,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
                     }
                 },
-                TrackChangeType::MidiInputChannelChanged => info!("TrackChangeType::MidiInputChannelChanged not yet implemented!"),
+                TrackChangeType::MidiInputChannelChanged => debug!("TrackChangeType::MidiInputChannelChanged not yet implemented!"),
                 TrackChangeType::InstrumentChanged(instrument_details) => {
                     match state.lock() {
                         Ok(state) => {
@@ -1454,7 +1454,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.load_instrument(vst24_plugin_loaders, clap_plugin_loaders, instrument_details, track_uuid);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track instrument changed - could not get lock on state"),
                     };
                 },
                 TrackChangeType::ShowInstrument => {
@@ -1500,9 +1500,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 match win.window() {
                                                     Some(gdk_window) => {
                                                         xid = gdk_x11_window_get_xid(gdk_window);
-                                                        info!("xid: {}", xid);
+                                                        debug!("xid: {}", xid);
                                                     },
-                                                    None => info!("Couldn't get gdk window."),
+                                                    None => debug!("Couldn't get gdk window."),
                                                 }
                                             }
 
@@ -1515,14 +1515,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - show track instrument - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - show track instrument - could not get lock on state"),
                     };
                     if xid != 0 {
                         match state.lock() {
                             Ok(state) => {
                                 state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid));
                             },
-                            Err(_) => info!("Could not get read only lock on state."),
+                            Err(_) => debug!("Could not get read only lock on state."),
                         }
                     }
                 }
@@ -1531,7 +1531,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Ok(state) => {
                             let mut state = state;
                             let track_uuid = track_uuid.unwrap();
-                            info!("Track name changed: \"{}\", name=\"{}\"", track_name.as_str(), &track_uuid);
+                            debug!("Track name changed: \"{}\", name=\"{}\"", track_name.as_str(), &track_uuid);
                             match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                 Some(track) => {
                                     track.set_name(track_name.clone());
@@ -1540,7 +1540,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - Save As File - could not get lock on state"),
                     };
                 },
                 TrackChangeType::EffectAdded(uuid, name, effect_details) => {
@@ -1560,13 +1560,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             TrackType::AudioTrack(_) => (),
                                             TrackType::MidiTrack(_) => (),
                                         },
-                                        None => info!("Main - rx_ui processing loop - track effect add - could not find track."),
+                                        None => debug!("Main - rx_ui processing loop - track effect add - could not find track."),
                                     }
                                 },
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track effect add - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track effect add - could not get lock on state"),
                     };
                 },
                 TrackChangeType::EffectDeleted(effect_uuid) => {
@@ -1591,11 +1591,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track effect delete - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track effect delete - could not get lock on state"),
                     };
                 }
                 TrackChangeType::RiffAdd(uuid, mut name, length) => {
-                    info!("Main - rx_ui processing loop - riff add");
+                    debug!("Main - rx_ui processing loop - riff add");
                     while name.is_empty() {
                         if gui.ui.riff_name_dialogue.run() == gtk::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
                             name = gui.ui.riff_name_entry.text().to_string();
@@ -1630,7 +1630,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
                 TrackChangeType::RiffCopy(uuid_to_copy, uuid, mut name) => {
-                    info!("Main - rx_ui processing loop - riff copy");
+                    debug!("Main - rx_ui processing loop - riff copy");
                     match state.lock() {
                         Ok(mut state) => {
                             state.set_selected_riff_ref_uuid(None);
@@ -1662,15 +1662,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None => {}
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff add  - problem getting selected riff track uuid"),
+                                None => debug!("Main - rx_ui processing loop - riff add  - problem getting selected riff track uuid"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff add - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff add - could not get lock on state"),
                     };
                     gui.ui.piano_roll_drawing_area.queue_draw();
                 }
                 TrackChangeType::RiffDelete(riff_uuid) => {
-                    info!("Need to handle track riff deleted.");
+                    debug!("Need to handle track riff deleted.");
 
                     // check if any riff references are using this riff - if so then show a warning dialog
                     let found_info = match state.lock() {
@@ -1768,7 +1768,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             found_info
                         }
                         Err(_) => {
-                            info!("Main - rx_ui processing loop - track_riff_delete - could not get lock on state");
+                            debug!("Main - rx_ui processing loop - track_riff_delete - could not get lock on state");
                             vec![]
                         }
                     };
@@ -1827,10 +1827,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None => ()
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - track_riff_edit - no track number specified."),
+                                None => debug!("Main - rx_ui processing loop - track_riff_edit - no track number specified."),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
                     };
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
@@ -1844,10 +1844,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             match tracks.get(track_index as usize) {
                                 Some(track) => selected_riff_uuid = state.selected_riff_uuid(track.uuid().to_string()),
-                                None => info!("Main - rx_ui processing loop - track riff reference added - no track at index."),
+                                None => debug!("Main - rx_ui processing loop - track riff reference added - no track at index."),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
                     };
                     match state.lock() {
                         Ok(mut state) => {
@@ -1865,15 +1865,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             }
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - track riff reference added - no selected riff index."),
+                                    None => debug!("Main - rx_ui processing loop - track riff reference added - no selected riff index."),
                                 },
-                                None => info!("Main - rx_ui processing loop - track riff reference added - no track at index."),
+                                None => debug!("Main - rx_ui processing loop - track riff reference added - no track at index."),
                             };
 
                             // re-calculate the song length
                             song.recalculate_song_length();
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track_riff_edit - could not get lock on state"),
                     };
                     // need to calculate exactly where the riff reference has been added and only paint that area
                     // gui.ui.track_drawing_area.queue_draw_area(500, 338, 100, 100);
@@ -1890,7 +1890,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                 match tracks.get_mut(track_index as usize) {
                                     Some(track) => {
-                                        //info!("Selected track riff ref count: {}", track.riff_refs().len());
+                                        //debug!("Selected track riff ref count: {}", track.riff_refs().len());
                                         let riffs = {
                                             let mut riffs = vec![];
                                             track.riffs_mut().iter_mut().for_each(|riff| { riffs.push(riff.clone()) });
@@ -1921,7 +1921,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 song.recalculate_song_length();
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff reference delete - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff reference delete - could not get lock on state"),
                     };
                     // need to calculate exactly where the riff reference has been added and only paint that area
                     // gui.ui.track_drawing_area.queue_draw_area(500, 338, 100, 100);
@@ -1964,13 +1964,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel));
 
                                         },
-                                        None => info!("Play note immediate: Could not find track number."),
+                                        None => debug!("Play note immediate: Could not find track number."),
                                     }
                                 },
-                                None => info!("Play note immediate: no track number given."),
+                                None => debug!("Play note immediate: no track number given."),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
                     };
                     {
                         let state_arc = state.clone();
@@ -2025,7 +2025,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff add sample - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff add sample - could not get lock on state"),
                     };
                     match state.lock() {
                         Ok(state) => {
@@ -2043,7 +2043,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     }
                                                 }
                                             }
-                                            None => info!("Main - rx_ui processing loop - riff add sample - problem getting selected riff index"),
+                                            None => debug!("Main - rx_ui processing loop - riff add sample - problem getting selected riff index"),
                                         }
                                     }
 
@@ -2056,16 +2056,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         }
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff add sample  - problem getting selected riff track number"),
+                                None => debug!("Main - rx_ui processing loop - riff add sample  - problem getting selected riff track number"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff add sample - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff add sample - could not get lock on state"),
                     };
                     gui.ui.sample_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
                 }
                 TrackChangeType::RiffDeleteSample(sample_reference_uuid, position) => {
-                    info!("Main - rx_ui processing loop - riff delete sample: sample_reference_uuid={}, position={}", sample_reference_uuid, position);
+                    debug!("Main - rx_ui processing loop - riff delete sample: sample_reference_uuid={}, position={}", sample_reference_uuid, position);
                     let mut selected_riff_uuid = None;
                     let mut selected_riff_track_uuid = None;
                     match state.lock() {
@@ -2080,7 +2080,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff delete sample - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff delete sample - could not get lock on state"),
                     };
                     match state.lock() {
                         Ok(state) => {
@@ -2093,7 +2093,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             Some(riff_uuid) => {
                                                 for riff in track.riffs_mut().iter_mut() {
                                                     if riff.uuid().to_string() == *riff_uuid {
-                                                        info!("Main - rx_ui processing loop - riff delete sample - found the riff");
+                                                        debug!("Main - rx_ui processing loop - riff delete sample - found the riff");
                                                         riff.events_mut().retain(|event| match event {
                                                             TrackEvent::Sample(sample) => !((sample.position() - 0.01) <= position && position <= (sample.position() + 0.25)),
                                                             _ => true,
@@ -2102,14 +2102,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     break;
                                                 }
                                             }
-                                            None => info!("Main - rx_ui processing loop - riff delete sample - problem getting selected riff index"),
+                                            None => debug!("Main - rx_ui processing loop - riff delete sample - problem getting selected riff index"),
                                         }
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff delete sample  - problem getting selected riff track number"),
+                                None => debug!("Main - rx_ui processing loop - riff delete sample  - problem getting selected riff track number"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff delete sample - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff delete sample - could not get lock on state"),
                     };
                     gui.ui.sample_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
@@ -2176,10 +2176,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                     state.set_selected_riff_uuid(track_uuid, riff_id_final);
                                 },
-                                None => info!("Main - rx_ui processing loop - track_riff_selected - no track number specified."),
+                                None => debug!("Main - rx_ui processing loop - track_riff_selected - no track number specified."),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track_riff_selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track_riff_selected - could not get lock on state"),
                     };
                     // });
                     gui.ui.piano_roll_drawing_area.queue_draw();
@@ -2200,7 +2200,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
                     };
                     match state.lock() {
                         Ok(state) => {
@@ -2218,7 +2218,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             for track_event in riff.events_mut().iter_mut() {
                                                                 if let TrackEvent::Note(note) = track_event {
                                                                     if y <= note.note() && note.note() <= y2 && x <= note.position() && (note.position() + note.length()) <= x2 {
-                                                                        info!("Note selected: x={}, y={}, x2={}, y2={}, note position={}, note={}, note duration={}", x, y, x2, y2, note.position(), note.note(), note.length());
+                                                                        debug!("Note selected: x={}, y={}, x2={}, y2={}, note position={}, note={}, note duration={}", x, y, x2, y2, note.position(), note.note(), note.length());
                                                                         selected.push(note.id());
                                                                     }
                                                                 }
@@ -2227,13 +2227,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         }
                                                     }
                                                 },
-                                                None => info!("Main - rx_ui processing loop - riff events selected - problem getting selected riff index"),
+                                                None => debug!("Main - rx_ui processing loop - riff events selected - problem getting selected riff index"),
                                             }
                                         },
                                         None => ()
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff events selected  - problem getting selected riff track number"),
+                                None => debug!("Main - rx_ui processing loop - riff events selected  - problem getting selected riff track number"),
                             };
 
                             if !selected.is_empty() {
@@ -2244,7 +2244,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.selected_riff_events_mut().append(&mut selected);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
                     };
                 }
                 TrackChangeType::RiffCutSelected(x, y, x2, y2) => {
@@ -2265,7 +2265,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff cut selected notes - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff cut selected notes - could not get lock on state"),
                     };
                     {
                         let mut state = state.clone();
@@ -2304,7 +2304,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff translate selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff translate selected - could not get lock on state"),
                     };
                     {
                         let mut state = state.clone();
@@ -2346,7 +2346,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     //     Ok(mut state) => {
                     //         // state.set_recording(record);
                     //     },
-                    //     Err(_) => info!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
+                    //     Err(_) => debug!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
                     // }
                 }
                 TrackChangeType::RiffQuantiseSelected(x, y, x2, y2) => {
@@ -2366,7 +2366,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff quantise - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff quantise - could not get lock on state"),
                     }
                     {
                         let mut state = state.clone();
@@ -2417,7 +2417,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
                     };
                     let mut copy_buffer: Vec<TrackEvent> = vec![];
                     match state.lock() {
@@ -2455,17 +2455,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             }
                                                         }
                                                     },
-                                                    None => info!("Main - rx_ui processing loop - riff paste selected - problem getting selected riff index"),
+                                                    None => debug!("Main - rx_ui processing loop - riff paste selected - problem getting selected riff index"),
                                                 }
                                             },
                                             None => ()
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
+                                    None => debug!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
                                 };
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff copy selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff copy selected - could not get lock on state"),
                     };
 
                     match state.lock() {
@@ -2486,21 +2486,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 copy_buffer.iter().for_each(|event| {
                                     let value = event.clone();
                                     match value {
-                                        TrackEvent::ActiveSense => info!("TrackChangeType::RiffCopySelectedNotes ActiveSense not yet implemented!"),
-                                        TrackEvent::AfterTouch => info!("TrackChangeType::RiffCopySelectedNotes AfterTouch not yet implemented!"),
-                                        TrackEvent::ProgramChange => info!("TrackChangeType::RiffCopySelectedNotes ProgramChange not yet implemented!"),
+                                        TrackEvent::ActiveSense => debug!("TrackChangeType::RiffCopySelectedNotes ActiveSense not yet implemented!"),
+                                        TrackEvent::AfterTouch => debug!("TrackChangeType::RiffCopySelectedNotes AfterTouch not yet implemented!"),
+                                        TrackEvent::ProgramChange => debug!("TrackChangeType::RiffCopySelectedNotes ProgramChange not yet implemented!"),
                                         TrackEvent::Note(note) => {
                                             let mut note_value = note;
                                             note_value.set_position(note_value.position() - edit_cursor_position_in_beats);
                                             state.track_event_copy_buffer_mut().push(TrackEvent::Note(note_value));
                                         },
-                                        TrackEvent::NoteOn(_) => info!("TrackChangeType::RiffCopySelectedNotes NoteOn not yet implemented!"),
-                                        TrackEvent::NoteOff(_) => info!("TrackChangeType::RiffCopySelectedNotes NoteOff not yet implemented!"),
-                                        TrackEvent::Controller(_) => info!("TrackChangeType::RiffCopySelectedNotes Controller not yet implemented!"),
-                                        TrackEvent::PitchBend(_pitch_bend) => info!("TrackChangeType::RiffCopySelectedNotes PitchBend not yet implemented!"),
-                                        TrackEvent::KeyPressure => info!("TrackChangeType::RiffCopySelectedNotes KeyPressure not yet implemented!"),
-                                        TrackEvent::AudioPluginParameter(_) => info!("TrackChangeType::RiffCopySelectedNotes AudioPluginParameter not yet implemented!"),
-                                        TrackEvent::Sample(_sample) => info!("TrackChangeType::RiffCopySelectedNotes Sample not yet implemented!"),
+                                        TrackEvent::NoteOn(_) => debug!("TrackChangeType::RiffCopySelectedNotes NoteOn not yet implemented!"),
+                                        TrackEvent::NoteOff(_) => debug!("TrackChangeType::RiffCopySelectedNotes NoteOff not yet implemented!"),
+                                        TrackEvent::Controller(_) => debug!("TrackChangeType::RiffCopySelectedNotes Controller not yet implemented!"),
+                                        TrackEvent::PitchBend(_pitch_bend) => debug!("TrackChangeType::RiffCopySelectedNotes PitchBend not yet implemented!"),
+                                        TrackEvent::KeyPressure => debug!("TrackChangeType::RiffCopySelectedNotes KeyPressure not yet implemented!"),
+                                        TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffCopySelectedNotes AudioPluginParameter not yet implemented!"),
+                                        TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffCopySelectedNotes Sample not yet implemented!"),
                                         TrackEvent::Measure(_) => {}
                                         TrackEvent::NoteExpression(_) => {}
                                     }
@@ -2525,7 +2525,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff paste selected notes - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff paste selected notes - could not get lock on state"),
                     };
                     let edit_cursor_position_in_secs = if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                         match piano_roll_grid.lock() {
@@ -2571,7 +2571,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
                     };
                     let edit_cursor_position_in_secs = if let Some(grid) = gui.track_grid() {
                         match grid.lock() {
@@ -2593,7 +2593,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(track_uuid) => {
                                         match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track) => {
-                                                //info!("Selected track riff ref count: {}", track.riff_refs().len());
+                                                //debug!("Selected track riff ref count: {}", track.riff_refs().len());
                                                 let riffs = {
                                                     let mut riffs = vec![];
                                                     track.riffs_mut().iter_mut().for_each(|riff| { riffs.push(riff.clone()) });
@@ -2604,12 +2604,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     let mut retain = true;
                                                     for riff in riffs.iter() {
                                                         if riff.uuid().to_string() == riff_uuid {
-                                                            info!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff.length());
+                                                            debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff.length());
                                                             if riff_ref.position() >= x &&
                                                                 // (riff_ref.position() + riff.length()) <= x2
                                                                 riff_ref.position() <= x2
                                                             {
-                                                                info!("Added a riff ref to the copy buffer.");
+                                                                debug!("Added a riff ref to the copy buffer.");
                                                                 let mut value = riff_ref.clone();
                                                                 value.set_position(value.position() - edit_cursor_position_in_secs);
                                                                 copy_buffer.push(value);
@@ -2626,17 +2626,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff references cut selected  - problem getting selected riff track number"),
+                                    None => debug!("Main - rx_ui processing loop - riff references cut selected  - problem getting selected riff track number"),
                                 };
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff references cut selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff references cut selected - could not get lock on state"),
                     };
 
                     match state.lock() {
                         Ok(state) => {
                             if !copy_buffer.is_empty() {
-                                info!("Riff references copy buffer length: {}", copy_buffer.len());
+                                debug!("Riff references copy buffer length: {}", copy_buffer.len());
                                 let mut state = state;
                                 state.riff_references_copy_buffer_mut().clear();
                                 copy_buffer.iter().for_each(|event| state.riff_references_copy_buffer_mut().push(event.clone()));
@@ -2669,17 +2669,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(track_uuid) => {
                                         match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track) => {
-                                                info!("Selected track riff ref count: {}", track.riff_refs().len());
+                                                debug!("Selected track riff ref count: {}", track.riff_refs().len());
                                                 track.riff_refs().iter().for_each(|riff_ref| {
                                                     let riff_uuid = riff_ref.linked_to();
                                                     for riff in track.riffs().iter() {
                                                         if riff.uuid().to_string() == riff_uuid {
-                                                            info!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff.length());
+                                                            debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff.length());
                                                             if riff_ref.position() >= x &&
                                                                 // (riff_ref.position() + riff.length()) <= x2
                                                                 riff_ref.position() <= x2
                                                             {
-                                                                info!("Added a riff ref to the copy buffer.");
+                                                                debug!("Added a riff ref to the copy buffer.");
                                                                 let mut value = riff_ref.clone();
                                                                 value.set_position(value.position() - edit_cursor_position_in_secs);
                                                                 copy_buffer.push(value);
@@ -2692,17 +2692,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff references copy selected  - problem getting selected riff track number"),
+                                    None => debug!("Main - rx_ui processing loop - riff references copy selected  - problem getting selected riff track number"),
                                 };
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff references copy selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff references copy selected - could not get lock on state"),
                     };
 
                     match state.lock() {
                         Ok(state) => {
                             if !copy_buffer.is_empty() {
-                                info!("Riff references copy buffer length: {}", copy_buffer.len());
+                                debug!("Riff references copy buffer length: {}", copy_buffer.len());
                                 let mut state = state;
                                 state.riff_references_copy_buffer_mut().clear();
                                 copy_buffer.iter().for_each(|event| state.riff_references_copy_buffer_mut().push(event.clone()));
@@ -2726,7 +2726,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff delete note - could not get lock on state"),
                     };
 
                     match state.lock() {
@@ -2758,13 +2758,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None => ()
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
+                                None => debug!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
                             };
 
                             // re-calculate the song length
                             state.get_project().song_mut().recalculate_song_length();
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff references paste selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff references paste selected - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                 },
@@ -2855,10 +2855,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         }
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - track_riff_selected - no track number specified."),
+                                None => debug!("Main - rx_ui processing loop - track_riff_selected - no track number specified."),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - track selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - track selected - could not get lock on state"),
                     }
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -2880,7 +2880,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff change selected notes length - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff change selected notes length - could not get lock on state"),
                     };
                     {
                         let mut state = state.clone();
@@ -2934,10 +2934,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None => ()
                                     }
                                 },
-                                None => info!("Main - rx_ui processing loop - riff name change - problem getting selected riff track number"),
+                                None => debug!("Main - rx_ui processing loop - riff name change - problem getting selected riff track number"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff name change - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff name change - could not get lock on state"),
                     };
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
@@ -3104,7 +3104,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                None => info!("Main - rx_ui processing loop - automation select - problem getting selected track number"),
+                                None => debug!("Main - rx_ui processing loop - automation select - problem getting selected track number"),
                             };
 
                             if !selected.is_empty() {
@@ -3115,7 +3115,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.selected_automation_mut().append(&mut selected);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - automation select - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - automation select - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3220,7 +3220,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     }
                                                                 }
                                                             },
-                                                            None => info!("Main - rx_ui processing loop - riff changing note velocity - problem getting selected riff index"),
+                                                            None => debug!("Main - rx_ui processing loop - riff changing note velocity - problem getting selected riff index"),
                                                         }
                                                     }
                                                     AutomationViewMode::Controllers => {
@@ -3298,10 +3298,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                None => info!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
+                                None => debug!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - automation add - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - automation add - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3387,10 +3387,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                None => info!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
+                                None => debug!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
                             };
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - automation add - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - automation add - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3440,7 +3440,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                             }
                         }
-                        Err(_) => info!("Main - rx_ui processing loop - automation type change - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - automation type change - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3453,7 +3453,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 gui.update_automation_effect_parameters_combo(&mut state, uuid, effect_uuid);
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - automation view  effect change - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - automation view  effect change - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3469,9 +3469,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             let track_name = track_type.name().to_string();
                                             match track_type {
                                                 TrackType::InstrumentTrack(track) => {
-                                                    info!("track name={}, # of effects={}", track.name(), track.effects().len());
+                                                    debug!("track name={}, # of effects={}", track.name(), track.effects().len());
                                                     for effect in track.effects_mut().iter_mut() {
-                                                        info!("effect name={}, effect uuid={}, search for effect uuid={}", effect.name(), effect.uuid(), effect_uuid.as_str());
+                                                        debug!("effect name={}, effect uuid={}, search for effect uuid={}", effect.name(), effect.uuid(), effect_uuid.as_str());
                                                         if effect.uuid().to_string() == effect_uuid {
                                                             if let Some(window) = audio_plugin_windows.get(&effect_uuid) {
                                                                 if window.is_visible() {
@@ -3506,9 +3506,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     match win.window() {
                                                                         Some(gdk_window) => {
                                                                             xid = gdk_x11_window_get_xid(gdk_window);
-                                                                            info!("xid: {}", xid);
+                                                                            debug!("xid: {}", xid);
                                                                         },
-                                                                        None => info!("Couldn't get gdk window."),
+                                                                        None => debug!("Couldn't get gdk window."),
                                                                     }
                                                                 }
                                                             }
@@ -3524,14 +3524,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None => ()
                                     }
                                 },
-                                Err(_) => info!("Main - rx_ui processing loop - track effect toggle window visibility - could not get lock on state"),
+                                Err(_) => debug!("Main - rx_ui processing loop - track effect toggle window visibility - could not get lock on state"),
                             };
                             if xid != 0 {
                                 match state.lock() {
                                     Ok(state) => {
                                         state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetEffectWindowId(effect_uuid, xid));
                                     },
-                                    Err(_) => info!("Could not get read only lock on state."),
+                                    Err(_) => debug!("Could not get read only lock on state."),
                                 }
                             }
                         },
@@ -3539,7 +3539,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 },
                 TrackChangeType::Volume(position, volume) => {
-                    info!("Received volume change: track={}, volume={}", track_uuid.clone().unwrap(), volume);
+                    debug!("Received volume change: track={}, volume={}", track_uuid.clone().unwrap(), volume);
                     if let Some(track_uuid) = track_uuid {
                         match state.lock() {
                             Ok(mut state) => {
@@ -3572,12 +3572,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::Volume(volume));
                                 state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(7, (volume * 127.0) as i32, midi_channel));
                             },
-                            Err(_) => info!("Could not get read only lock on state."),
+                            Err(_) => debug!("Could not get read only lock on state."),
                         }
                     }
                 }
                 TrackChangeType::Pan(position, pan) => {
-                    info!("Received pan change: track={}, pan={}", track_uuid.clone().unwrap(), pan);
+                    debug!("Received pan change: track={}, pan={}", track_uuid.clone().unwrap(), pan);
                     if let Some(track_uuid) = track_uuid {
                         match state.lock() {
                             Ok(mut state) => {
@@ -3610,7 +3610,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::Pan(pan));
                                 state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(14, (pan * 63.5 + 63.5) as i32, midi_channel));
                             },
-                            Err(_) => info!("Could not get read only lock on state."),
+                            Err(_) => debug!("Could not get read only lock on state."),
                         }
                     }
                 }
@@ -3629,7 +3629,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
                             },
-                            Err(_) => info!("Could not get read only lock on state."),
+                            Err(_) => debug!("Could not get read only lock on state."),
                         }
                     }
                 }
@@ -3654,7 +3654,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
                             },
-                            Err(_) => info!("Could not get read only lock on state."),
+                            Err(_) => debug!("Could not get read only lock on state."),
                         }
                     }
                 }
@@ -3724,7 +3724,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                         Err(error) => {
-                            info!("Problem locking state when routing midi to a track: {}", error);
+                            debug!("Problem locking state when routing midi to a track: {}", error);
                         }
                     }
                 }
@@ -3767,7 +3767,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                         Err(error) => {
-                            info!("Problem locking state when routing midi to a track: {}", error);
+                            debug!("Problem locking state when routing midi to a track: {}", error);
                         }
                     }
                 }
@@ -3812,7 +3812,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                         Err(error) => {
-                            info!("Problem locking state when routing midi to a track: {}", error);
+                            debug!("Problem locking state when routing midi to a track: {}", error);
                         }
                     }
                 }
@@ -3829,7 +3829,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                         Err(error) => {
-                            info!("Problem locking state when routing audio to a track: {}", error);
+                            debug!("Problem locking state when routing audio to a track: {}", error);
                         }
                     }
                 }
@@ -3872,12 +3872,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                         Err(error) => {
-                            info!("Problem locking state when routing audio to a track: {}", error);
+                            debug!("Problem locking state when routing audio to a track: {}", error);
                         }
                     }
                 }
                 TrackChangeType::TrackMoveToPosition(move_to_position) => {
-                    info!("Main - rx_ui processing loop - track move to position");
+                    debug!("Main - rx_ui processing loop - track move to position");
                     if let Some(track_uuid) = track_uuid {
                         let state_arc = state.clone();
                         match state.lock() {
@@ -3886,7 +3886,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 gui.clear_ui();
                                 gui.update_ui_from_state(tx_from_ui.clone(), &mut state, state_arc);
                             },
-                            Err(_) => info!("Main - rx_ui processing loop - track move to position - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - track move to position - could not get lock on state"),
                         };
                         gui.ui.riff_sets_box.queue_draw();
                     }
@@ -3906,7 +3906,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => (),
                             }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - riff translate event - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff translate event - could not get lock on state"),
                     }
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
                         if let Some(selected_riff_track_uuid) = selected_riff_track_uuid {
@@ -3934,7 +3934,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         _ => {}
                                     }
                                 }
-                                Err(_error) => println!("Main - rx_ui processing loop - riff translate event - could not get lock on state"),
+                                Err(_error) => debug!("Main - rx_ui processing loop - riff translate event - could not get lock on state"),
                             }
                         }
                     }
@@ -3953,7 +3953,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
                             }
-                            Err(_error) => println!("Main - rx_ui processing loop - riff reference change - could not get lock on state"),
+                            Err(_error) => debug!("Main - rx_ui processing loop - riff reference change - could not get lock on state"),
                         }
                     }
                 }
@@ -3965,7 +3965,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                 // TODO this needs to be shown in the UI
                             }
-                            Err(_error) => println!("Main - rx_ui processing loop - track details - could not get lock on state"),
+                            Err(_error) => debug!("Main - rx_ui processing loop - track details - could not get lock on state"),
                         }
                         if let Some((_, dialogue)) = gui.track_details_dialogues.iter().find(|(dialogue_track_uuid, _dialogue)| dialogue_track_uuid.to_string() == track_uuid) {
                             if show {
@@ -3995,24 +3995,24 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
                             }
-                            Err(_error) => println!("Main - rx_ui processing loop - update track details - could not get lock on state"),
+                            Err(_error) => debug!("Main - rx_ui processing loop - update track details - could not get lock on state"),
                         }
                     }
                 }
             },
-            DAWEvents::TrackEffectParameterChange(_, _) => info!("Event: TrackEffectParameterChange"),
-            DAWEvents::TrackInstrumentParameterChange(_) => info!("Event: TrackInstrumentParameterChange"),
-            DAWEvents::TrackSelectedPatternChange(_, _) => info!("Event: TrackSelectedPatternChange"),
-            DAWEvents::TranslateHorizontalChange(_) => info!("Event: TranslateHorizontalChange"),
-            DAWEvents::TranslateVerticalChange(_) => info!("Event: TranslateVerticalChange"),
-            DAWEvents::TransportChange(_, _, _) => info!("Event: TransportChange"),
-            DAWEvents::ViewAutomationChange(show_automation_events) => info!("Event: ViewAutomationChange: {}", show_automation_events),
-            DAWEvents::ViewNoteChange(show_note_events) => info!("Event: ViewNoteChange: {}", show_note_events),
-            DAWEvents::ViewPanChange(show_pan_events) => info!("Event: ViewPanChange: {}", show_pan_events),
-            DAWEvents::ViewVolumeChange(show_volume_events) => info!("Event: ViewVolumeChange: {}", show_volume_events),
-            DAWEvents::TrackGridOperationModeChange(_) => info!("Event: TrackGridOperationModeChange"),
-            DAWEvents::PianoRollOperationModeChange(_) => info!("Event: PianoRollOperationModeChange"),
-            DAWEvents::ControllerOperationModeChange(_) => info!("Event: ControllerOperationModeChange"),
+            DAWEvents::TrackEffectParameterChange(_, _) => debug!("Event: TrackEffectParameterChange"),
+            DAWEvents::TrackInstrumentParameterChange(_) => debug!("Event: TrackInstrumentParameterChange"),
+            DAWEvents::TrackSelectedPatternChange(_, _) => debug!("Event: TrackSelectedPatternChange"),
+            DAWEvents::TranslateHorizontalChange(_) => debug!("Event: TranslateHorizontalChange"),
+            DAWEvents::TranslateVerticalChange(_) => debug!("Event: TranslateVerticalChange"),
+            DAWEvents::TransportChange(_, _, _) => debug!("Event: TransportChange"),
+            DAWEvents::ViewAutomationChange(show_automation_events) => debug!("Event: ViewAutomationChange: {}", show_automation_events),
+            DAWEvents::ViewNoteChange(show_note_events) => debug!("Event: ViewNoteChange: {}", show_note_events),
+            DAWEvents::ViewPanChange(show_pan_events) => debug!("Event: ViewPanChange: {}", show_pan_events),
+            DAWEvents::ViewVolumeChange(show_volume_events) => debug!("Event: ViewVolumeChange: {}", show_volume_events),
+            DAWEvents::TrackGridOperationModeChange(_) => debug!("Event: TrackGridOperationModeChange"),
+            DAWEvents::PianoRollOperationModeChange(_) => debug!("Event: PianoRollOperationModeChange"),
+            DAWEvents::ControllerOperationModeChange(_) => debug!("Event: ControllerOperationModeChange"),
             DAWEvents::TransportGotoStart => {
                 match state.lock() {
                     Ok(mut state) => {
@@ -4058,7 +4058,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::GotoStart);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
@@ -4066,7 +4066,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.automation_drawing_area.queue_draw();
             }
             DAWEvents::TransportMoveBack => {
-                info!("Main - rx_ui processing loop - transport move back - received");
+                debug!("Main - rx_ui processing loop - transport move back - received");
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
@@ -4123,7 +4123,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
                 }
 
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -4147,7 +4147,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         state.set_playing_riff_set(None);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
                 };
                 match state.lock() {
                     Ok(state) => {
@@ -4160,12 +4160,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Stop);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
                 };
                 let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
                 match tx_to_audio.send(AudioLayerInwardEvent::Play(false, number_of_blocks, 0)) {
                     Ok(_) => (),
-                    Err(error) => info!("Problem using tx_to_audio to send message to jack layer when stopping play: {}", error),
+                    Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when stopping play: {}", error),
                 }
             }
             DAWEvents::TransportPlay => {
@@ -4206,7 +4206,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport play - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport play - could not get lock on state"),
                 };
             }
             DAWEvents::TransportRecordOn => {
@@ -4214,7 +4214,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.set_recording(true);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport record on - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport record on - could not get lock on state"),
                 };
             }
             DAWEvents::TransportRecordOff => {
@@ -4222,7 +4222,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.set_recording(false);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport record off - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport record off - could not get lock on state"),
                 };
             }
             DAWEvents::TransportPause => {
@@ -4234,11 +4234,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Pause);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport pause - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport pause - could not get lock on state"),
                 };
             }
             DAWEvents::TransportMoveForward => {
-                info!("Main - rx_ui processing loop - transport move forward - received");
+                debug!("Main - rx_ui processing loop - transport move forward - received");
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
@@ -4289,7 +4289,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
                 }
 
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -4306,7 +4306,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::GotoEnd);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - transport goto end - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - transport goto end - could not get lock on state"),
                 };
             }
             DAWEvents::PlayNoteImmediate(note) => {
@@ -4324,13 +4324,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         };
                                         state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel));
                                     },
-                                    None => info!("Play note immediate: Could not find track number."),
+                                    None => debug!("Play note immediate: Could not find track number."),
                                 }
                             },
-                            None => info!("Play note immediate: no track number given."),
+                            None => debug!("Play note immediate: no track number given."),
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
                 };
             },
             DAWEvents::StopNoteImmediate(note) => {
@@ -4348,13 +4348,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         };
                                         state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(note, midi_channel));
                                     },
-                                    None => info!("Stop note immediate: Could not find track number."),
+                                    None => debug!("Stop note immediate: Could not find track number."),
                                 }
                             },
-                            None => info!("Stop note immediate: no track number given."),
+                            None => debug!("Stop note immediate: no track number given."),
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - stop note immediate - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - stop note immediate - could not get lock on state"),
                 };
             },
             DAWEvents::TempoChange(tempo) => {
@@ -4381,17 +4381,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
                         }
                         for track in state.project().song().tracks().iter() {
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
                         }
                 },
-                    Err(_) => info!("Main - rx_ui processing loop - tempo change - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - tempo change - could not get lock on state"),
                 };
             },
             DAWEvents::Panic => {
-                info!("Sending note off messages to everything...");
+                debug!("Sending note off messages to everything...");
                 match state.lock() {
                     Ok(state) => for track in state.project().song().tracks().iter() {
                         let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
@@ -4409,23 +4409,23 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::MasterChannelChange(channel_change_type) => {
                 match channel_change_type {
                     MasterChannelChangeType::VolumeChange(volume) => {
-                        info!("Master channel volume change: {}", volume);
+                        debug!("Master channel volume change: {}", volume);
                         match tx_to_audio.send(AudioLayerInwardEvent::Volume(volume as f32)) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send master volume message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send master volume message to jack layer: {}", error),
                         }
                     },
                     MasterChannelChangeType::PanChange(pan) => {
-                        info!("Master channel pan change: {}", pan);
+                        debug!("Master channel pan change: {}", pan);
                         match tx_to_audio.send(AudioLayerInwardEvent::Pan(pan as f32)) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem using tx_to_audio to send master pan message to jack layer: {}", error),
+                            Err(error) => debug!("Problem using tx_to_audio to send master pan message to jack layer: {}", error),
                         }
                     },
                 }
             },
             DAWEvents::PlayPositionInBeats(play_position_in_beats) => {
-                info!("Received DAWEvents::PlayPositionInBeats");
+                debug!("Received DAWEvents::PlayPositionInBeats");
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
@@ -4442,7 +4442,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - play position in beats - could not get lock on state"),
                 };
             },
             DAWEvents::TrimAllNoteDurations => {
@@ -4466,7 +4466,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             }
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - trim all note durations - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - trim all note durations - could not get lock on state"),
                 };
             }
             DAWEvents::RiffSetAdd(uuid) => {
@@ -4518,16 +4518,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let song = state.get_project().song_mut();
                         match song.riff_set_mut(uuid.clone()) {
                             Some(riff_set) => riff_set.set_name(name.clone()),
-                            None => info!("Could not find the riff set to change the name of."),
+                            None => debug!("Could not find the riff set to change the name of."),
                         }
                         gui.update_available_riff_sets(&state);
                         gui.update_riff_set_name_in_riff_views(uuid, name);
                     },
-                    Err(error) => info!("Could not lock the state when trying to change a riff set name: {}", error),
+                    Err(error) => debug!("Could not lock the state when trying to change a riff set name: {}", error),
                 }
             },
             DAWEvents::RiffSetPlay(uuid) => {
-                info!("Main - rx_ui processing loop - riff set play: {}", uuid);
+                debug!("Main - rx_ui processing loop - riff set play: {}", uuid);
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
@@ -4535,16 +4535,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         state.play_riff_set(tx_to_audio, uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff set play - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff set play - could not get lock on state"),
                 };
             }
             DAWEvents::RiffSetTrackIncrementRiff(riff_set_uuid, track_uuid) => {
-                info!("Main - rx_ui processing loop - riff set track incr riff: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff set track incr riff: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.riff_set_increment_riff_for_track(riff_set_uuid.clone(), track_uuid.clone());
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff set track incr riff - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff set track incr riff - could not get lock on state"),
                 };
                 let drawing_area_widget_name = format!("{}_{}", riff_set_uuid.as_str(), track_uuid.as_str());
                 if let Some(riff_set_blade) = gui.ui.riff_sets_box.children().iter().find(|child| child.widget_name().to_string().contains(riff_set_uuid.as_str())) {
@@ -4558,12 +4558,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
             }
             DAWEvents::RiffSetTrackSetRiff(riff_set_uuid, track_uuid, riff_uuid) => {
-                info!("Main - rx_ui processing loop - riff set track set riff: riff set={}, track={}, riff={}", riff_set_uuid.as_str(), track_uuid.as_str(), riff_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff set track set riff: riff set={}, track={}, riff={}", riff_set_uuid.as_str(), track_uuid.as_str(), riff_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.riff_set_riff_for_track(riff_set_uuid, track_uuid, riff_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff set track set riff - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff set track set riff - could not get lock on state"),
                 };
                 gui.ui.riff_sets_box.queue_draw();
             }
@@ -4572,7 +4572,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.play_riff_sequence(tx_to_audio, riff_sequence_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence play - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence play - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
@@ -4582,7 +4582,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.get_project().song_mut().add_riff_sequence(RiffSequence::new_with_uuid(riff_sequence_uuid));
                         gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence add - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence add - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
@@ -4592,7 +4592,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.get_project().song_mut().remove_riff_sequence(riff_sequence_uuid);
                         gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence delete - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence delete - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
@@ -4604,75 +4604,75 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence name change - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence name change - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence move left: {}", riff_sequence_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence move left: {}", riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_sequence_move_left(riff_sequence_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence move left - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceMoveRight(riff_sequence_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence move right: {}", riff_sequence_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence move right: {}", riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_sequence_move_right(riff_sequence_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence move right - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid, riff_set_reference_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence - riff set add: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence - riff set add: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
                             riff_sequence.add_riff_set(riff_set_reference_uuid, riff_set_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence - riff set add - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set add - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetDelete(riff_sequence_uuid, riff_set_reference_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence - riff sequence delete: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence - riff sequence delete: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
                             riff_sequence.remove_riff_set(riff_set_reference_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence - riff set delete - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set delete - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetMoveLeft(riff_sequence_uuid, riff_set_reference_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence - riff set reference move left: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence - riff set reference move left: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
                             riff_sequence.riff_set_move_left(riff_set_reference_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence - riff set reference move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set reference move left - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetMoveRight(riff_sequence_uuid, riff_set_uuid) => {
-                info!("Main - rx_ui processing loop - riff sequence - riff set reference move right: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence - riff set reference move right: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
                             riff_sequence.riff_set_move_right(riff_set_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence - riff set reference move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set reference move right - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
@@ -4681,7 +4681,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement play - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement play - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
@@ -4697,7 +4697,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         state.get_project().song_mut().add_riff_arrangement(arrangement);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement add - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement add - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
@@ -4706,7 +4706,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.get_project().song_mut().remove_riff_arrangement(riff_arrangement_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement delete - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement delete - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
@@ -4717,123 +4717,123 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             riff_arrangement.set_name(name);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement name change - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement name change - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement move left: {}", riff_arrangement_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement move left: {}", riff_arrangement_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_arrangement_move_left(riff_arrangement_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement move left - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement move right: {}", riff_arrangement_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement move right: {}", riff_arrangement_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_arrangement_move_right(riff_arrangement_uuid);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement move right - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid, riff_set_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff set add: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff set add: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.add_item(RiffItem::new_with_uuid_string(item_uuid, RiffItemType::RiffSet, riff_set_uuid));
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff set add - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set add - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSetDelete(riff_arrangement_uuid, item_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff arrangement delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff arrangement delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.remove_item(item_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff set delete - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set delete - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSetMoveLeft(riff_arrangement_uuid, item_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff set move left: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff set move left: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.item_move_left(item_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff set move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set move left - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSetMoveRight(riff_arrangement_uuid, item_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff set move right: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff set move right: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.item_move_right(item_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff set move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set move right - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid, riff_sequence_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff sequence add: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence add: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.add_item(RiffItem::new_with_uuid_string(item_uuid, RiffItemType::RiffSequence, riff_sequence_uuid));
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff sequence add - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence add - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, item_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff sequence delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.remove_item(item_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff sequence delete - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence delete - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff sequence move left: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move left: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.item_move_left(riff_sequence_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff sequence move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move left - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
             DAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid) => {
-                info!("Main - rx_ui processing loop - riff arrangement - riff sequence move right: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move right: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.item_move_right(riff_sequence_uuid);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff arrangement - riff sequence move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move right - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
@@ -4848,7 +4848,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Kill);
                         }
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - Open File - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - Open File - could not get lock on state"),
                 }
                 match tx_to_audio.send(AudioLayerInwardEvent::Shutdown) {
                     Ok(_) => {}
@@ -4859,11 +4859,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match history_manager.lock() {
                     Ok(mut history_manager) => {
                         if let Err(error) = history_manager.undo(&mut state.clone()) {
-                            info!("{}", error);
+                            debug!("{}", error);
                         }
                     }
                     Err(_) => {
-                        info!("Couldn't lock the history manager!");
+                        debug!("Couldn't lock the history manager!");
                     }
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -4878,11 +4878,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match history_manager.lock() {
                     Ok(mut history_manager) => {
                         if let Err(error) = history_manager.redo(&mut state.clone()) {
-                            info!("{}", error);
+                            debug!("{}", error);
                         }
                     }
                     Err(_) => {
-                        info!("Couldn't lock the history manager.");
+                        debug!("Couldn't lock the history manager.");
                     }
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -4915,7 +4915,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         state.get_project().song_mut().samples_mut().insert(sample.uuid().to_string(), sample.clone());
                         state.sample_data_mut().insert(sample_data.uuid().to_string(), sample_data);
-                        println!("Added sample: id={}, text={}, uuid={}", sample.file_name(), sample.name(), sample.uuid());
+                        debug!("Added sample: id={}, text={}, uuid={}", sample.file_name(), sample.name(), sample.uuid());
 
                         // update the sample roll browser list store
                         gui.update_sample_roll_sample_browser(sample.uuid().to_string(), sample.name().to_string());
@@ -5022,22 +5022,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
             }
             DAWEvents::RiffSetMoveToPosition(riff_set_uuid, to_position_in_container) => {
-                info!("Main - rx_ui processing loop - riff set move to position: {}", riff_set_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff set move to position: {}", riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_set_move_to_position(riff_set_uuid, to_position_in_container);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff set move to position - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff set move to position - could not get lock on state"),
                 };
                 gui.ui.riff_sets_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid, riff_set_uuid, to_position_in_container) => {
-                info!("Main - rx_ui processing loop - riff sequence riff set move to position: {}", riff_set_uuid.as_str());
+                debug!("Main - rx_ui processing loop - riff sequence riff set move to position: {}", riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         state.get_project().song_mut().riff_sequence_riff_set_move_to_position(riff_sequence_uuid, riff_set_uuid, to_position_in_container);
                     },
-                    Err(_) => info!("Main - rx_ui processing loop - riff sequence riff set move to position - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence riff set move to position - could not get lock on state"),
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
@@ -5045,7 +5045,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.top_level_vbox.children().iter_mut() {
-                    println!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.allocation().height);
+                    debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.allocation().height);
                     track_panel.set_height_request(widget_height);
                 }
                 // gui.ui.track_panel_scrolled_window.queue_draw();
@@ -6700,8 +6700,8 @@ fn create_jack_event_processing_thread(
             .priority(ThreadPriority::Crossplatform(95.try_into().unwrap()))
             .spawn(move |result| {
                 match result {
-                    Ok(_) => info!("Thread set to max priority: 95."),
-                    Err(error) => info!("Could not set thread to max priority: {:?}.", error),
+                    Ok(_) => debug!("Thread set to max priority: 95."),
+                    Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
                 let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new() ;
 
@@ -6736,20 +6736,20 @@ fn create_jack_event_processing_thread(
                                                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
                                                         }
                                                         else {
-                                                            print!("Unknown jack midi event: ");
+                                                            debug!("Unknown jack midi event: ");
                                                             for event_byte in jack_midi_event.data.iter() {
-                                                                print!(" {}", event_byte);
+                                                                debug!(" {}", event_byte);
                                                             }
-                                                            println!();
+                                                            debug!("");
                                                         }
                                                     },
                                                     None => (),
                                                 };
                                             },
-                                            None => info!("Play note immediate: no track number given."),
+                                            None => debug!("Play note immediate: no track number given."),
                                         }
                                     },
-                                    Err(_) => info!("Main - jack_event_prcessing_thread processing loop - play note immediate - could not get lock on state"),
+                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - play note immediate - could not get lock on state"),
                                 };
                                 let mut selected_riff_uuid = None;
                                 let mut selected_riff_track_uuid = None;
@@ -6765,7 +6765,7 @@ fn create_jack_event_processing_thread(
                                             None => (),
                                         }
                                     },
-                                    Err(_) => info!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
+                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
                                 };
                                 match state.lock() {
                                     Ok(mut state) => {
@@ -6787,7 +6787,7 @@ fn create_jack_event_processing_thread(
                                                                         for riff in track.riffs_mut().iter_mut() {
                                                                             if riff.uuid().to_string() == *uuid {
                                                                                 if (144..=159).contains(&midi_msg_type) { //note on
-                                                                                    info!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                    debug!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
                                                                                     let note = Note::new_with_params(
                                                                                         tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
                                                                                     recorded_playing_notes.insert(note.note(), note.position());
@@ -6812,14 +6812,14 @@ fn create_jack_event_processing_thread(
                                                                                     recorded_playing_notes.remove(&note_number);
                                                                                 }
                                                                                 else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                                                                                    info!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                    debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
                                                                                     riff.events_mut().push(
                                                                                         TrackEvent::Controller(
                                                                                             Controller::new(
                                                                                                 tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
                                                                                 }
                                                                                 else if (224..=239).contains(&midi_msg_type) {
-                                                                                    info!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                    debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
                                                                                     riff.events_mut().push(
                                                                                         TrackEvent::PitchBend(
                                                                                             PitchBend::new_from_midi_bytes(
@@ -6830,7 +6830,7 @@ fn create_jack_event_processing_thread(
                                                                             }
                                                                         }
                                                                     },
-                                                                    None => info!("Jack midi receiver - no selected riff."),
+                                                                    None => debug!("Jack midi receiver - no selected riff."),
                                                                 }
                                                             },
                                                             TrackType::AudioTrack(_) => (),
@@ -6841,22 +6841,22 @@ fn create_jack_event_processing_thread(
 
                                                     if play_mode == PlayMode::RiffSet && riff_changed {
                                                         if let Some(playing_riff_set) = playing_riff_set {
-                                                            info!("RiffSet riff updated - now calling state.play_riff_set_update_track");
-                                                            state.play_riff_set_update_track(playing_riff_set, track_uuid);
+                                                            debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
+                                                            state.play_riff_set_update_track_as_riff(playing_riff_set, track_uuid);
                                                         }
                                                     }
                                                 },
-                                                None => info!("Record: no track number given."),
+                                                None => debug!("Record: no track number given."),
                                             }
                                         }
                                     },
-                                    Err(_) => info!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
+                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
                                 };
                                 }
                                 AudioLayerOutwardEvent::PlayPositionInFrames(play_position_in_frames) => {
                                 }
                                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
-                                    info!("Midi generic MMC event: ");
+                                    debug!("Midi generic MMC event: ");
                                     let command_byte = mmc_sysex_bytes[4];
                                     match command_byte {
                                         1 => {
@@ -6888,7 +6888,7 @@ fn create_jack_event_processing_thread(
                                                 Ok(state) => {
                                                     let recording = !state.recording();
                                                 },
-                                                Err(_) => info!("Main - jack_event_prcessing_thread processing loop - record - could not get lock on state"),
+                                                Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - record - could not get lock on state"),
                                             };
                                         }
                                         _ => {}
@@ -6928,7 +6928,7 @@ fn create_jack_event_processing_thread(
                                                 //     }
                                                 // }
                                             } else if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
-                                                info!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                                 // need to send some track volume (176) or pan (177) messages
                                                 let position_in_frames = jack_midi_event.delta_frames;
                                                 let position_in_beats = (position_in_frames as f64) / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
@@ -6946,7 +6946,7 @@ fn create_jack_event_processing_thread(
                                                     }
                                                 }
                                             } else {
-                                                info!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                             }
                                         }
                                         Err(_) => {}
@@ -7021,20 +7021,20 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
                     //                         }
                     //                         else {
-                    //                             print!("Unknown jack midi event: ");
+                    //                             debug!("Unknown jack midi event: ");
                     //                             for event_byte in jack_midi_event.data.iter() {
-                    //                                 print!(" {}", event_byte);
+                    //                                 debug!(" {}", event_byte);
                     //                             }
-                    //                             println!();
+                    //                             debug!("");
                     //                         }
                     //                     },
                     //                     None => (),
                     //                 };
                     //             },
-                    //             None => info!("Play note immediate: no track number given."),
+                    //             None => debug!("Play note immediate: no track number given."),
                     //         }
                     //     },
-                    //     Err(_) => info!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
+                    //     Err(_) => debug!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
                     // };
                     // let mut selected_riff_uuid = None;
                     // let mut selected_riff_track_uuid = None;
@@ -7050,7 +7050,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //             None => (),
                     //         }
                     //     },
-                    //     Err(_) => info!("Main - rx_ui processing loop - Record - could not get lock on state"),
+                    //     Err(_) => debug!("Main - rx_ui processing loop - Record - could not get lock on state"),
                     // };
                     // match state.lock() {
                     //     Ok(mut state) => {
@@ -7072,7 +7072,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //                                         for riff in track.riffs_mut().iter_mut() {
                     //                                             if riff.uuid().to_string() == *uuid {
                     //                                                 if (144..=159).contains(&midi_msg_type) { //note on
-                    //                                                     info!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                    //                                                     debug!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
                     //                                                     let note = Note::new_with_params(
                     //                                                         tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
                     //                                                     recorded_playing_notes.insert(note.note(), note.position());
@@ -7097,14 +7097,14 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //                                                     recorded_playing_notes.remove(&note_number);
                     //                                                 }
                     //                                                 else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                    //                                                     info!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                    //                                                     debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
                     //                                                     riff.events_mut().push(
                     //                                                         TrackEvent::Controller(
                     //                                                             Controller::new(
                     //                                                                 tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
                     //                                                 }
                     //                                                 else if (224..=239).contains(&midi_msg_type) {
-                    //                                                     info!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                    //                                                     debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
                     //                                                     riff.events_mut().push(
                     //                                                         TrackEvent::PitchBend(
                     //                                                             PitchBend::new_from_midi_bytes(
@@ -7115,7 +7115,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //                                             }
                     //                                         }
                     //                                     },
-                    //                                     None => info!("Jack midi receiver - no selected riff."),
+                    //                                     None => debug!("Jack midi receiver - no selected riff."),
                     //                                 }
                     //                             },
                     //                             TrackType::AudioTrack(_) => (),
@@ -7126,16 +7126,16 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
 
                     //                     if play_mode == PlayMode::RiffSet && riff_changed {
                     //                         if let Some(playing_riff_set) = playing_riff_set {
-                    //                             info!("RiffSet riff updated - now calling state.play_riff_set_update_track");
+                    //                             debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
                     //                             state.play_riff_set_update_track(playing_riff_set, track_uuid);
                     //                         }
                     //                     }
                     //                 },
-                    //                 None => info!("Record: no track number given."),
+                    //                 None => debug!("Record: no track number given."),
                     //             }
                     //         }
                     //     },
-                    //     Err(_) => info!("Main - rx_ui processing loop - Record - could not get lock on state"),
+                    //     Err(_) => debug!("Main - rx_ui processing loop - Record - could not get lock on state"),
                     // };
                     // // gui.ui.piano_roll_drawing_area.queue_draw();
                 }
@@ -7152,7 +7152,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
 
                             gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
 
-                            // info!("Play position in frames: {}", play_position_in_frames);
+                            // debug!("Play position in frames: {}", play_position_in_frames);
                             state.set_play_position_in_frames(play_position_in_frames);
                             if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                                 match piano_roll_grid.lock() {
@@ -7192,11 +7192,11 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                         track_grid_horiz_adj.set_value(track_grid_horiz_scroll_position - 300.0);
                                     }
                                     else {
-                                        info!("Couldn't lock the track_grid");
+                                        debug!("Couldn't lock the track_grid");
                                     }
                                 }
                                 else {
-                                    info!("Couldn't get the track_grid");
+                                    debug!("Couldn't get the track_grid");
                                 }
                             }
 
@@ -7204,10 +7204,10 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                 gui.repaint_riff_set_view_riff_set_active_drawing_areas(riff_set_uuid.as_str(), play_position_in_beats);
                             }
                             // else {
-                            //     // info!("Not playing riff set");
+                            //     // debug!("Not playing riff set");
                             // }
                         },
-                        Err(_) => info!("Main - rx_ui processing loop - play position - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - play position - could not get lock on state"),
                     }
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.sample_roll_drawing_area.queue_draw();
@@ -7215,7 +7215,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     gui.ui.automation_drawing_area.queue_draw();
                 }
                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
-                    // info!("Midi generic MMC event: ");
+                    // debug!("Midi generic MMC event: ");
                     // let command_byte = mmc_sysex_bytes[4];
                     // match command_byte {
                     //     1 => {
@@ -7248,7 +7248,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     //                 let recording = !state.recording();
                     //                 gui.ui.transport_record_button.set_active(recording);
                     //             },
-                    //             Err(_) => info!("Main - rx_ui processing loop - record - could not get lock on state"),
+                    //             Err(_) => debug!("Main - rx_ui processing loop - record - could not get lock on state"),
                     //         };
                     //     }
                     //     _ => {}
@@ -7288,7 +7288,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                     }
                                 }
                             } else if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
-                                // info!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                // debug!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                 // // need to send some track volume (176) or pan (177) messages
                                 // let position_in_frames = jack_midi_event.delta_frames;
                                 // let position_in_beats = (position_in_frames as f64) / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
@@ -7306,7 +7306,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                 //     }
                                 // }
                             } else {
-                                info!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                debug!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                             }
                         }
                         Err(_) => {}
@@ -7389,9 +7389,9 @@ fn process_track_background_processor_events(
                         TrackBackgroundProcessorOutwardEvent::InstrumentParameters(instrument_parameters) => {
                             let mut parameter_details = vec![];
                             let mut plugin_uuid = String::new();
-                            info!("Received instrument plugin parameter details.");
+                            debug!("Received instrument plugin parameter details.");
                             instrument_parameters.iter().for_each(|(param_index, _track_uuid_orig, plugin_uuid_orig, param_name, param_label, _param_value, param_text)| {
-                                // info!("Received plugin parameter details for: track uuid={}, plugin uuid={},  param - index={},  param - name={}, label={}, value={}, text={}",
+                                // debug!("Received plugin parameter details for: track uuid={}, plugin uuid={},  param - index={},  param - name={}, label={}, value={}, text={}",
                                 // track_uuid_orig, plugin_uuid_orig.clone(), param_index, param_name, param_label, param_value, param_text);
                                 plugin_uuid.clear();
                                 plugin_uuid.push_str(plugin_uuid_orig.to_string().as_str()); // plugin uuid
@@ -7405,11 +7405,11 @@ fn process_track_background_processor_events(
                             plugins_to_plugin_params_map.insert(plugin_uuid, parameter_details);
                         }
                         TrackBackgroundProcessorOutwardEvent::InstrumentName(name) => {
-                            info!("Main loop - received instrument name.");
+                            debug!("Main loop - received instrument name.");
                             track_instrument_names.insert(track_uuid.clone(), name);
                         }
                         TrackBackgroundProcessorOutwardEvent::EffectParameters(effect_params) => {
-                            info!("Received effects parameters: {:?}", effect_params);
+                            debug!("Received effects parameters: {:?}", effect_params);
                             let mut parameter_details = vec![];
                             let mut plugin_uuid = String::new();
                             effect_params.iter().for_each(|(plugin_id, param_index, param_name, param_label, _param_value, param_text)| {
@@ -7430,7 +7430,7 @@ fn process_track_background_processor_events(
                                 match track_type {
                                     TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
                                         if let Some(window) = vst_audio_plugin_windows.get(&track.instrument().uuid().to_string()) {
-                                            info!("Instrument plugin window resize requested: width={}, height={}", plugin_window_width, plugin_window_height);
+                                            debug!("Instrument plugin window resize requested: width={}, height={}", plugin_window_width, plugin_window_height);
                                             window.resize(plugin_window_width, plugin_window_height);
                                         }
                                     },
@@ -7452,7 +7452,7 @@ fn process_track_background_processor_events(
                             }));
                         },
                         TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(track_uuid, plugin_uuid, plugin_window_width, plugin_window_height) => {
-                            info!("Effect plugin requested window resize: width={}, height={}", plugin_window_width, plugin_window_height);
+                            debug!("Effect plugin requested window resize: width={}, height={}", plugin_window_width, plugin_window_height);
                             state.project().song().tracks().iter().for_each(|track_type| {
                                 match track_type {
                                     TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
@@ -7477,7 +7477,7 @@ fn process_track_background_processor_events(
                             track_render_audio_consumers.insert(track_render_audio_consumer.track_id().to_string(), track_render_audio_consumer);
                         }
                         TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid, left_channel_level, right_channel_level) => {
-                            // println!("Track: {}, left: {}, left in db: {}, right: {}, right in db: {}", track_uuid.as_str(), left_channel_level, left_channel_level.abs().log10() * 20.0, right_channel_level, right_channel_level.abs().log10() * 20.0);
+                            // debug!("Track: {}, left: {}, left in db: {}, right: {}, right in db: {}", track_uuid.as_str(), left_channel_level, left_channel_level.abs().log10() * 20.0, right_channel_level, right_channel_level.abs().log10() * 20.0);
                             for mixer_blade_widget in gui.ui.mixer_box.children().iter() {
                                 if mixer_blade_widget.widget_name() == track_uuid.as_str() {
                                     if let Some(mixer_blade) = mixer_blade_widget.dynamic_cast_ref::<Frame>() {
@@ -7551,7 +7551,7 @@ fn process_track_background_processor_events(
             let track_render_audio_consumer_uuids: Vec<String> = track_render_audio_consumers.iter().map(|(track_uuid, _)| track_uuid.to_string()).collect();
             for track_uuid in track_render_audio_consumer_uuids.iter() {
                 if let Some(track_render_audio_consumer) = track_render_audio_consumers.remove(&track_uuid.clone()) {
-                    info!("Received track_render_audio_consumer for track: {}", track_uuid.clone());
+                    debug!("Received track_render_audio_consumer for track: {}", track_uuid.clone());
                     if let Ok(mut track_render_audio_consumers) = state.track_render_audio_consumers_mut().lock() {
                         track_render_audio_consumers.insert(track_uuid.clone(), track_render_audio_consumer);
                     }
@@ -7581,7 +7581,7 @@ fn process_track_background_processor_events(
 
             // change the track instrument name
             for (track_uuid, name) in track_instrument_names.iter() {
-                info!("Trying to change instrument name: track={}, instrument name={}", track_uuid.clone(), name);
+                debug!("Trying to change instrument name: track={}, instrument name={}", track_uuid.clone(), name);
                 if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid.clone()) {
                     match track_type {
                         TrackType::InstrumentTrack(track) => {

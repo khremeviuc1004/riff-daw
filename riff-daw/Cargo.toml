@@ -28,7 +28,7 @@ flexi_logger = {version = "0.25.1", features=["async"]}
 log = "0.4.17"
 factor = "0.4.0"
 wav_io = "0.1.8"
-mlua = { versiorn = "0.8.3", features = ["lua54", "vendored", "macros"] }
+mlua = { version = "0.8.3", features = ["lua54", "vendored", "macros"] }
 sndfile = "0.1.1"
 samplerate-rs = "0.1.0"
 crossbeam = "0.8.2"

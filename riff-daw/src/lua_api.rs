@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{UserData, UserDataMethods};
 
+use log::*;
+
 use crate::{DAWEvents, DAWState, GeneralTrackType, TrackChangeType};
 use crate::DAWEvents::TrackChange;
 use crate::Track;
@@ -27,7 +29,7 @@ impl UserData for LuaState {
             match this.tx_from_ui.send(TrackChange(TrackChangeType::Added(GeneralTrackType::InstrumentTrack), None)) {
                 Ok(_) => {}
                 Err(_) => {
-                    println!("Could not send instrument track add track change event.");
+                    debug!("Could not send instrument track add track change event.");
                 }
             }
             Ok(())

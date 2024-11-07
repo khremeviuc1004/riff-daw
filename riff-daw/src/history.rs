@@ -27,8 +27,8 @@ pub trait HistoryAction {
             PlayMode::Song => {}
             PlayMode::RiffSet => {
                 if let Some(playing_riff_set) = playing_riff_set {
-                    info!("RiffSet riff updated - now calling state.play_riff_set_update_track");
-                    state.play_riff_set_update_track(playing_riff_set, track_uuid);
+                    debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
+                    state.play_riff_set_update_track_as_riff(playing_riff_set, track_uuid);
                 }
             }
             PlayMode::RiffSequence => {}
@@ -59,7 +59,7 @@ fn get_selected_track_riff_uuid(state: &mut Arc<Mutex<DAWState>>) -> (Option<Str
                 None => (),
             }
         },
-        Err(_) => info!("could not get lock on state"),
+        Err(_) => debug!("could not get lock on state"),
     };
     (selected_riff_uuid, selected_riff_track_uuid)
 }
@@ -78,7 +78,7 @@ impl HistoryManager {
     }
 
     pub fn apply(&mut self, state: &mut Arc<Mutex<DAWState>>, mut action: Box<dyn HistoryAction>) -> Result<Vec<DAWEvents>, String> {
-        println!("History - apply: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
+        debug!("History - apply: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         if self.head_index >= 0 && !self.history.is_empty() && (self.head_index as usize) != (self.history.len() - 1) {
             // delete everything above the head_index
             for index in (self.history.len() - 1)..(self.head_index as usize) {
@@ -92,7 +92,7 @@ impl HistoryManager {
     }
 
     pub fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        println!("History - undo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
+        debug!("History - undo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // decrement the current top of the history
         if self.history.len() > self.head_index as usize && self.head_index >= 0 {
             if let Some(action) = self.history.get_mut(self.head_index as usize ) {
@@ -100,18 +100,18 @@ impl HistoryManager {
                 action.undo(state)
             }
             else {
-                println!("Could not find action to undo.");
+                debug!("Could not find action to undo.");
                 Err("Could not find action to undo.".to_string())
             }
         }
         else {
-            println!("History head index greater than number of history items.");
+            debug!("History head index greater than number of history items.");
             Err("History head index greater than number of history items.".to_string())
         }
     }
 
     pub fn redo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        println!("History - redo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
+        debug!("History - redo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // get the current top of the history
         if self.head_index == -1 || ((self.head_index as usize) < (self.history.len() - 1)) {
             self.head_index += 1;
@@ -241,7 +241,7 @@ impl HistoryAction for RiffAddNoteAction {
                                         }
                                         self.check_riff_changed_and_playing(riff_uuid.clone(), &mut state, track_uuid.clone(), playing, play_mode, playing_riff_set, riff_changed);
                                     }
-                                    None => info!("problem getting selected riff index"),
+                                    None => debug!("problem getting selected riff index"),
                                 }
 
                                 break;
@@ -252,10 +252,10 @@ impl HistoryAction for RiffAddNoteAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("problem getting selected riff track number"),
+                    None => debug!("problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("could not get lock on state"),
+            Err(_) => debug!("could not get lock on state"),
         };
         Ok(vec![])
     }
@@ -287,17 +287,17 @@ impl HistoryAction for RiffAddNoteAction {
                                             }
                                         }
                                     }
-                                    None => info!("problem getting selected riff index"),
+                                    None => debug!("problem getting selected riff index"),
                                 }
                                 break;
                             }
                         }
 
                     },
-                    None => info!("problem getting selected riff track number"),
+                    None => debug!("problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("could not get lock on state"),
+            Err(_) => debug!("could not get lock on state"),
         };
         Ok(vec![])
     }
@@ -379,7 +379,7 @@ impl HistoryAction for RiffDeleteNoteAction {
                                                 if let Some(event) = note {
                                                     match event {
                                                         TrackEvent::Note(note) => {
-                                                            println!("delete note: position={}, note={}, velocity={}, duration={}", note.position(), note.note(), note.velocity(), note.length());
+                                                            debug!("delete note: position={}, note={}, velocity={}, duration={}", note.position(), note.note(), note.velocity(), note.length());
                                                             self.position = note.position();
                                                             self.velocity = note.velocity();
                                                             self.duration = note.length();
@@ -401,7 +401,7 @@ impl HistoryAction for RiffDeleteNoteAction {
                                             }
                                         }
                                     }
-                                    None => info!("problem getting selected riff index"),
+                                    None => debug!("problem getting selected riff index"),
                                 }
 
                                 break;
@@ -412,10 +412,10 @@ impl HistoryAction for RiffDeleteNoteAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("problem getting selected riff track number"),
+                    None => debug!("problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("could not get lock on state"),
+            Err(_) => debug!("could not get lock on state"),
         };
         Ok(vec![])
     }
@@ -450,17 +450,17 @@ impl HistoryAction for RiffDeleteNoteAction {
                                     }
                                 }
                             }
-                            None => info!("problem getting selected riff index"),
+                            None => debug!("problem getting selected riff index"),
                         }
 
                         if riff_changed {
                             state.dirty = true;
                         }
                     },
-                    None => info!("problem getting selected riff track number"),
+                    None => debug!("problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("could not get lock on state"),
+            Err(_) => debug!("could not get lock on state"),
         };
 
         Ok(vec![])
@@ -548,16 +548,16 @@ impl HistoryAction for RiffCutSelectedAction {
                                             state.dirty = true;
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff cut selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff cut selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff cut selected notes  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff cut selected notes  - problem getting selected riff track number"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff cut selected notes - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff cut selected notes - could not get lock on state"),
         }
 
         Ok(vec![])
@@ -595,16 +595,16 @@ impl HistoryAction for RiffCutSelectedAction {
                                             state.dirty = true;
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff undo cut selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff undo cut selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo cut selected notes  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff undo cut selected notes  - problem getting selected riff track number"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo cut selected notes - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo cut selected notes - could not get lock on state"),
         }
 
         Ok(vec![])
@@ -725,7 +725,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                             }
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff translate selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff translate selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
@@ -735,10 +735,10 @@ impl HistoryAction for RiffTranslateSelectedAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff translate selected  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff translate selected  - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff translate selected - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff translate selected - could not get lock on state"),
         };
 
         Ok(vec![])
@@ -820,7 +820,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                             }
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff translate selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff translate selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
@@ -830,10 +830,10 @@ impl HistoryAction for RiffTranslateSelectedAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo translate selected  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff undo translate selected  - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo translate - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo translate - could not get lock on state"),
         };
 
         Ok(vec![])
@@ -917,7 +917,7 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                                             }
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff lengthen selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff lengthen selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
@@ -927,10 +927,10 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff lengthen selected notes - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff lengthen selected notes - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff lengthen selected notes - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff lengthen selected notes - could not get lock on state"),
         }
 
         Ok(vec![])
@@ -976,7 +976,7 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                                             }
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff undo lengthen selected notes - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff undo lengthen selected notes - problem getting selected riff index"),
                                 }
                             },
                             None => ()
@@ -986,10 +986,10 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                             state.dirty = true;
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo lengthen selected notes - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff undo lengthen selected notes - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo lengthen selected notes - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo lengthen selected notes - could not get lock on state"),
         };
 
         Ok(vec![])
@@ -1055,9 +1055,9 @@ impl HistoryAction for RiffPasteSelectedAction {
                                                 copy_buffer.iter_mut().for_each(|event| {
                                                     let cloned_event = event.clone();
                                                     match cloned_event {
-                                                        TrackEvent::ActiveSense => info!("TrackChangeType::RiffPasteSelectedNotes ActiveSense not yet implemented!"),
-                                                        TrackEvent::AfterTouch => info!("TrackChangeType::RiffPasteSelectedNotes AfterTouch not yet implemented!"),
-                                                        TrackEvent::ProgramChange => info!("TrackChangeType::RiffPasteSelectedNotes ProgramChange not yet implemented!"),
+                                                        TrackEvent::ActiveSense => debug!("TrackChangeType::RiffPasteSelectedNotes ActiveSense not yet implemented!"),
+                                                        TrackEvent::AfterTouch => debug!("TrackChangeType::RiffPasteSelectedNotes AfterTouch not yet implemented!"),
+                                                        TrackEvent::ProgramChange => debug!("TrackChangeType::RiffPasteSelectedNotes ProgramChange not yet implemented!"),
                                                         TrackEvent::Note(mut note) => {
                                                             if self.notes.is_empty() {
                                                                 note.set_position(note.position() + self.edit_cursor_position_in_beats);
@@ -1068,13 +1068,13 @@ impl HistoryAction for RiffPasteSelectedAction {
 
                                                             riff_changed = true;
                                                         },
-                                                        TrackEvent::NoteOn(_) => info!("TrackChangeType::RiffPasteSelectedNotes NoteOn not yet implemented!"),
-                                                        TrackEvent::NoteOff(_) => info!("TrackChangeType::RiffPasteSelectedNotes NoteOff not yet implemented!"),
-                                                        TrackEvent::Controller(_) => info!("TrackChangeType::RiffPasteSelectedNotes Controller not yet implemented!"),
-                                                        TrackEvent::PitchBend(_pitch_bend) => info!("TrackChangeType::RiffPasteSelectedNotes PitchBend not yet implemented!"),
-                                                        TrackEvent::KeyPressure => info!("TrackChangeType::RiffPasteSelectedNotes KeyPressure not yet implemented!"),
-                                                        TrackEvent::AudioPluginParameter(_) => info!("TrackChangeType::RiffPasteSelectedNotes AudioPluginParameter not yet implemented!"),
-                                                        TrackEvent::Sample(_sample) => info!("TrackChangeType::RiffPasteSelectedNotes Sample not yet implemented!"),
+                                                        TrackEvent::NoteOn(_) => debug!("TrackChangeType::RiffPasteSelectedNotes NoteOn not yet implemented!"),
+                                                        TrackEvent::NoteOff(_) => debug!("TrackChangeType::RiffPasteSelectedNotes NoteOff not yet implemented!"),
+                                                        TrackEvent::Controller(_) => debug!("TrackChangeType::RiffPasteSelectedNotes Controller not yet implemented!"),
+                                                        TrackEvent::PitchBend(_pitch_bend) => debug!("TrackChangeType::RiffPasteSelectedNotes PitchBend not yet implemented!"),
+                                                        TrackEvent::KeyPressure => debug!("TrackChangeType::RiffPasteSelectedNotes KeyPressure not yet implemented!"),
+                                                        TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffPasteSelectedNotes AudioPluginParameter not yet implemented!"),
+                                                        TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffPasteSelectedNotes Sample not yet implemented!"),
                                                         TrackEvent::Measure(_) => {}
                                                         TrackEvent::NoteExpression(_) => {}
                                                         
@@ -1093,16 +1093,16 @@ impl HistoryAction for RiffPasteSelectedAction {
 
                                         self.check_riff_changed_and_playing(riff_uuid.to_string(), &mut state, track_uuid.to_string(), playing, play_mode, playing_riff_set, riff_changed);
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff paste selected - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff paste selected - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff references paste selected  - problem getting selected riff track number"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff paste selected - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff paste selected - could not get lock on state"),
         }
 
         Ok(vec![])
@@ -1137,16 +1137,16 @@ impl HistoryAction for RiffPasteSelectedAction {
 
                                         self.check_riff_changed_and_playing(riff_uuid.to_string(), &mut state, track_uuid.to_string(), playing, play_mode, playing_riff_set, riff_changed);
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff undo paste selected - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff undo paste selected - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo paste selected  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff undo paste selected  - problem getting selected riff track number"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo paste selected - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo paste selected - could not get lock on state"),
         }
         Ok(vec![])
     }
@@ -1236,16 +1236,16 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                             state.dirty = true;
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff quantise selected event - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff quantise selected event - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff quantise selected event  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff quantise selected event  - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff quantise selected - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff quantise selected - could not get lock on state"),
         };
 
         Ok(vec![])
@@ -1309,16 +1309,16 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                             state.dirty = true;
                                         }
                                     },
-                                    None => info!("Main - rx_ui processing loop - riff undo quantise selected event - problem getting selected riff index"),
+                                    None => debug!("Main - rx_ui processing loop - riff undo quantise selected event - problem getting selected riff index"),
                                 }
                             },
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo quantise selected event  - problem getting selected riff track number"),
+                    None => debug!("Main - rx_ui processing loop - riff undo quantise selected event  - problem getting selected riff track number"),
                 };
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo quantise selected - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo quantise selected - could not get lock on state"),
         };
 
         Ok(vec![])
@@ -1373,10 +1373,10 @@ impl HistoryAction for RiffAdd {
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff add  - problem getting selected riff track uuid"),
+                    None => debug!("Main - rx_ui processing loop - riff add  - problem getting selected riff track uuid"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff add - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff add - could not get lock on state"),
         }
 
         Ok(daw_events_to_propagate)
@@ -1400,10 +1400,10 @@ impl HistoryAction for RiffAdd {
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff undo add  - problem getting selected riff track uuid"),
+                    None => debug!("Main - rx_ui processing loop - riff undo add  - problem getting selected riff track uuid"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff undo add - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff undo add - could not get lock on state"),
         }
 
         Ok(daw_events_to_propagate)
@@ -1464,10 +1464,10 @@ impl HistoryAction for RiffDelete {
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff delete  - problem getting selected riff track uuid"),
+                    None => debug!("Main - rx_ui processing loop - riff delete  - problem getting selected riff track uuid"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff delete - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff delete - could not get lock on state"),
         }
 
         Ok(daw_events_to_propagate)
@@ -1494,10 +1494,10 @@ impl HistoryAction for RiffDelete {
                             None => ()
                         }
                     },
-                    None => info!("Main - rx_ui processing loop - riff delete undo  - problem getting selected riff track uuid"),
+                    None => debug!("Main - rx_ui processing loop - riff delete undo  - problem getting selected riff track uuid"),
                 }
             },
-            Err(_) => info!("Main - rx_ui processing loop - riff delete undo - could not get lock on state"),
+            Err(_) => debug!("Main - rx_ui processing loop - riff delete undo - could not get lock on state"),
         }
 
         Ok(daw_events_to_propagate)

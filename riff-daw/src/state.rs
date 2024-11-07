@@ -19,6 +19,7 @@ use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
 use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
+use crate::event::EventProcessorType;
 use crate::TrackType;
 
 extern {
@@ -162,7 +163,7 @@ impl DAWState {
             self.sample_data_mut().insert(sample_data_uuid.to_string(), sample_data.clone());
         }
 
-        info!("state.load_from_file() - number of riff sequences={}", self.project().song().riff_sequences().len());
+        debug!("state.load_from_file() - number of riff sequences={}", self.project().song().riff_sequences().len());
 
         {
             for track in self.get_project().song_mut().tracks_mut().iter_mut() {
@@ -226,7 +227,7 @@ impl DAWState {
                 Some(uuid) => {
                     self.instrument_track_senders_mut().insert(uuid, sender);
                 },
-                None => info!("Entry did not contain a uuid."),
+                None => debug!("Entry did not contain a uuid."),
             }
         }
 
@@ -235,7 +236,7 @@ impl DAWState {
                 Some(uuid) => {
                     self.instrument_track_receivers_mut().insert(uuid, receiver);
                 },
-                None => info!("Entry did not contain a uuid."),
+                None => debug!("Entry did not contain a uuid."),
             }
         }
     }
@@ -296,7 +297,7 @@ impl DAWState {
     
                         match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effect.uuid(), effect_details)) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem sending add effect: {}", error),
+                            Err(error) => debug!("Problem sending add effect: {}", error),
                         }
                     }
                     effect_presets
@@ -323,7 +324,7 @@ impl DAWState {
                                 match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
                                     vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, instrument_details)) {
                                     Ok(_) => {}
-                                    Err(error) => info!("Couldn't send instrument change event: {:?}", error)
+                                    Err(error) => debug!("Couldn't send instrument change event: {:?}", error)
                                 }
                                 let preset_data = instrument.preset_data();
                                 if !preset_data.is_empty() {
@@ -341,7 +342,7 @@ impl DAWState {
                 if let Some(preset_data) = preset {
                     match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::SetPresetData(String::from(preset_data), effect_presets)) {
                         Ok(_) => (),
-                        Err(error) => info!("Couldn't send instrument preset data: {:?}", error),
+                        Err(error) => debug!("Couldn't send instrument preset data: {:?}", error),
                     }
                 }
             },
@@ -458,10 +459,10 @@ impl DAWState {
                                 match sender.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
                                     vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, instrument_details)) {
                                     Ok(_) => (),
-                                    Err(error) => info!("{:?}", error),
+                                    Err(error) => debug!("{:?}", error),
                                 }
                             },
-                            None => info!("Couldn't send message to track!"),
+                            None => debug!("Couldn't send message to track!"),
                         };
                     }
                     break;
@@ -484,10 +485,10 @@ impl DAWState {
             Some(sender) => {
                 match sender.send(message) {
                     Ok(_) => (),
-                    Err(error) => info!("{:?}", error),
+                    Err(error) => debug!("{:?}", error),
                 }
             },
-            None => info!("Couldn't send message to track!"),
+            None => debug!("Couldn't send message to track!"),
         };
     }
 
@@ -546,18 +547,18 @@ impl DAWState {
     }
 
     fn request_presets_from_all_tracks(&mut self) {
-        info!("Entering request_presets_from_all_tracks...");
+        debug!("Entering request_presets_from_all_tracks...");
         let mut uuids = vec![];
         {
             for track_type in self.get_project().song_mut().tracks_mut() {
-                info!("Found track");
+                debug!("Found track");
                 match track_type {
                     TrackType::InstrumentTrack(track) => {
-                        info!("Adding instrument track uuid to vector: {}", track.uuid());
+                        debug!("Adding instrument track uuid to vector: {}", track.uuid());
                         uuids.push(track.uuid().to_string());
                     },
                     TrackType::AudioTrack(track) => {
-                        info!("Adding audio track uuid to vector: {}", track.uuid());
+                        debug!("Adding audio track uuid to vector: {}", track.uuid());
                         uuids.push(track.uuid().to_string());
                     },
                     TrackType::MidiTrack(_) => (),
@@ -567,24 +568,24 @@ impl DAWState {
 
         {
             for uuid in uuids {
-                info!("Found uuid in vector: {}", &uuid);
+                debug!("Found uuid in vector: {}", &uuid);
                 match self.instrument_track_senders_mut().get(&uuid) {
                     Some(sender) => {
-                        info!("State: requesting preset data from track with uuid: {}", uuid.clone());
+                        debug!("State: requesting preset data from track with uuid: {}", uuid.clone());
                         match sender.send(TrackBackgroundProcessorInwardEvent::RequestPresetData) {
                             Ok(_) => (),
-                            Err(error) => info!("Problem requesting vst preset data for track: {}", error),
+                            Err(error) => debug!("Problem requesting vst preset data for track: {}", error),
                         }
                     },
-                    None => info!("Could not find tx_to_vst thread for track."),
+                    None => debug!("Could not find tx_to_vst thread for track."),
                 }
             }
         }
-        info!("Exiting request_presets_from_all_tracks.");
+        debug!("Exiting request_presets_from_all_tracks.");
     }
 
     fn save_presets_for_all_tracks(&mut self) {
-        info!("Entering save_presets_for_all_tracks...");
+        debug!("Entering save_presets_for_all_tracks...");
         let mut presets = HashMap::new();
 
         {
@@ -599,10 +600,10 @@ impl DAWState {
                         if let Some((uuid, vst_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
                             match vst_outward_receiver.recv_timeout(Duration::from_secs(1)) {
                                 Ok(preset_data) => {
-                                    info!("Instrument track preset data received: {}", uuid.clone());
+                                    debug!("Instrument track preset data received: {}", uuid.clone());
                                     presets.insert(String::from(uuid.as_str()), preset_data);
                                 },
-                                Err(error) => info!("Problem receiving instrument track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
+                                Err(error) => debug!("Problem receiving instrument track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
                             }
                         }
                     },
@@ -610,10 +611,10 @@ impl DAWState {
                         if let Some((uuid, vst_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
                             match vst_outward_receiver.recv_timeout(Duration::from_secs(1)) {
                                 Ok(preset_data) => {
-                                    info!("Audio track preset data received: {}", uuid.clone());
+                                    debug!("Audio track preset data received: {}", uuid.clone());
                                     presets.insert(String::from(uuid.as_str()), preset_data);
                                 },
-                                Err(error) => info!("Problem receiving audio track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
+                                Err(error) => debug!("Problem receiving audio track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
                             }
                         }
                     },
@@ -634,7 +635,7 @@ impl DAWState {
                                     for effect_preset in effect_presets {
                                         match track.effects_mut().get_mut(index) {
                                             Some(effect) => effect.set_preset_data(effect_preset),
-                                            None => info!("Effect could not be found for effect preset data at index: {}", index),
+                                            None => debug!("Effect could not be found for effect preset data at index: {}", index),
                                         }
                                         index += 1;
                                     }
@@ -649,7 +650,7 @@ impl DAWState {
                                     for effect_preset in effect_presets {
                                         match track.effects_mut().get_mut(index) {
                                             Some(effect) => effect.set_preset_data(effect_preset),
-                                            None => info!("Effect could not be found for effect preset data at index: {}", index),
+                                            None => debug!("Effect could not be found for effect preset data at index: {}", index),
                                         }
                                         index += 1;
                                     }
@@ -662,42 +663,42 @@ impl DAWState {
                 }
             }
         }
-        info!("Exiting save_presets_for_all_tracks...");
+        debug!("Exiting save_presets_for_all_tracks...");
     }
 
     pub fn save(&mut self) {
-        info!("Entering save...");
+        debug!("Entering save...");
         self.request_presets_from_all_tracks();
         self.save_presets_for_all_tracks();
 
         self.get_project().song_mut().recalculate_song_length();
 
-        info!("state.save() - number of riff sequences={}", self.project().song().riff_sequences().len());
+        debug!("state.save() - number of riff sequences={}", self.project().song().riff_sequences().len());
 
         match serde_json::to_string_pretty(self.get_project()) {
             Ok(json_text) => {
                 match self.get_current_file_path() {
                     Some(path) => {
                         match std::fs::write(path.clone(), json_text) {
-                            Err(error) => info!("save failure writing to file: {}", error),
+                            Err(error) => debug!("save failure writing to file: {}", error),
                             _ => {
-                                info!("saved to file: {}", path);
+                                debug!("saved to file: {}", path);
                                 self.dirty = false;
                             }
                         };
                     },
-                    None => info!("No file path."),
+                    None => debug!("No file path."),
                 }
             },
             Err(error) => {
-                info!("can_serialise failure: {}",error);
+                debug!("can_serialise failure: {}",error);
             }
         };
-        info!("Exited save.");
+        debug!("Exited save.");
     }
 
     pub fn autosave(&mut self) {
-        info!("Entering autosave...");
+        debug!("Entering autosave...");
         self.request_presets_from_all_tracks();
         self.save_presets_for_all_tracks();
 
@@ -710,8 +711,8 @@ impl DAWState {
                         let autosave_path = format!("{}_{}.fdaw.xz", path, chrono::offset::Local::now().to_string());
                         if let Ok(compressed) = lzma::compress(json_text.as_bytes(), 6) {
                             match std::fs::write(autosave_path.clone(), compressed) {
-                                Err(error) => info!("save failure writing to file: {}", error),
-                                _ => info!("saved to file: {}", autosave_path)
+                                Err(error) => debug!("save failure writing to file: {}", error),
+                                _ => debug!("saved to file: {}", autosave_path)
                             };
                         }
                     }
@@ -719,18 +720,18 @@ impl DAWState {
                         let path = format!("/tmp/unknown_{}.fdaw.xz", chrono::offset::Local::now().to_string());
                         if let Ok(compressed) = lzma::compress(json_text.as_bytes(), 6) {
                             match std::fs::write(path.clone(), compressed) {
-                                Err(error) => info!("save failure writing to file: {}", error),
-                                _ => info!("saved to file: {}", path)
+                                Err(error) => debug!("save failure writing to file: {}", error),
+                                _ => debug!("saved to file: {}", path)
                             }
                         }
                     }
                 }
             }
             Err(error) => {
-                info!("autosave can't serialise project to JSON failure: {}",error);
+                debug!("autosave can't serialise project to JSON failure: {}",error);
             }
         };
-        info!("Exited autosave.");
+        debug!("Exited autosave.");
     }
 
     pub fn save_as(&mut self, path: &str) {
@@ -741,14 +742,14 @@ impl DAWState {
         match serde_json::to_string_pretty(self.get_project()) {
             Ok(json_text) => {
                 match std::fs::write(path, json_text) {
-                    Err(error) => info!("save as failure writing to file: {}", error),
+                    Err(error) => debug!("save as failure writing to file: {}", error),
                     _ => {
                         self.dirty = false;
                     }
                 };
             },
             Err(error) => {
-                info!("can_serialise failure: {}",error);
+                debug!("can_serialise failure: {}",error);
             }
         };
     }
@@ -1069,14 +1070,21 @@ impl DAWState {
         let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
-                Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play on: {}", error),
+                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play on: {}", error),
         }
 
         number_of_blocks
     }
 
     pub fn play_riff_set(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
-        info!("Playing riff set={}", riff_set_uuid.as_str());
+        debug!("Playing riff set={}", riff_set_uuid.as_str());
+
+        // self.play_riff_set_in_blocks(tx_to_audio, riff_set_uuid);
+        self.play_riff_set_as_riff(tx_to_audio, riff_set_uuid);
+    }
+
+    pub fn play_riff_set_in_blocks(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
+        debug!("Playing riff set in blocks={}", riff_set_uuid.as_str());
 
         let already_playing = self.playing();
 
@@ -1095,7 +1103,7 @@ impl DAWState {
 
         if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid.clone()) {
             let mut riff_lengths = vec![];
-            info!("Found riff set: uuid={}, name={}", riff_set_uuid.as_str(), riff_set.name());
+            debug!("Found riff set: uuid={}, name={}", riff_set_uuid.as_str(), riff_set.name());
 
             // get the number of repeats
             for track in self.project().song().tracks().iter() {
@@ -1135,7 +1143,7 @@ impl DAWState {
                         riffs.push(riff.clone());
                         let automation: Vec<TrackEvent> = vec![];
                         let track_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel);
-                        info!("Riff set # of blocks: {}", track_event_blocks.0.len());
+                        debug!("Riff set # of blocks: {}", track_event_blocks.0.len());
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, track_event_blocks.0.len() as i32));
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(track_event_blocks, true));
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(true));
@@ -1161,13 +1169,193 @@ impl DAWState {
         let number_of_blocks = (lowest_common_factor_in_beats as f64 / bpm * 60.0 * sample_rate / block_size) as i32;
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
-                Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play riff set on: {}", error),
+                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff set on: {}", error),
+        }
+    }
+
+    pub fn play_riff_set_as_riff(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
+        debug!("Playing riff set as riff={}", riff_set_uuid.as_str());
+
+        let already_playing = self.playing();
+
+        self.set_playing(true);
+        self.set_play_mode(PlayMode::RiffSet);
+        self.set_playing_riff_set(Some(riff_set_uuid.clone()));
+
+        let song = self.project().song();
+        let play_position_in_frames = 0;
+        let tracks = song.tracks();
+        let bpm = song.tempo();
+        let sample_rate = song.sample_rate();
+        let block_size = song.block_size();
+        let start_block = (play_position_in_frames as f64 / block_size) as i32;
+        let number_of_blocks = i32::MAX;
+
+        if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid.clone()) {
+            debug!("Found riff set: uuid={}, name={}", riff_set_uuid.as_str(), riff_set.name());
+
+            for track in self.project().song().tracks().iter() {
+                let mut riff_refs = vec![];
+                let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
+                    midi_track.midi_device().midi_channel()
+                }
+                else {
+                    0
+                };
+
+                if !already_playing {
+                    self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::RiffBufferEventProcessor));
+                }
+
+                // get the riff_ref
+                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                    let mut riff_reference = riff_ref.clone();
+                    riff_refs.push(riff_reference);
+
+                    // get the riff
+                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                        let mut riffs = vec![];
+                        riffs.push(riff.clone());
+
+                        let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
+
+                        for track_event in track_events.iter() {
+                            match track_event {
+                                TrackEvent::ActiveSense => debug!("After sense: position={}", track_event.position()),
+                                TrackEvent::AfterTouch => debug!("After touch: position={}", track_event.position()),
+                                TrackEvent::ProgramChange => debug!("Program change: position={}", track_event.position()),
+                                TrackEvent::Note(_) => debug!("Note: position={}", track_event.position()),
+                                TrackEvent::NoteOn(_) => debug!("Note on: position={}", track_event.position()),
+                                TrackEvent::NoteOff(_) => debug!("Note off: position={}", track_event.position()),
+                                TrackEvent::NoteExpression(_) => debug!("Note expression: position={}", track_event.position()),
+                                TrackEvent::Controller(_) => debug!("Controller: position={}", track_event.position()),
+                                TrackEvent::PitchBend(_) => debug!("Pitch bend: position={}", track_event.position()),
+                                TrackEvent::KeyPressure => debug!("Key pressure: position={}", track_event.position()),
+                                TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
+                                TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
+                                TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
+                            }
+                        }
+
+                        let track_event_blocks = vec![track_events];
+
+                        // TODO this needs to be patched in
+                        let automation: Vec<PluginParameter> = vec![];
+                        let automation_event_blocks = vec![automation];
+
+                        // let track_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel);
+                        debug!("Riff set # of blocks: {}", track_event_blocks.len());
+                        self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, number_of_blocks));
+                        self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents((track_event_blocks, automation_event_blocks), true));
+                        self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(true));
+                    }
+                    else {
+                        let track_event_blocks = (vec![], vec![]);
+                        self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(track_event_blocks, true));
+                    }
+                }
+                else {
+                    let track_event_blocks = (vec![], vec![]);
+                    self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(track_event_blocks, true));
+                }
+            }
+        }
+
+        if !already_playing {
+            for track in tracks {
+                self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));
+            }
+
+            match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
+                Ok(_) => (),
+                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff set as riff on: {}", error),
+            }
         }
     }
 
 
 
-    pub fn play_riff_set_update_track(&self, riff_set_uuid: String, track_uuid: String) {
+    pub fn play_riff_set_update_track_as_riff(&self, riff_set_uuid: String, track_uuid: String) {
+        let song = self.project().song();
+        let bpm = song.tempo();
+        let sample_rate = song.sample_rate();
+        let number_of_blocks = i32::MAX;
+
+
+        if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid) {
+            debug!("state.play_riff_set_update_track: found riff set");
+            for track in self.project().song().tracks().iter() {
+                if track.uuid().to_string() == track_uuid {
+                    debug!("state.play_riff_set_update_track_as_riff: found track");
+                    let mut riff_refs = vec![];
+                    let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
+                        midi_track.midi_device().midi_channel()
+                    }
+                    else {
+                        0
+                    };
+
+                    // get the riff_ref
+                    if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                        let mut riff_reference = riff_ref.clone();
+                        riff_refs.push(riff_reference);
+
+                        // get the riff
+                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                            let mut riffs = vec![];
+                            riffs.push(riff.clone());
+
+                            let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
+
+                            for track_event in track_events.iter() {
+                                match track_event {
+                                    TrackEvent::ActiveSense => debug!("After sense: position={}", track_event.position()),
+                                    TrackEvent::AfterTouch => debug!("After touch: position={}", track_event.position()),
+                                    TrackEvent::ProgramChange => debug!("Program change: position={}", track_event.position()),
+                                    TrackEvent::Note(_) => debug!("Note: position={}", track_event.position()),
+                                    TrackEvent::NoteOn(_) => debug!("Note on: position={}", track_event.position()),
+                                    TrackEvent::NoteOff(_) => debug!("Note off: position={}", track_event.position()),
+                                    TrackEvent::NoteExpression(_) => debug!("Note expression: position={}", track_event.position()),
+                                    TrackEvent::Controller(_) => debug!("Controller: position={}", track_event.position()),
+                                    TrackEvent::PitchBend(_) => debug!("Pitch bend: position={}", track_event.position()),
+                                    TrackEvent::KeyPressure => debug!("Key pressure: position={}", track_event.position()),
+                                    TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
+                                    TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
+                                    TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
+                                }
+                            }
+
+                            let track_event_blocks = vec![track_events];
+
+                            // TODO this needs to be patched in
+                            let automation: Vec<PluginParameter> = vec![];
+                            let automation_event_blocks = vec![automation];
+
+                            debug!("Riff set # of blocks: {}", track_event_blocks.len());
+                            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, number_of_blocks));
+                            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents((track_event_blocks, automation_event_blocks), true));
+                            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(true));
+                        }
+                        else {
+                            let vst_event_blocks = (vec![], vec![]);
+                            debug!("state.play_riff_set_update_track_as_riff: sending message to vst - set events without data");
+                            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
+                        }
+                    }
+                    else {
+                        let vst_event_blocks = (vec![], vec![]);
+                        debug!("state.play_riff_set_update_track_as_riff: sending message to vst - set events without data");
+                        self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+
+
+    pub fn play_riff_set_update_track_in_blocks(&self, riff_set_uuid: String, track_uuid: String) {
         let song = self.project().song();
         let bpm = song.tempo();
         let sample_rate = song.sample_rate();
@@ -1176,7 +1364,7 @@ impl DAWState {
 
 
         if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid) {
-            info!("state.play_riff_set_update_track: found riff set");
+            debug!("state.play_riff_set_update_track_in_blocks: found riff set");
             let mut riff_lengths = vec![];
 
             // get the number of repeats
@@ -1196,7 +1384,7 @@ impl DAWState {
 
             for track in self.project().song().tracks().iter() {
                 if track.uuid().to_string() == track_uuid {
-                    info!("state.play_riff_set_update_track: found track");
+                    debug!("state.play_riff_set_update_track_in_blocks: found track");
                     let mut riff_refs = vec![];
                     let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
                         midi_track.midi_device().midi_channel()
@@ -1219,18 +1407,18 @@ impl DAWState {
                             riffs.push(riff.clone());
                             let automation: Vec<TrackEvent> = vec![];
                             let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel);
-                            info!("state.play_riff_set_update_track: sending message to vst - set events with data");
+                            debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events with data");
                             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
                         }
                         else {
                             let vst_event_blocks = (vec![], vec![]);
-                            info!("state.play_riff_set_update_track: sending message to vst - set events without data");
+                            debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events without data");
                             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
                         }
                     }
                     else {
                         let vst_event_blocks = (vec![], vec![]);
-                        info!("state.play_riff_set_update_track: sending message to vst - set events without data");
+                        debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events without data");
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
                     }
                     break;
@@ -1309,6 +1497,9 @@ impl DAWState {
 
     pub fn play_riff_sequence(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_sequence_uuid: String) {
         let song_length_in_beats = 400.0;
+
+        let already_playing = self.playing();
+
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffSequence);
         let song = self.project().song();
@@ -1328,13 +1519,17 @@ impl DAWState {
                 let track_riff_refs: Vec<RiffReference> = vec![];
                 track_riff_refs_map.insert(track.uuid().to_string(), track_riff_refs);
                 track_running_position.insert(track.uuid().to_string(), 0.0);
+
+                if !already_playing {
+                    self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
+                }
             }
 
             self.get_riff_sequence_play_events(riff_sequence, &mut track_riff_refs_map, &mut track_running_position);
 
             // convert and send events
             for track in self.project().song().tracks().iter() {
-                info!("Track: uuid={} - ", track.uuid().to_string());
+                debug!("Track: uuid={} - ", track.uuid().to_string());
 
                 let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
                     midi_track.midi_device().midi_channel()
@@ -1348,9 +1543,9 @@ impl DAWState {
                     Some(riff_refs) => riff_refs,
                 };
                 for riff_ref in riff_refs.iter() {
-                    info!("Riff ref: uuid={}, position={}, length={} - ", riff_ref.uuid().to_string(), riff_ref.position(), riff_ref.linked_to());
+                    debug!("Riff ref: uuid={}, position={}, length={} - ", riff_ref.uuid().to_string(), riff_ref.position(), riff_ref.linked_to());
                 }
-                info!("");
+                debug!("");
                 let automation: Vec<TrackEvent> = vec![];
                 let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
                                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
@@ -1368,7 +1563,7 @@ impl DAWState {
         // set the start block and the number of blocks in the jack audio layer
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
-                Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play riff sequence on: {}", error),
+                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff sequence on: {}", error),
         }
     }
 
@@ -1377,7 +1572,7 @@ impl DAWState {
     pub fn get_riff_sequence_play_events(&self, riff_sequence: &RiffSequence, track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>, track_running_position: &mut HashMap<String, f64>) {
         for riff_set_reference in riff_sequence.riff_sets().iter() {
             if let Some(riff_set) = self.project().song().riff_set(riff_set_reference.item_uuid().to_string()) {
-                info!("state.play_sequence: riff set name={}", riff_set.name());
+                debug!("state.play_sequence: riff set name={}", riff_set.name());
                 self.get_riff_set_play_events(riff_set, track_riff_refs_map, track_running_position);
             }
         }
@@ -1440,6 +1635,9 @@ impl DAWState {
 
     pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String) {
         let song_length_in_beats = 400.0;
+
+        let already_playing = self.playing();
+
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffArrangement);
         let song = self.project().song();
@@ -1460,6 +1658,10 @@ impl DAWState {
                 let track_riff_refs: Vec<RiffReference> = vec![];
                 track_riff_refs_map.insert(track.uuid().to_string(), track_riff_refs);
                 track_running_position.insert(track.uuid().to_string(), 0.0);
+
+                if !already_playing {
+                    self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
+                }
             }
 
             // process all the items in the arrangement
@@ -1510,14 +1712,14 @@ impl DAWState {
         // set the start block and the number of blocks in the jack audio layer
         match tx_to_audio.send(AudioLayerInwardEvent::Play(true, number_of_blocks, start_block)) {
                 Ok(_) => (),
-                Err(error) => info!("Problem using tx_to_audio to send message to jack layer when turning play riff arrangement on: {}", error),
+                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff arrangement on: {}", error),
         }
     }
 
 
 
     pub fn riff_set_increment_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String) {
-        info!("state.riff_set_increment_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
+        debug!("state.riff_set_increment_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
         // get the track
         let riff_uuids: Vec<String> = match self.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
             Some(track) => {
@@ -1558,7 +1760,7 @@ impl DAWState {
     }
 
     pub fn riff_set_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String, riff_uuid: String) {
-        info!("state.riff_set_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
+        debug!("state.riff_set_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
         if let Some(riff_set) = self.get_project().song_mut().riff_set_mut(riff_set_uuid) {
             // get the current riff_ref for the track
             if let Some(riff_ref) = riff_set.get_riff_ref_for_track_mut(track_uuid.clone()) {
@@ -1649,7 +1851,7 @@ impl DAWState {
     }
 
     pub fn jack_connection_add(&mut self, from_name: String, to_name: String) {
-        info!("Jack connection added: from={}, to={}", from_name.as_str(), to_name.as_str());
+        debug!("Jack connection added: from={}, to={}", from_name.as_str(), to_name.as_str());
         if let Some(jack_client) = self.jack_client.get(0) {
             let _ = jack_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());
         }
@@ -1657,7 +1859,7 @@ impl DAWState {
     }
 
     pub fn jack_midi_connection_add(&mut self, track_uuid: String, to_name: String) {
-        info!("Jack midi connection added: track={}, to={}", track_uuid.as_str(), to_name.as_str());
+        debug!("Jack midi connection added: track={}, to={}", track_uuid.as_str(), to_name.as_str());
         if let Some(jack_client) = self.jack_client.get(0) {
             let _ = jack_client.as_client().connect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
         }
@@ -1665,7 +1867,7 @@ impl DAWState {
     }
 
     pub fn jack_midi_connection_remove(&mut self, track_uuid: String, to_name: String) {
-        info!("Jack midi connection removed: track={}, to={}", track_uuid.as_str(), to_name.as_str());
+        debug!("Jack midi connection removed: track={}, to={}", track_uuid.as_str(), to_name.as_str());
         if let Some(jack_client) = self.jack_client.get(0) {
             let _ = jack_client.as_client().disconnect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
         }
@@ -1715,7 +1917,7 @@ impl DAWState {
 
                         for (_track_uuid, track_audio_consumer_details) in track_render_audio_consumers.iter() {
                             if let Some(blocks_read) = track_audio_consumer_details.consumer().read_blocking(&mut audio_blocks) {
-                                // info!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
+                                // debug!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
                                 // copy the track channel data to the the master channels
                                 if blocks_read == 1 {
                                     let audio_block = audio_blocks.get(0).unwrap();

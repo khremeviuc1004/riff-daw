@@ -1053,6 +1053,7 @@ impl DAWState {
                 0
             };
             let vst_event_blocks = DAWUtils::convert_to_event_blocks(track.automation().events(), track.riffs(), track.riff_refs(), bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
+            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
 
             if found_active_loop {

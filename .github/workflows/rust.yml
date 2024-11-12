@@ -33,17 +33,17 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: riff-daw
         path: ./target/release/riff-daw
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: vst_checker
         path: ./target/release/vst_checker
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: clap_checker
         path: ./target/release/clap_checker

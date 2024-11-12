@@ -840,7 +840,7 @@ impl DAWUtils {
 
         let mut running_position_in_beats = position_in_beats;
         for riff_set_reference in riff_set_references.iter() {
-            running_position_in_beats = DAWUtils::copy_riff_set_to_position(riff_set_reference.uuid(), running_position_in_beats, state.clone());
+            running_position_in_beats = DAWUtils::copy_riff_set_to_position(riff_set_reference.item_uuid().to_string(), running_position_in_beats, state.clone());
         }
 
         running_position_in_beats

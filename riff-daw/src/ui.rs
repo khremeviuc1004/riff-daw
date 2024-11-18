@@ -1003,6 +1003,9 @@ impl MainWindow {
             riff_sets_box.remove(child);
         });
 
+        // remove riff sequences from riff sequences combo
+        self.ui.sequence_combobox.clear();
+
         // remove riff sequence track panels
         let children = &mut self.ui.riff_sequences_track_panel.children();
         for child in children {
@@ -1014,6 +1017,9 @@ impl MainWindow {
         self.ui.riff_sequences_box.foreach(move |child| {
             riff_sequences_box.remove(child);
         });
+
+        // remove riff arrangements from riff arrangements combo
+        self.ui.arrangements_combobox.clear();
 
         // remove riff arrangement track panels
         let children = &mut self.ui.riff_arrangement_track_panel.children();
@@ -6057,10 +6063,16 @@ impl MainWindow {
                 }
             }
             RiffSetType::RiffSequence(_) => {
-
+                riff_set_blade_head.riff_set_blade_record.hide();
+                riff_set_blade_head.riff_set_blade_copy.hide();
+                riff_set_blade_head.riff_set_copy_to_track_view_btn.hide();
             }
             RiffSetType::RiffArrangement(_) => {
-
+                riff_set_blade_head.riff_set_blade_record.hide();
+                riff_set_blade_head.riff_set_blade_copy.hide();
+                // riff_set_blade_head.riff_set_blade_delete.hide();
+                riff_set_blade_head.riff_set_copy_to_track_view_btn.hide();
+                // riff_set_blade_head.riff_set_drag_btn.hide();
             }
         }
 
@@ -6076,13 +6088,13 @@ impl MainWindow {
             riff_set_blade_head.riff_set_blade_delete.connect_clicked(move |_| {
                 let riff_set_uuid = blade_head.widget_name().to_string();
 
-                if let RiffSetType::RiffArrangement(_) = riff_set_type {
-                    rs_box.remove(&blade_box)
-                }
-                else {
-                    rs_heads_box.remove(&blade_head);
-                    rs_box.remove(&blade)
-                }
+                // if let RiffSetType::RiffArrangement(_) = riff_set_type {
+                //     rs_box.remove(&blade_box)
+                // }
+                // else {
+                //     rs_heads_box.remove(&blade_head);
+                //     rs_box.remove(&blade)
+                // }
 
                 match riff_set_type.clone() {
                     RiffSetType::RiffSet => {
@@ -6099,6 +6111,7 @@ impl MainWindow {
                         }
                     }
                     RiffSetType::RiffArrangement(riff_set_arrangement_uuid) => {
+                        rs_box.remove(&blade_box);
                         let event_to_send = DAWEvents::RiffArrangementRiffSetDelete(riff_set_arrangement_uuid, riff_set_instance_id.clone());
                         match tx_from_ui.send(event_to_send) {
                             Ok(_) => (),
@@ -6235,6 +6248,21 @@ impl MainWindow {
         (riff_set_blade_head, riff_set_blade)
     }
 
+    pub fn delete_riff_set_blade(&mut self, riff_set_uuid: String) {
+        for child in self.ui.riff_set_heads_box.children().iter() {
+            if child.widget_name().to_string() == riff_set_uuid {
+                self.ui.riff_set_heads_box.remove(child);
+                break;
+            }
+        }
+        for child in self.ui.riff_sets_box.children().iter() {
+            if child.widget_name().to_string() == riff_set_uuid {
+                self.ui.riff_sets_box.remove(child);
+                break;
+            }
+        }
+    }
+
     pub fn setup_riff_sequences_view(
         &mut self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
@@ -6255,6 +6283,7 @@ impl MainWindow {
                         riff_sequences_box.clone(),
                         tx_from_ui.clone(),
                         state_arc.clone(),
+                        None,
                         None,
                         None,
                         true,
@@ -6307,6 +6336,7 @@ impl MainWindow {
         state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
         riff_sequence_uuid: Option<String>,
+        reference_item_uuid: Option<String>,
         send_riff_sequence_add_message: bool,
         riff_sequence_type: RiffSequenceType,
         selected_track_style_provider: CssProvider,
@@ -6335,7 +6365,16 @@ impl MainWindow {
 
         let riff_set_type = match riff_sequence_type.clone() {
             RiffSequenceType::RiffSequence => RiffSetType::RiffSequence(uuid.to_string()),
-            RiffSequenceType::RiffArrangement(riff_sequence_uuid) => RiffSetType::RiffArrangement(riff_sequence_uuid),
+            RiffSequenceType::RiffArrangement(riff_sequence_uuid) => {
+                riff_sequence_blade.riff_sequence_blade_delete.hide();
+                riff_sequence_blade.riff_sequence_blade_record.hide();
+                riff_sequence_blade.riff_sequence_blade_copy.hide();
+                riff_sequence_blade.riff_sequence_copy_to_track_view_btn.hide();
+                riff_sequence_blade.riff_sequence_drag_btn.hide();
+                riff_sequence_blade.riff_set_combobox.hide();
+                riff_sequence_blade.add_riff_set_btn.hide();
+                RiffSetType::RiffArrangement(riff_sequence_uuid)
+            },
         };
         MainWindow::setup_riff_set_drag_and_drop(
             riff_sequence_blade.riff_set_head_box.clone(), 
@@ -6451,17 +6490,22 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let riff_sequences_box = riff_sequences_box.clone();
             let riff_sequence_type = riff_sequence_type.clone();
+            let reference_item_uuid = reference_item_uuid.clone();
             riff_sequence_blade.riff_sequence_blade_delete.connect_clicked(move |_| {
                 let riff_sequence_uuid = blade.widget_name().to_string();
 
-                // delete riff sequence blade from the UI
-                if let Some(riff_sequence_blade) = riff_sequences_box.children().iter().find(|widget| widget.widget_name() == riff_sequence_uuid) {
-                    riff_sequences_box.remove(riff_sequence_blade);
-                }
-
                 let event_to_send = match riff_sequence_type.clone() {
                     RiffSequenceType::RiffSequence => DAWEvents::RiffSequenceDelete(riff_sequence_uuid),
-                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, riff_sequence_uuid),
+                    RiffSequenceType::RiffArrangement(riff_arrangement_uuid) => {
+                        riff_sequences_box.remove(&blade);
+                        let reference_item_uuid = if let Some(uuid) = reference_item_uuid.clone() {
+                            uuid
+                        }
+                        else {
+                            riff_sequence_uuid // not correct but need to return a dummy value which will prevent anything from being deleted
+                        };
+                        DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, reference_item_uuid)
+                    },
                 };
 
                 match tx_from_ui.send(event_to_send) {
@@ -6573,6 +6617,34 @@ impl MainWindow {
         riff_sequence_blade
     }
 
+
+    pub fn update_riff_sequences_combobox_in_riff_sequence_view(
+        &mut self,
+        state: &DAWState,
+    ) {
+        // get the available riff sequences
+        let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
+
+        // update the riff sequences in the update_riff_sequences_combobox_in_riff_sequence_view the riff sequence view
+        self.ui.sequence_combobox.remove_all();
+        for riff_sequence_details in riff_sequences.iter() {
+            self.ui.sequence_combobox.append(Some(riff_sequence_details.0.as_str()), riff_sequence_details.1.as_str());
+        }
+        if self.ui.sequence_combobox.children().len() > 0 {
+            self.ui.sequence_combobox.set_active(Some(0));
+        }
+    }
+
+
+    pub fn delete_riff_sequence_blade(&mut self, riff_sequence_uuid: String) {
+        for child in self.ui.riff_sequences_box.children().iter() {
+            if child.widget_name().to_string() == riff_sequence_uuid {
+                self.ui.riff_sequences_box.remove(child);
+                break;
+            }
+        }
+    }
+
     pub fn setup_riff_arrangements_view(
         &mut self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
@@ -6580,6 +6652,7 @@ impl MainWindow {
     ) {
         {
             let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
+            let riff_arrangements_combobox = self.ui.arrangements_combobox.clone();
             let new_arrangement_name_entry = self.ui.new_arrangement_name_entry.clone();
             let arrangement_sequence_combobox = self.ui.arrangements_combobox.clone();
             let state_arc = state_arc.clone();
@@ -6592,6 +6665,7 @@ impl MainWindow {
                 if new_arrangement_name_entry.text().len() > 0 {
                     let riff_arrangement_blade = MainWindow::add_riff_arrangement_blade(
                         riff_arrangement_box.clone(),
+                        riff_arrangements_combobox.clone(),
                         tx_from_ui.clone(),
                         state_arc.clone(),
                         None,
@@ -6655,6 +6729,7 @@ impl MainWindow {
 
     fn add_riff_arrangement_blade(
         riff_arrangements_box: Box,
+        riff_arrangements_combobox: ComboBoxText,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
@@ -6828,6 +6903,7 @@ impl MainWindow {
                                 state_arc.clone(),
                                 Some(riff_sets),
                                 Some(riff_sequence_uuid.to_string()),
+                                Some(item_uuid.to_string()),
                                 false,
                                 RiffSequenceType::RiffArrangement(riff_arrangement_uuid.clone()),
                                 selected_track_style_provider.clone(),
@@ -6879,11 +6955,25 @@ impl MainWindow {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
             let riff_arrangements_box = riff_arrangements_box.clone();
+            let riff_arrangements_combobox = riff_arrangements_combobox.clone();
             riff_arrangement_blade.riff_arrangement_blade_delete.connect_clicked(move |_| {
                 let riff_arrangement_uuid = blade.widget_name().to_string();
 
                 // delete riff arrangement blade from the UI
                 if let Some(riff_arrangement_blade) = riff_arrangements_box.children().iter().find(|widget| widget.widget_name() == riff_arrangement_uuid) {
+                    if let Some(active_id) = riff_arrangements_combobox.active_id() {
+                        if active_id.to_string() == riff_arrangement_uuid {
+                            if let Some(active_position) = riff_arrangements_combobox.active() {
+                                // remove the riff arrangement from the arrangements_combobox
+                                gtk::prelude::ComboBoxTextExt::remove(&riff_arrangements_combobox, active_position as i32);
+                                // set the first riff arrangement in the arrangements_combobox as visible
+                                if riff_arrangements_combobox.children().len() > 0 {
+                                    riff_arrangements_combobox.set_active(Some(0));
+                                }
+                            }
+                        }
+                    }
+                    // remove the riff arrangement blade from the riff_arrangement_box
                     riff_arrangements_box.remove(riff_arrangement_blade);
                 }
 
@@ -7397,41 +7487,92 @@ impl MainWindow {
         }
 
         // collect the track uuids
+        let mut track_uuids = Self::collect_track_uuids(state);
+
+        self.update_riff_sets(&tx_from_ui, state, &state_arc, &mut track_uuids);
+        self.update_riff_sequences(&tx_from_ui, state, &state_arc, &mut track_uuids, false);
+        self.update_riff_arrangements(tx_from_ui, state, state_arc, track_uuids, false);
+        self.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+
+        debug!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
+    }
+
+    pub fn collect_track_uuids(state: &mut DAWState) -> Vec<String> {
         let mut track_uuids = vec![];
         for track in state.project().song().tracks().iter() {
             track_uuids.push(track.uuid().to_string());
         }
+        track_uuids
+    }
 
-        // remove the current riff sets
-        for widget in self.ui.riff_sets_box.children().iter() {
-            self.ui.riff_sets_box.remove(widget);
-        }
-        if let Ok(mut grids) = self.riff_set_view_riff_set_beat_grids.lock() {
-            grids.clear();
+    pub fn update_riff_arrangements(
+        &mut self,
+        tx_from_ui: Sender<DAWEvents>,
+        state: &mut DAWState,
+        state_arc: Arc<Mutex<DAWState>>,
+        mut track_uuids: Vec<String>,
+        restore_selected: bool
+    ) {
+        let selected_index = self.ui.arrangements_combobox.active();
+
+        // remove the current riff arrangements
+        for widget in self.ui.riff_arrangement_box.children().iter() {
+            self.ui.riff_arrangement_box.remove(widget);
         }
 
-        // populate the riff sets
-        for riff_set in state.project().song().riff_sets().iter() {
-            MainWindow::add_riff_set_blade(
+        // clear the arrangements combo
+        self.ui.arrangements_combobox.remove_all();
+
+        // populate the arrangements
+        let mut first = true;
+        for riff_arrangement in state.project().song().riff_arrangements().iter() {
+            self.ui.arrangements_combobox.append(Some(riff_arrangement.uuid().as_str()), riff_arrangement.name());
+
+            // populate the riff arrangements
+            let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
+            let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
+            self.setup_riff_arrangement(
+                riff_arrangement,
+                self.ui.clone(),
                 tx_from_ui.clone(),
-                self.ui.riff_sets_box.clone(),
-                self.ui.riff_set_heads_box.clone(),
-                riff_set.uuid(),
-                track_uuids.clone(),
+                state,
                 state_arc.clone(),
-                riff_set.name().to_owned(),
-                RiffSetType::RiffSet,
+                track_uuids.clone(),
+                riff_sets,
+                riff_sequences,
+                first,
                 self.selected_track_style_provider.clone(),
-                Some(self.riff_set_view_riff_set_beat_grids.clone()),
-                "".to_string(),
-                None,
             );
+
+            if first {
+                self.ui.arrangements_combobox.set_active_id(Some(riff_arrangement.uuid().as_str()));
+                first = false;
+            }
         }
 
-        // populate the riff sequences
+        if restore_selected {
+            self.ui.arrangements_combobox.set_active(selected_index);
+        }
+    }
+
+    pub fn update_riff_sequences(
+        &mut self,
+        tx_from_ui: &Sender<DAWEvents>,
+        state: &mut DAWState,
+        state_arc: &Arc<Mutex<DAWState>>,
+        mut track_uuids: &mut Vec<String>,
+        restore_selected: bool
+    ) {
+        let selected_index = self.ui.sequence_combobox.active();
+
+        // remove the current riff sequences
         for widget in self.ui.riff_sequences_box.children().iter() {
             self.ui.riff_sequences_box.remove(widget);
         }
+
+        // clear the sequences combo
+        self.ui.sequence_combobox.remove_all();
+
         let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
         let mut first = true;
         for riff_sequence in state.project().song().riff_sequences().iter() {
@@ -7441,6 +7582,7 @@ impl MainWindow {
                 state_arc.clone(),
                 Some(riff_sets.clone()),
                 Some(riff_sequence.uuid()),
+                None,
                 false,
                 RiffSequenceType::RiffSequence,
                 self.selected_track_style_provider.clone(),
@@ -7477,39 +7619,37 @@ impl MainWindow {
             }
         }
 
-        // clear the arrangements combo
-        self.ui.arrangements_combobox.remove_all();
+        if restore_selected {
+            self.ui.sequence_combobox.set_active(selected_index);
+        }
+    }
 
-        // populate the arrangements combo
-        let mut first = true;
-        for riff_arrangement in state.project().song().riff_arrangements().iter() {
-            self.ui.arrangements_combobox.append(Some(riff_arrangement.uuid().as_str()), riff_arrangement.name());
-
-            // populate the riff arrangements
-            let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
-            let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
-            self.setup_riff_arrangement(
-                riff_arrangement,
-                self.ui.clone(),
-                tx_from_ui.clone(),
-                state,
-                state_arc.clone(),
-                track_uuids.clone(),
-                riff_sets,
-                riff_sequences,
-                first,
-                self.selected_track_style_provider.clone(),
-            );
-
-            if first {
-                self.ui.arrangements_combobox.set_active_id(Some(riff_arrangement.uuid().as_str()));
-                first = false;
-            }
+    pub fn update_riff_sets(&mut self, tx_from_ui: &Sender<DAWEvents>, state: &mut DAWState, state_arc: &Arc<Mutex<DAWState>>, mut track_uuids: &mut Vec<String>) {
+        // remove the current riff sets
+        for widget in self.ui.riff_sets_box.children().iter() {
+            self.ui.riff_sets_box.remove(widget);
+        }
+        if let Ok(mut grids) = self.riff_set_view_riff_set_beat_grids.lock() {
+            grids.clear();
         }
 
-        self.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
-
-        debug!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
+        // populate the riff sets
+        for riff_set in state.project().song().riff_sets().iter() {
+            MainWindow::add_riff_set_blade(
+                tx_from_ui.clone(),
+                self.ui.riff_sets_box.clone(),
+                self.ui.riff_set_heads_box.clone(),
+                riff_set.uuid(),
+                track_uuids.clone(),
+                state_arc.clone(),
+                riff_set.name().to_owned(),
+                RiffSetType::RiffSet,
+                self.selected_track_style_provider.clone(),
+                Some(self.riff_set_view_riff_set_beat_grids.clone()),
+                "".to_string(),
+                None,
+            );
+        }
     }
 
     pub fn update_track_details_dialogue(&mut self, midi_input_devices: &Vec<String>, instrument_plugins: &mut IndexMap<String, String>, track_number: &mut i32, track: &&mut TrackType) {
@@ -7832,6 +7972,7 @@ impl MainWindow {
     ) {
         let riff_arrangement_blade = MainWindow::add_riff_arrangement_blade(
             ui.riff_arrangement_box,
+            ui.arrangements_combobox.clone(),
             tx_from_ui.clone(),
             state_arc.clone(),
             Some(riff_sets.clone()),
@@ -7878,6 +8019,7 @@ impl MainWindow {
                         state_arc.clone(),
                         Some(riff_sets.clone()),
                         Some(riff_sequence_uuid.to_string()),
+                        Some(item.uuid()),
                         false,
                         RiffSequenceType::RiffArrangement(riff_arrangement.uuid()),
                         selected_track_style_provider.clone(),

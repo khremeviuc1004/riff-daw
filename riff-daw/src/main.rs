@@ -396,33 +396,27 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         state.set_project(project);
                         state.set_current_file_path(None);
-                        match state.get_project().song_mut().tracks_mut().last().unwrap() {
-                            TrackType::InstrumentTrack(track) => {
-                                let tx_ui = tx_from_ui;
-                                gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, GeneralTrackType::InstrumentTrack, None, 1.0, 0.0, false, false);
-                            },
-                            TrackType::AudioTrack(_) => (),
-                            TrackType::MidiTrack(_) => (),
+                        let mut instrument_track_senders2 = HashMap::new();
+                        let mut instrument_track_receivers2 = HashMap::new();
+                        let mut sample_references = HashMap::new();
+                        let mut samples_data = HashMap::new();
+                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                            DAWState::init_track(
+                                vst24_plugin_loaders.clone(),
+                                clap_plugin_loaders.clone(),
+                                tx_to_audio.clone(),
+                                track_audio_coast.clone(),
+                                &mut instrument_track_senders2,
+                                &mut instrument_track_receivers2,
+                                track,
+                                Some(&sample_references),
+                                Some(&samples_data),
+                                vst_host_time_info.clone(),
+                            );
                         }
-                        if let Some(track_grid) = gui.track_grid() {
-                            if let Ok(track) = track_grid.lock() {
-                                let mut grid = track;
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        if let Some(piano_roll_grid) = gui.piano_roll_grid() {
-                            if let Ok(piano_roll) = piano_roll_grid.lock() {
-                                let mut grid = piano_roll;
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        if let Some(controller_grid) = gui.automation_grid() {
-                            if let Ok(controllers) = controller_grid.lock() {
-                                let mut grid = controllers;
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        gui.ui.track_drawing_area.queue_draw();
+                        state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
+
+                        gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
                         match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.project().song().block_size())) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
@@ -4491,13 +4485,90 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.riff_sets_box.queue_draw();
             },
             DAWEvents::RiffSetDelete(uuid) => {
-                match state.lock() {
-                    Ok(mut state) => {
-                        let song = state.get_project().song_mut();
-                        song.remove_riff_set(uuid);
-                        gui.update_available_riff_sets(&state);
-                    },
-                    Err(_) => (),
+                // check if any riff sequences or arrangements are using this riff - if so then show a warning dialog
+                let found_info = match state.lock() {
+                    Ok(state) => {
+                        let mut found_info = vec![];
+
+                        // check riff sequences
+                        for riff_sequence in state.project().song().riff_sequences().iter() {
+                            for riff_set_item in riff_sequence.riff_sets().iter() {
+                                if let Some(riff_set) = state.project().song().riff_set(riff_set_item.item_uuid().to_string()) {
+                                    if riff_set.uuid() == uuid {
+                                        let message = format!("Riff sequence: \"{}\" has references to riff set: \"{}\".", riff_sequence.name(), riff_set.name());
+
+                                        if !found_info.iter().any(|entry| *entry == message) {
+                                            found_info.push(message);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // check riff arrangements
+                        for riff_arrangement in state.project().song().riff_arrangements().iter() {
+                            for riff_item in riff_arrangement.items().iter() {
+                                if *(riff_item.item_type()) == RiffItemType::RiffSet {
+                                    if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                                        if riff_set.uuid() == uuid {
+                                            let message = format!("Riff arrangement: \"{}\" has references to riff set: \"{}\".", riff_arrangement.name(), riff_set.name());
+
+                                            if !found_info.iter().any(|entry| *entry == message) {
+                                                found_info.push(message);
+                                            }
+                                        }
+                                    }
+                                }
+                                else {
+                                    if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.uuid()) {
+                                        for riff_set_item in riff_sequence.riff_sets().iter() {
+                                            if let Some(riff_set) = state.project().song().riff_set(riff_set_item.item_uuid().to_string()) {
+                                                if riff_set.uuid() == uuid {
+                                                    let message = format!("Riff arrangement: \"{}\" (via riff sequence) has references to riff set: \"{}\".", riff_arrangement.name(), riff_set.name());
+
+                                                    if !found_info.iter().any(|entry| *entry == message) {
+                                                        found_info.push(message);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        found_info
+                    }
+                    Err(_) => {
+                        debug!("Main - rx_ui processing loop - riff set delete - could not get lock on state");
+                        vec![]
+                    }
+                };
+
+                // if the riff arrangement is not using this riff set then delete it from the project/song
+                if found_info.len() == 0 {
+                    match state.lock() {
+                        Ok(mut state) => {
+                            let song = state.get_project().song_mut();
+                            // remove the riff set from the song
+                            song.remove_riff_set(uuid.clone());
+                            // remove the riff set from the add riff set picklists (riff sequence and riff arrangement views)
+                            gui.update_available_riff_sets(&state);
+                            // remove the riff set head and blade from the UI (riff set view)
+                            gui.delete_riff_set_blade(uuid);
+                        },
+                        Err(_) => (),
+                    }
+                    gui.ui.riff_sets_box.queue_draw();
+                } else {
+                    let mut error_message = String::from("Could not delete riff set:\n");
+
+                    for message in found_info.iter() {
+                        error_message.push_str(message.as_str());
+                        error_message.push_str("\n");
+                    }
+
+                    let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, error_message));
                 }
             },
             DAWEvents::RiffSetCopy(uuid, new_copy_riff_set_uuid) => {
@@ -4587,14 +4658,60 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceDelete(riff_sequence_uuid) => {
-                match state.lock() {
-                    Ok(mut state) => {
-                        state.get_project().song_mut().remove_riff_sequence(riff_sequence_uuid);
-                        gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence delete - could not get lock on state"),
+                // check if any riff sequences or arrangements are using this riff - if so then show a warning dialog
+                let found_info = match state.lock() {
+                    Ok(state) => {
+                        let mut found_info = vec![];
+
+                        // check riff arrangements
+                        for riff_arrangement in state.project().song().riff_arrangements().iter() {
+                            for riff_item in riff_arrangement.items().iter() {
+                                if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                                    if riff_sequence.uuid() == riff_sequence_uuid {
+                                        let message = format!("Riff arrangement: \"{}\" has references to riff sequence: \"{}\".", riff_arrangement.name(), riff_sequence.name());
+
+                                        if !found_info.iter().any(|entry| *entry == message) {
+                                            found_info.push(message);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        found_info
+                    }
+                    Err(_) => {
+                        debug!("Main - rx_ui processing loop - riff sequence delete - could not get lock on state");
+                        vec![]
+                    }
                 };
-                gui.ui.riff_sequences_box.queue_draw();
+
+                // if the riff is not used then delete it from the project/song
+                if found_info.len() == 0 {
+                    match state.lock() {
+                        Ok(mut state) => {
+                            // remove the riff sequence from the song
+                            state.get_project().song_mut().remove_riff_sequence(riff_sequence_uuid.clone());
+                            // remove the riff sequence from arrangement riff sequence pick list
+                            gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
+                            // remove the riff sequence from the sequence combobox in the riff sequence view
+                            gui.update_riff_sequences_combobox_in_riff_sequence_view(&state);
+                            // remove the riff sequence blade from riff sequence view
+                            gui.delete_riff_sequence_blade(riff_sequence_uuid);
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - riff sequence delete - could not get lock on state"),
+                    };
+                    gui.ui.riff_sequences_box.queue_draw();
+                } else {
+                    let mut error_message = String::from("Could not delete riff sequence:\n");
+
+                    for message in found_info.iter() {
+                        error_message.push_str(message.as_str());
+                        error_message.push_str("\n");
+                    }
+
+                    let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, error_message));
+                }
             }
             DAWEvents::RiffSequenceNameChange(riff_sequence_uuid, name) => {
                 match state.lock() {
@@ -4642,10 +4759,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::RiffSequenceRiffSetDelete(riff_sequence_uuid, riff_set_reference_uuid) => {
                 debug!("Main - rx_ui processing loop - riff sequence - riff sequence delete: {}, {}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str());
+                let state_arc = state.clone();
                 match state.lock() {
                     Ok(mut state) => {
-                        if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
+                        if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid.clone()) {
+                            // remove the riff item referencing a riff set from the riff sequence
                             riff_sequence.remove_riff_set(riff_set_reference_uuid);
+                            let mut track_uuids = MainWindow::collect_track_uuids(&mut state);
+                            // update any references to the riff sequence in the riff sequence view
+                            gui.update_riff_sequences(&tx_from_ui, &mut state, &state_arc, &mut track_uuids, true);
+                            // update any references to the riff sequence in the riff arrangement view
+                            gui.update_riff_arrangements(tx_from_ui, &mut state, state_arc, track_uuids, true);
                         }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set delete - could not get lock on state"),
@@ -4704,6 +4828,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::RiffArrangementDelete(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
+                        // remove the riff arrangement from the song
                         state.get_project().song_mut().remove_riff_arrangement(riff_arrangement_uuid);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff arrangement delete - could not get lock on state"),

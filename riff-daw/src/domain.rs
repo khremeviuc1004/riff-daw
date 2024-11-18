@@ -2479,6 +2479,7 @@ pub struct BackgroundProcessorClapAudioPlugin {
     host_receiver: crossbeam_channel::Receiver<DAWCallback>,
     tempo: f64,
     sample_rate: f64,
+    stop_now: bool,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
@@ -2558,6 +2559,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     }
 
     fn stop_processing(&mut self) {
+        self.stop_now = true;
         self.plugin.stop_processing();
     }
 
@@ -2651,6 +2653,7 @@ impl BackgroundProcessorClapAudioPlugin {
             host_receiver,
             tempo: 140.0,
             sample_rate: 44100.0,
+            stop_now: false,
         }
     }
 
@@ -2671,8 +2674,14 @@ impl BackgroundProcessorClapAudioPlugin {
     }
 
     pub fn process(&mut self, background_processor_buffer: &mut AudioBuffer<f32>, uses_input: bool) {
+        if self.stop_now {
+            return;
+        }
         unsafe {
             if let Some(process) = self.plugin.process {
+                if self.stop_now {
+                    return;
+                }
 
                 if uses_input {
                     // copy the input data across
@@ -2720,8 +2729,16 @@ impl BackgroundProcessorClapAudioPlugin {
                     in_events: &self.process_data.input_events.vtable,
                     out_events: &self.process_data.output_events.vtable,
                 };
-        
+
+                if self.stop_now {
+                    return;
+                }
+
                 process((&self.plugin).as_ptr(), &process_data);
+
+                if self.stop_now {
+                    return;
+                }
 
                 let audio_output_buffer = self.process_data.buffers.outputs_ref();
                 let channel = &audio_output_buffer[0];

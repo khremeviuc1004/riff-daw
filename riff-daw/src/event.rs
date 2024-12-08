@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost};
 
 #[derive(Clone)]
 pub enum CurrentView {
@@ -322,42 +322,36 @@ pub enum DAWEvents {
         String, /* track uuid */
         String, /* riff uuid */
     ),
-    RiffSetAdd(Uuid),                                     // new riff set uuid
+    RiffSetAdd(Uuid, String),                                     // new riff set uuid, name
     RiffSetDelete(String),                                // riff set uuid
     RiffSetCopy(String, Uuid),                            // riff set uuid, new copy riff set uuid
     RiffSetCopySelectedToTrackViewCursorPosition(String), // riff set uuid
     RiffSetNameChange(String, String),                    // riff set uuid, new name
     RiffSetMoveToPosition(String, usize),                   // riff set uuid, position
+    RiffSetSelect(String, bool),                                  // riff set uuid, bool selected
 
     RiffSequencePlay(String),                     // riff sequence uuid
     RiffSequenceAdd(Uuid),                        // new riff sequence uuid
     RiffSequenceDelete(String),                   // riff sequence uuid
     RiffSequenceNameChange(String, String),       // riff sequence uuid, new name
-    RiffSequenceMoveLeft(String),                 // riff sequence uuid
-    RiffSequenceMoveRight(String),                // riff sequence uuid
     RiffSequenceRiffSetAdd(String, String, Uuid), // riff sequence uuid, riff set uuid, riff set reference uuid
     RiffSequenceRiffSetDelete(String, String),    // riff sequence uuid, riff set uuid
     RiffSequenceRiffSetMoveToPosition(String, String, usize), // riff sequence uuid, riff set uuid, position
     RiffSequenceRiffSetMoveLeft(String, String),  // riff sequence uuid, riff set uuid
     RiffSequenceRiffSetMoveRight(String, String), // riff sequence uuid, riff set uuid
     RiffSequenceCopySelectedToTrackViewCursorPosition(String), // riff sequence uuid
+    RiffSequenceRiffSetSelect(String, String, bool), // riff sequence uuid, riff set reference uuid, bool selected
 
     RiffArrangementPlay(String),               // riff arrangement uuid
     RiffArrangementAdd(Uuid),                  // new riff arrangement uuid
     RiffArrangementDelete(String),             // riff arrangement uuid
     RiffArrangementCopy(String),               // riff arrangement uuid
     RiffArrangementNameChange(String, String), // riff arrangement uuid, new name
-    RiffArrangementMoveLeft(String),           // riff arrangement uuid
-    RiffArrangementMoveRight(String),          // riff arrangement uuid
-    RiffArrangementRiffSetAdd(String, String, String), // riff arrangement uuid, item uuid, riff set uuid
-    RiffArrangementRiffSetDelete(String, String),      // riff arrangement uuid, riff set uuid
-    RiffArrangementRiffSetMoveLeft(String, String),    // riff arrangement uuid, riff set uuid
-    RiffArrangementRiffSetMoveRight(String, String),   // riff arrangement uuid, riff set uuid
-    RiffArrangementRiffSequenceAdd(String, String, String), // riff arrangement uuid, item uuid, riff sequence uuid
-    RiffArrangementRiffSequenceDelete(String, String), // riff arrangement uuid, riff sequence uuid
-    RiffArrangementRiffSequenceMoveLeft(String, String), // riff arrangement uuid, riff sequence uuid
-    RiffArrangementRiffSequenceMoveRight(String, String), // riff arrangement uuid, riff sequence uuid
+    RiffArrangementMoveRiffItemToPosition(String, String, usize), // riff arrangement uuid, riff item compound uuid, position
+    RiffArrangementRiffItemAdd(String, String, RiffItemType), // riff arrangement uuid, riff seq/set uuid, riff item tpe - riff set or riff sequence
+    RiffArrangementRiffItemDelete(String, String),      // riff arrangement uuid, item uuid
     RiffArrangementCopySelectedToTrackViewCursorPosition(String), // riff arrangement uuid
+    RiffArrangementRiffItemSelect(String, String, bool), // riff_arrangement uuid, riff item uuid (riff set reference uuid), bool selected
 
     MasterChannelChange(MasterChannelChangeType), // channel change type
 

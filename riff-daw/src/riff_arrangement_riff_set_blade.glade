@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Generated with glade 3.38.2 -->
+<!-- Generated with glade 3.40.0 -->
 <interface>
   <requires lib="gtk+" version="3.24"/>
   <object class="GtkBox" id="local_riff_set_box">
+    <property name="width-request">69</property>
     <property name="visible">True</property>
     <property name="can-focus">False</property>
-    <property name="hexpand">True</property>
     <property name="vexpand">True</property>
     <property name="orientation">vertical</property>
     <child>
@@ -13,6 +13,7 @@
         <property name="visible">True</property>
         <property name="can-focus">False</property>
         <property name="halign">start</property>
+        <property name="valign">start</property>
         <property name="label" translatable="yes">Riff Set</property>
       </object>
       <packing>
@@ -24,7 +25,9 @@
     <child>
       <object class="GtkBox" id="riff_set_head_box">
         <property name="visible">True</property>
-        <property name="can-focus">False</property>
+        <property name="can-focus">True</property>
+        <property name="valign">start</property>
+        <property name="border-width">1</property>
         <property name="orientation">vertical</property>
         <child>
           <placeholder/>
@@ -40,8 +43,8 @@
       <object class="GtkScrolledWindow" id="riff_set_scrolled_window">
         <property name="visible">True</property>
         <property name="can-focus">True</property>
-        <property name="hexpand">True</property>
         <property name="vexpand">True</property>
+        <property name="border-width">1</property>
         <property name="shadow-type">in</property>
         <property name="propagate-natural-width">True</property>
         <property name="propagate-natural-height">True</property>
@@ -52,7 +55,7 @@
             <child>
               <object class="GtkBox" id="riff_set_box">
                 <property name="visible">True</property>
-                <property name="can-focus">False</property>
+                <property name="can-focus">True</property>
                 <property name="orientation">vertical</property>
                 <child>
                   <placeholder/>

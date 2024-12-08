@@ -25,7 +25,7 @@ regex = "1.5.5"
 apres = "0.3.1"
 itertools = "0.10.2"
 flexi_logger = {version = "0.25.1", features=["async"]}
-log = "0.4.17"
+log = { version="0.4.17",  features = ["release_max_level_off"]}
 factor = "0.4.0"
 wav_io = "0.1.8"
 mlua = { version = "0.8.3", features = ["lua54", "vendored", "macros"] }
@@ -49,6 +49,7 @@ strum_macros = "0.24.1"
 pathsearch = "0.2.0"
 tikv-jemallocator = "0.5.0"
 geo = "0.26.0"
+state = "0.6.0"
 
 [profile.dev]
 opt-level = 0

@@ -11,6 +11,7 @@ use itertools::Itertools;
 use jack::MidiOut;
 use log::*;
 use mlua::{Lua, MultiValue, Value};
+use parking_lot::RwLock;
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
 use thread_priority::{ThreadBuilder, ThreadPriority};
 use uuid::Uuid;
@@ -50,6 +51,17 @@ extern {
 }
 
 fn main() {
+    // transport
+    let transport = Transport {
+        playing: false,
+        bpm: 140.0,
+        sample_rate: 44100.0,
+        block_size: 1024.0,
+        position_in_beats: 0.0,
+        position_in_frames: 0,
+    };
+    TRANSPORT.set(RwLock::new(transport));
+
     // recorded notes
     let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new();
 
@@ -1179,7 +1191,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let mut track_uuid = None;
                     match state.lock() {
                         Ok(mut state) => {
-                            let tx_ui = tx_from_ui;
+                            let tx_ui = tx_from_ui.clone();
                             let mut instrument_track_senders_local = HashMap::new();
                             let mut instrument_track_receivers_local = HashMap::new();
 
@@ -1188,7 +1200,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     debug!("Adding an instrument track to the state...");
                                     let track = InstrumentTrack::new();
                                     track_uuid = Some(track.uuid().to_string());
-                                    gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
+                                    // gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::InstrumentTrack(track));
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
                                         DAWState::init_track(
@@ -1210,7 +1222,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     debug!("Adding an audio track to the state...");
                                     let track = AudioTrack::new();
                                     track_uuid = Some(track.uuid().to_string());
-                                    gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
+                                    // gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, None, track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::AudioTrack(track));
                                     debug!("Added an audio track to the state.");
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
@@ -1234,7 +1246,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     let uuid = track.uuid().to_string();
 
                                     track_uuid = Some(track.uuid().to_string());
-                                    gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, Some(state.midi_devices()), track.volume(), track.pan(), false, false);
+                                    // gui.add_track(track.name(), track.uuid(), tx_ui, state_arc, track_change_track_type, Some(state.midi_devices()), track.volume(), track.pan(), false, false);
                                     state.get_project().song_mut().add_track(TrackType::MidiTrack(track));
                                     if let Some(track_type) = state.get_project().song_mut().tracks_mut().last_mut() {
                                         DAWState::init_track(
@@ -1264,6 +1276,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 _ => {}
                             }
 
+                            gui.clear_ui();
+                            gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
+
                             state.update_track_senders_and_receivers(instrument_track_senders_local, instrument_track_receivers_local);
                             gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
                         },
@@ -1271,14 +1286,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
                 TrackChangeType::Deleted => {
+                    let state_arc = state.clone();
                     match state.lock() {
                         Ok(state) => {
                             let mut state = state;
 
                             match track_uuid {
                                 Some(track_uuid) => {
-                                    gui.delete_track_from_ui(track_uuid.clone());
+                                    // gui.delete_track_from_ui(track_uuid.clone());
                                     state.get_project().song_mut().delete_track(track_uuid);
+                                    gui.clear_ui();
+                                    gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
                                 },
                                 None => debug!("Main - rx_ui processing loop - Track Deleted - could not find track"),
                             }
@@ -4138,8 +4156,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.set_playing(false);
                         if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
                             gui.repaint_riff_set_view_riff_set_active_drawing_areas(playing_riff_set_uuid, 0.0);
+                            state.set_playing_riff_set(None);
                         }
-                        state.set_playing_riff_set(None);
+                        if let Some(playing_riff_sequence_uuid) = state.playing_riff_sequence() {
+                            let playing_riff_sequence_summary_data = (0.0, vec![]);
+                            gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(playing_riff_sequence_uuid, 0.0, &playing_riff_sequence_summary_data);
+                            state.set_playing_riff_sequence(None);
+                        }
+                        if let Some(playing_riff_arrangement_uuid) = state.playing_riff_arrangement() {
+                            let playing_riff_arrangement_summary_data = (0.0, vec![]);
+                            gui.repaint_riff_arrangement_view_riff_arrangement_active_drawing_areas(playing_riff_arrangement_uuid, 0.0, &playing_riff_arrangement_summary_data);
+                            state.set_playing_riff_arrangement(None);
+                        }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
                 };
@@ -4196,7 +4224,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 } else {
                                     "".to_string()
                                 };
-                                state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid);
+                                state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid, 0.0);
                             }
                         }
                     },
@@ -4463,11 +4491,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - trim all note durations - could not get lock on state"),
                 };
             }
-            DAWEvents::RiffSetAdd(uuid) => {
+            DAWEvents::RiffSetAdd(uuid, name) => {
                 match state.lock() {
                     Ok(mut state) => {
+                        let selected_riff_set_uuid = if let Some(selected_riff_set_uuid) = state.riff_set_selected_uuid() {
+                            Some(selected_riff_set_uuid.to_string())
+                        }
+                        else { None};
                         let song = state.get_project().song_mut();
                         let mut riff_set = RiffSet::new_with_uuid(uuid);
+                        riff_set.set_name(name);
                         for track in song.tracks().iter() {
                             let empty_riff_uuid = if let Some(riff) = track.riffs().iter().find(|riff| riff.name() == "empty") {
                                 riff.uuid().to_string()
@@ -4477,7 +4510,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             };
                             riff_set.set_riff_ref_for_track(track.uuid().to_string(), RiffReference::new(empty_riff_uuid, 0.0));
                         }
-                        song.add_riff_set(riff_set);
+                        let selected_riff_set_position = if let Some(selected_riff_set_uuid) = selected_riff_set_uuid {
+                            if let Some(selected_riff_set_position) = song.riff_sets().iter().position(|riff_set| riff_set.uuid() == *selected_riff_set_uuid) {
+                                Some(selected_riff_set_position)
+                            }
+                            else { None }
+                        }
+                        else { None };
+
+                        if let Some(selected_riff_set_position) = selected_riff_set_position {
+                            song.add_riff_set_at_position(riff_set, selected_riff_set_position + 1);
+                        }
+                        else {
+                            song.add_riff_set(riff_set);
+                        }
                         gui.update_available_riff_sets(&state);
                     },
                     Err(_) => (),
@@ -4601,10 +4647,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 debug!("Main - rx_ui processing loop - riff set play: {}", uuid);
                 match state.lock() {
                     Ok(mut state) => {
+                        state.play_riff_set(tx_to_audio, uuid);
                         if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
                             gui.repaint_riff_set_view_riff_set_active_drawing_areas(playing_riff_set_uuid, 0.0);
                         }
-                        state.play_riff_set(tx_to_audio, uuid);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff set play - could not get lock on state"),
                 };
@@ -4641,7 +4687,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::RiffSequencePlay(riff_sequence_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        state.play_riff_sequence(tx_to_audio, riff_sequence_uuid);
+                        state.play_riff_sequence(tx_to_audio, riff_sequence_uuid.clone());
+                        state.set_playing_riff_sequence(Some(riff_sequence_uuid.clone()));
+                        if let Some(playing_riff_sequence_summary_data) = state.playing_riff_sequence_summary_data() {
+                            gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(&riff_sequence_uuid, 0.0, playing_riff_sequence_summary_data);
+                        }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence play - could not get lock on state"),
                 };
@@ -4725,36 +4775,38 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            DAWEvents::RiffSequenceMoveLeft(riff_sequence_uuid) => {
-                debug!("Main - rx_ui processing loop - riff sequence move left: {}", riff_sequence_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        state.get_project().song_mut().riff_sequence_move_left(riff_sequence_uuid);
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence move left - could not get lock on state"),
-                };
-                gui.ui.riff_sequences_box.queue_draw();
-            }
-            DAWEvents::RiffSequenceMoveRight(riff_sequence_uuid) => {
-                debug!("Main - rx_ui processing loop - riff sequence move right: {}", riff_sequence_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        state.get_project().song_mut().riff_sequence_move_right(riff_sequence_uuid);
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence move right - could not get lock on state"),
-                };
-                gui.ui.riff_sequences_box.queue_draw();
-            }
             DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid, riff_set_reference_uuid) => {
                 debug!("Main - rx_ui processing loop - riff sequence - riff set add: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
-                        if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
-                            riff_sequence.add_riff_set(riff_set_reference_uuid, riff_set_uuid);
+                        let selected_riff_set_instance_details = if let Some(selected_riff_set_uuid) = state.riff_sequence_riff_set_reference_selected_uuid() {
+                            Some(selected_riff_set_uuid.clone())
+                        }
+                        else { None};
+                        let selected_riff_set_position = if let Some(riff_sequence) = state.project().song().riff_sequences().iter().find(|riff_sequence| riff_sequence.uuid() == riff_sequence_uuid) {
+                            if let Some(selected_riff_set_instance_details) = selected_riff_set_instance_details {
+                                if let Some(selected_riff_set_position) = riff_sequence.riff_sets().iter().position(|riff_set| riff_set.uuid() == selected_riff_set_instance_details.1) {
+                                    Some(selected_riff_set_position)
+                                }
+                                else { None }
+                            }
+                            else { None }
+                        }
+                        else { None };
+
+                        if let Some(selected_riff_set_position) = selected_riff_set_position {
+                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
+                                riff_sequence.add_riff_set_at_position(riff_set_reference_uuid, riff_set_uuid, selected_riff_set_position + 1);
+                            }
+                        }
+                        else {
+                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
+                                riff_sequence.add_riff_set(riff_set_reference_uuid, riff_set_uuid);
+                            }
                         }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set add - could not get lock on state"),
-                };
+                }
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::RiffSequenceRiffSetDelete(riff_sequence_uuid, riff_set_reference_uuid) => {
@@ -4803,7 +4855,56 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::RiffArrangementPlay(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid);
+                        let selected_riff_arrangement_play_position = if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                            let selected_riff_item_index = gui.get_selected_riff_arrangement_play_position();
+                            let mut play_position_in_beats = 0.0;
+                            for (index, riff_item) in riff_arrangement.items().iter().enumerate() {
+                                if index >= selected_riff_item_index {
+                                    break;
+                                }
+                                // FIXME riff set lengths need to be determined using the lowest common factor not straight up find the largest (the largest may not be the actual lowest common factor)
+                                if let RiffItemType::RiffSet = riff_item.item_type() {
+                                    // grab the item
+                                    if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                                        let mut riff_lengths = vec![];
+                                        for (track_uuid, riff_set_uuid) in riff_set.riff_refs().iter().map(|(track_uuid, value)| (track_uuid.to_string(), value.linked_to().to_string())).collect::<Vec<(String, String)>>().iter() {
+                                            if let Some(track) = state.project().song().track(track_uuid.to_string()) {
+                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == *riff_set_uuid) {
+                                                    riff_lengths.push(riff.length() as i32);
+                                                }
+                                            }
+                                        }
+                                        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                                        play_position_in_beats += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                                    }
+                                }
+                                else if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                                    for riff_item in riff_sequence.riff_sets().iter() {
+                                        if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                                            let mut riff_lengths = vec![];
+                                            for (track_uuid, riff_set_uuid) in riff_set.riff_refs().iter().map(|(track_uuid, value)| (track_uuid.to_string(), value.linked_to().to_string())).collect::<Vec<(String, String)>>().iter() {
+                                                if let Some(track) = state.project().song().track(track_uuid.to_string()) {
+                                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == *riff_set_uuid) {
+                                                        riff_lengths.push(riff.length() as i32);
+                                                    }
+                                                }
+                                            }
+                                            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                                            play_position_in_beats += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                                        }
+                                    }
+                                }
+                            }
+                            play_position_in_beats
+                        }
+                        else {
+                            0.0
+                        };
+                        state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid.clone(), selected_riff_arrangement_play_position);
+                        state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
+                        if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
+                            gui.repaint_riff_arrangement_view_riff_arrangement_active_drawing_areas(&riff_arrangement_uuid, 0.0, playing_riff_arrangement_summary_data);
+                        }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff arrangement play - could not get lock on state"),
                 };
@@ -4846,119 +4947,96 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            DAWEvents::RiffArrangementMoveLeft(riff_arrangement_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement move left: {}", riff_arrangement_uuid.as_str());
+            DAWEvents::RiffArrangementMoveRiffItemToPosition(riff_arrangement_uuid, riff_item_compound_uuid, position) => {
+                debug!("Main - rx_ui processing loop - riff arrangement={} move riff set={} to position={}", riff_arrangement_uuid.as_str(), riff_item_compound_uuid.as_str(), position);
                 match state.lock() {
                     Ok(mut state) => {
-                        state.get_project().song_mut().riff_arrangement_move_left(riff_arrangement_uuid);
+                        state.get_project().song_mut().riff_arrangement_move_riff_item_to_position(riff_arrangement_uuid, riff_item_compound_uuid, position);
                     },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement move left - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement move riff set to position - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            DAWEvents::RiffArrangementMoveRight(riff_arrangement_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement move right: {}", riff_arrangement_uuid.as_str());
+            DAWEvents::RiffArrangementRiffItemAdd(riff_arrangement_uuid, item_uuid, riff_item_type) => {
+                debug!("Main - rx_ui processing loop - riff arrangement={} - riff item add: {}, {}, {}", riff_arrangement_uuid.as_str(), riff_arrangement_uuid.as_str(), item_uuid.as_str(), if let RiffItemType::RiffSet = riff_item_type.clone() { "RiffSet" } else {"RiffSequence"});
+                let state_arc = state.clone();
                 match state.lock() {
                     Ok(mut state) => {
-                        state.get_project().song_mut().riff_arrangement_move_right(riff_arrangement_uuid);
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement move right - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSetAdd(riff_arrangement_uuid, item_uuid, riff_set_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff set add: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.add_item(RiffItem::new_with_uuid_string(item_uuid, RiffItemType::RiffSet, riff_set_uuid));
+                        let item_reference_uuid = Uuid::new_v4();
+                        let selected_riff_item_details = if let Some(selected_riff_item_uuid) = state.riff_arrangement_riff_item_selected_uuid() {
+                            Some(selected_riff_item_uuid.clone())
+                        }
+                        else { None};
+                        let selected_riff_item_position = if let Some(riff_arrangement) = state.project().song().riff_arrangements().iter().find(|riff_arrangement| riff_arrangement.uuid() == riff_arrangement_uuid) {
+                            if let Some(selected_riff_item_details) = selected_riff_item_details {
+                                if let Some(selected_riff_item_position) = riff_arrangement.items().iter().position(|riff_item| riff_item.uuid() == selected_riff_item_details.1) {
+                                    Some(selected_riff_item_position)
+                                }
+                                else { None }
+                            }
+                            else { None }
+                        }
+                        else { None };
+
+                        if let Some(selected_riff_item_position) = selected_riff_item_position {
+                            if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                riff_arrangement.add_item_at_position(RiffItem::new_with_uuid_string(item_reference_uuid.to_string(), riff_item_type.clone(), item_uuid.clone()), selected_riff_item_position + 1);
+                            }
+                        }
+                        else {
+                            if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                riff_arrangement.add_item(RiffItem::new_with_uuid_string(item_reference_uuid.to_string(), riff_item_type.clone(), item_uuid.clone()));
+                            }
+                        }
+
+                        let track_uuids: Vec<String> = state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+                        if let RiffItemType::RiffSet = riff_item_type {
+                            let riff_set_name = if let Some(riff_set) = state.project().song().riff_sets().iter().find(|riff_set| riff_set.uuid() == item_uuid.clone()) {
+                                riff_set.name().to_string()
+                            }
+                            else {
+                                "".to_string()
+                            };
+                            gui.add_riff_arrangement_riff_set_blade(
+                                tx_from_ui,
+                                riff_arrangement_uuid,
+                                item_reference_uuid.to_string(),
+                                item_uuid,
+                                track_uuids,
+                                gui.selected_style_provider.clone(),
+                                gui.ui.riff_arrangement_vertical_adjustment.clone(),
+                                riff_set_name,
+                                state_arc,
+                            );
+                        }
+                        else {
+                            gui.add_riff_arrangement_riff_sequence_blade(
+                                tx_from_ui,
+                                riff_arrangement_uuid,
+                                item_reference_uuid.to_string(),
+                                item_uuid,
+                                track_uuids,
+                                gui.selected_style_provider.clone(),
+                                gui.ui.riff_arrangement_vertical_adjustment.clone(),
+                                "".to_string(),
+                                state_arc,
+                                &state,
+                            );
                         }
                     },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set add - could not get lock on state"),
-                };
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff item add - could not get lock on state"),
+                }
                 gui.ui.riff_arrangement_box.queue_draw();
             }
-            DAWEvents::RiffArrangementRiffSetDelete(riff_arrangement_uuid, item_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff arrangement delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
+            DAWEvents::RiffArrangementRiffItemDelete(riff_arrangement_uuid, item_uuid) => {
+                debug!("Main - rx_ui processing loop - riff arrangement={} - riff item delete: {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
                             riff_arrangement.remove_item(item_uuid);
                         }
                     },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set delete - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSetMoveLeft(riff_arrangement_uuid, item_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff set move left: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.item_move_left(item_uuid);
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set move left - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSetMoveRight(riff_arrangement_uuid, item_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff set move right: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.item_move_right(item_uuid);
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff set move right - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSequenceAdd(riff_arrangement_uuid, item_uuid, riff_sequence_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence add: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.add_item(RiffItem::new_with_uuid_string(item_uuid, RiffItemType::RiffSequence, riff_sequence_uuid));
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence add - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSequenceDelete(riff_arrangement_uuid, item_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence delete: {}, {}", riff_arrangement_uuid.as_str(), item_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.remove_item(item_uuid);
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence delete - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSequenceMoveLeft(riff_arrangement_uuid, riff_sequence_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move left: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.item_move_left(riff_sequence_uuid);
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move left - could not get lock on state"),
-                };
-                gui.ui.riff_arrangement_box.queue_draw();
-            }
-            DAWEvents::RiffArrangementRiffSequenceMoveRight(riff_arrangement_uuid, riff_sequence_uuid) => {
-                debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move right: {}, {}", riff_arrangement_uuid.as_str(), riff_sequence_uuid.as_str());
-                match state.lock() {
-                    Ok(mut state) => {
-                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid) {
-                            riff_arrangement.item_move_right(riff_sequence_uuid);
-                        }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff sequence move right - could not get lock on state"),
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement - riff item delete - could not get lock on state"),
                 };
                 gui.ui.riff_arrangement_box.queue_draw();
             }
@@ -5113,6 +5191,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 DAWUtils::copy_riff_sequence_to_position(uuid, edit_cursor_position_in_beats, state.clone());
             }
+            DAWEvents::RiffSequenceRiffSetSelect(riff_sequence_uuid, riff_set_reference_uuid, selected) => {
+                debug!("Main - rx_ui processing loop - riff sequence={} riff set reference selected uuid={}, selected={}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str(), selected);
+                match state.lock() {
+                    Ok(mut state) => {
+                        let mut set_selection_to_none = false;
+                        if selected {
+                            state.set_riff_sequence_riff_set_reference_selected_uuid(Some((riff_sequence_uuid, riff_set_reference_uuid)));
+                        }
+                        else if let Some((riff_sequence_uuid_selected, riff_set_reference_uuid_selected)) = state.riff_sequence_riff_set_reference_selected_uuid() {
+                            if riff_sequence_uuid == *riff_sequence_uuid_selected && riff_set_reference_uuid == *riff_set_reference_uuid_selected {
+                                set_selection_to_none = true;
+                            }
+                        }
+                        if set_selection_to_none {
+                            state.set_riff_sequence_riff_set_reference_selected_uuid(None);
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - riff sequence riff set reference selected uuid - could not get lock on state"),
+                }
+            }
             DAWEvents::RiffArrangementCopySelectedToTrackViewCursorPosition(uuid) => {
                 // get the current track cursor position and convert it to beats
                 let edit_cursor_position_in_beats = match &gui.track_grid {
@@ -5124,6 +5222,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
 
                 DAWUtils::copy_riff_arrangement_to_position(uuid, edit_cursor_position_in_beats, state.clone());
+            }
+            DAWEvents::RiffArrangementRiffItemSelect(riff_arrangement_uuid, riff_item_uuid, selected) => {
+                debug!("Main - rx_ui processing loop - riff arrangement={} riff item reference selected uuid={}, selected={}", riff_arrangement_uuid.as_str(), riff_item_uuid.as_str(), selected);
+                match state.lock() {
+                    Ok(mut state) => {
+                        let mut set_selection_to_none = false;
+                        if selected {
+                            state.set_riff_arrangement_riff_item_selected_uuid(Some((riff_arrangement_uuid, riff_item_uuid)));
+                        }
+                        else if let Some((riff_arrangement_uuid_selected, riff_item_uuid_selected)) = state.riff_arrangement_riff_item_selected_uuid() {
+                            if riff_arrangement_uuid == *riff_arrangement_uuid_selected && riff_item_uuid == *riff_item_uuid_selected {
+                                set_selection_to_none = true;
+                            }
+                        }
+                        if set_selection_to_none {
+                            state.set_riff_arrangement_riff_item_selected_uuid(None);
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - riff arrangement riff item reference selected uuid - could not get lock on state"),
+                }
             }
             DAWEvents::RiffArrangementCopy(uuid) => {
                 if let Ok(mut state) = state.lock() {
@@ -5155,6 +5273,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - riff set move to position - could not get lock on state"),
                 };
                 gui.ui.riff_sets_box.queue_draw();
+            }
+            DAWEvents::RiffSetSelect(riff_set_uuid, selected) => {
+                debug!("Main - rx_ui processing loop - riff set selected uuid={}, selected={}", riff_set_uuid.as_str(), selected);
+                match state.lock() {
+                    Ok(mut state) => {
+                        let mut set_selection_to_none = false;
+                        if selected {
+                            state.set_riff_set_selected_uuid(Some(riff_set_uuid));
+                        }
+                        else if let Some(riff_set_selected_uuid) = state.riff_set_selected_uuid() {
+                            if riff_set_uuid == *riff_set_selected_uuid {
+                                set_selection_to_none = true;
+                            }
+                        }
+                        if set_selection_to_none {
+                            state.set_riff_set_selected_uuid(None);
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - riff set selected uuid - could not get lock on state"),
+                }
             }
             DAWEvents::RiffSequenceRiffSetMoveToPosition(riff_sequence_uuid, riff_set_uuid, to_position_in_container) => {
                 debug!("Main - rx_ui processing loop - riff sequence riff set move to position: {}", riff_set_uuid.as_str());
@@ -7328,12 +7466,24 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                             if let Some(riff_set_uuid) = state.playing_riff_set() {
                                 gui.repaint_riff_set_view_riff_set_active_drawing_areas(riff_set_uuid.as_str(), play_position_in_beats);
                             }
+                            else if let Some(riff_sequence_uuid) = state.playing_riff_sequence() {
+                                if let Some(playing_riff_sequence_summary_data) = state.playing_riff_sequence_summary_data() {
+                                    gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(riff_sequence_uuid.as_str(), play_position_in_beats, playing_riff_sequence_summary_data);
+                                }
+                            }
+                            else if let Some(riff_arrangement_uuid) = state.playing_riff_arrangement() {
+                                if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
+                                    gui.repaint_riff_arrangement_view_riff_arrangement_active_drawing_areas(riff_arrangement_uuid.as_str(), play_position_in_beats, playing_riff_arrangement_summary_data);
+                                }
+                            }
                             // else {
                             //     // debug!("Not playing riff set");
                             // }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - play position - could not get lock on state"),
                     }
+
+                    // should only repaint what is actively being viewed
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.sample_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
@@ -7409,7 +7559,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                         } else {
                                             "".to_string()
                                         };
-                                        state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid);
+                                        state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0);
                                     }
                                 }
                             } else if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {

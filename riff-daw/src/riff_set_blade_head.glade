@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Generated with glade 3.38.2 -->
+<!-- Generated with glade 3.40.0 -->
 <interface>
   <requires lib="gtk+" version="3.24"/>
   <object class="GtkImage" id="copy_symbol">
@@ -21,6 +21,11 @@
     <property name="visible">True</property>
     <property name="can-focus">False</property>
     <property name="stock">gtk-jump-to</property>
+  </object>
+  <object class="GtkImage" id="image3">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-select-all</property>
   </object>
   <object class="GtkImage" id="play_symbol">
     <property name="visible">True</property>
@@ -48,8 +53,8 @@
         <property name="margin-bottom">3</property>
         <property name="orientation">vertical</property>
         <child>
-          <!-- n-columns=3 n-rows=3 -->
-          <object class="GtkGrid">
+          <!-- n-columns=4 n-rows=3 -->
+          <object class="GtkGrid" id="riff_set_blade_head_grid">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
             <property name="halign">start</property>
@@ -109,7 +114,7 @@
               <packing>
                 <property name="left-attach">0</property>
                 <property name="top-attach">0</property>
-                <property name="width">3</property>
+                <property name="width">4</property>
               </packing>
             </child>
             <child>
@@ -152,6 +157,23 @@
                 <property name="left-attach">2</property>
                 <property name="top-attach">2</property>
               </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_select_btn">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="receives-default">True</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+                <property name="image">image3</property>
+              </object>
+              <packing>
+                <property name="left-attach">3</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <placeholder/>
             </child>
           </object>
           <packing>

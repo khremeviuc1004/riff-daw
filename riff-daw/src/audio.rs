@@ -10,7 +10,7 @@ use vst::event::MidiEvent;
 
 use log::*;
 
-use crate::domain::AudioBlock;
+use crate::domain::{AudioBlock, TRANSPORT};
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 
 const MAX_MIDI: usize = 3;
@@ -766,6 +766,8 @@ impl Audio {
                 self.block += 1;
                 self.play_position_in_frames += 1024;
             }
+
+            TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
 
             {
                 let ppq_pos = (self.play_position_in_frames as f64 * self.tempo) / (60.0 * self.sample_rate_in_frames);

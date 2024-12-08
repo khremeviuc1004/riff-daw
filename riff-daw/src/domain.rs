@@ -8,11 +8,13 @@ use clap_sys::ext::params::CLAP_EXT_PARAMS;
 use jack::{MidiOut, Port, Control};
 use log::*;
 use mlua::prelude::LuaUserData;
+use parking_lot::RwLock;
 use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
 use samplerate_rs::{convert, ConverterType};
 use serde::{Deserialize, Serialize};
 use simple_clap_host_helper_lib::{host::DAWCallback, plugin::{ext::{posix_fd_support::PosixFDSupport, timer_support::TimerSupport}, ext::params::Params, instance::process::ProcessData, library::PluginLibrary}};
 use sndfile::*;
+use state::InitCell;
 use strum_macros::EnumString;
 use thread_priority::*;
 use uuid::Uuid;
@@ -24,6 +26,16 @@ use crate::event::EventProcessorType;
 
 extern {
     fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
+}
+pub static TRANSPORT: InitCell<RwLock<Transport>> = InitCell::new();
+
+pub struct Transport {
+    pub playing: bool,
+    pub bpm: f64,
+    pub sample_rate: f64,
+    pub block_size: f64,
+    pub position_in_beats: f64,
+    pub position_in_frames: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1395,6 +1407,10 @@ impl RiffSequence {
         self.riff_sets.push(RiffItem::new_with_uuid(reference_uuid, RiffItemType::RiffSet, riff_set_uuid));
     }
 
+    pub fn add_riff_set_at_position(&mut self, reference_uuid: Uuid, riff_set_uuid: String, position: usize) {
+        self.riff_sets.insert(position, RiffItem::new_with_uuid(reference_uuid, RiffItemType::RiffSet, riff_set_uuid));
+    }
+
     pub fn remove_riff_set(&mut self, reference_uuid: String) {
         self.riff_sets.retain(|current_riff_set_reference| current_riff_set_reference.uuid() != reference_uuid);
     }
@@ -1559,61 +1575,20 @@ impl RiffArrangement {
         &self.items
     }
 
+    pub fn items_mut(&mut self) -> &mut Vec<RiffItem> {
+        &mut self.items
+    }
+
     pub fn add_item(&mut self, item: RiffItem) {
         self.items.push(item);
     }
 
+    pub fn add_item_at_position(&mut self, item: RiffItem, position: usize) {
+        self.items.insert(position, item);
+    }
+
     pub fn remove_item(&mut self, item_uuid: String) {
         self.items.retain(|item| item.uuid() != item_uuid);
-    }
-
-    pub fn item_move_left(&mut self, item_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = 0;
-        for item in self.items.iter_mut() {
-            if item.uuid() == item_uuid {
-                index_1 = count;
-            }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
-
-            count += 1;
-        }
-
-        if index_1 > -1 && index_2 > -1 {
-            self.items.swap(index_1 as usize, index_2 as usize);
-        }
-    }
-
-    pub fn item_move_right(&mut self, item_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = self.items.len() as i32 - 1;
-        let mut item_uuids: Vec<String> = self.items.iter_mut().map(|item| item.uuid()).collect();
-
-        item_uuids.reverse();
-        for current_item_uuid in item_uuids.iter_mut() {
-            if *current_item_uuid == item_uuid {
-                index_1 = count;
-            }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
-
-            count -= 1;
-        }
-
-        if index_1 > -1 && index_2 > -1 {
-            self.items.swap(index_1 as usize, index_2 as usize);
-        }
     }
 
     pub fn automation_mut(&mut self, track_uuid: &String) -> Option<&mut Automation> {
@@ -3751,9 +3726,9 @@ impl TrackBackgroundProcessorHelper {
         // get the events for this block
         let (mut events, param_events) = self.event_processor.process_events();
 
-        if !events.is_empty() {
-            debug!("{} - process_plugin_events: event count={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), events.len());
-        }
+        // if !events.is_empty() {
+        //     debug!("{} - process_plugin_events: event count={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), events.len());
+        // }
 
         // route outgoing events
         if events.len() > 0 {
@@ -5687,6 +5662,10 @@ impl Song {
         self.tracks_mut().iter_mut().find(|track| track.uuid().eq(uuid))
     }
 
+    pub fn track(&self, uuid: String) -> Option<&TrackType> {
+        self.tracks().iter().find(|track| track.uuid().to_string() == uuid)
+    }
+
     /// Get a reference to the song's tracks.
     pub fn tracks(&self) -> &[TrackType] {
         self.tracks.as_ref()
@@ -5750,6 +5729,10 @@ impl Song {
 
     pub fn add_riff_set(&mut self, riff_set: RiffSet) {
         self.riff_sets.push(riff_set);
+    }
+
+    pub fn add_riff_set_at_position(&mut self, riff_set: RiffSet, position: usize) {
+        self.riff_sets.insert(position, riff_set);
     }
 
     pub fn riff_set(&self, uuid: String) -> Option<&RiffSet> {
@@ -5820,7 +5803,7 @@ impl Song {
         // find the sequence
         if let Some(riff_sequence) = self.riff_sequence_mut(riff_sequence_uuid) {
             // find the riff set
-            if let Some(mut index) = riff_sequence.riff_sets().iter().position(|riff_set| riff_set.uuid() == riff_set_uuid) {
+            if let Some(mut index) = riff_sequence.riff_sets().iter().position(|riff_set| riff_set_uuid.starts_with(riff_set.uuid().as_str()) ) {
                 let riff_sets = riff_sequence.riff_sets_mut();
 
                 // move the riff set
@@ -5883,55 +5866,6 @@ impl Song {
         &mut self.riff_sequences
     }
 
-    pub fn riff_sequence_move_left(&mut self, riff_sequence_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = 0;
-        for riff_sequence in self.riff_sequences.iter_mut() {
-            if riff_sequence.uuid() == riff_sequence_uuid {
-                index_1 = count;
-            }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
-
-            count += 1;
-        }
-
-        if index_1 > 0 && index_2 > -1 {
-            self.riff_sequences.swap(index_1 as usize, index_2 as usize);
-        }
-    }
-
-    pub fn riff_sequence_move_right(&mut self, riff_sequence_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = self.riff_sequences.len() as i32 - 1;
-        let mut riff_sequence_uuids: Vec<String> = self.riff_sequences.iter_mut().map(|riff_sequence| riff_sequence.uuid()).collect();
-
-        riff_sequence_uuids.reverse();
-        for current_riff_sequence_uuid in riff_sequence_uuids.iter_mut() {
-            if *current_riff_sequence_uuid == riff_sequence_uuid {
-                index_1 = count;
-            }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
-
-            count -= 1;
-        }
-
-        if index_1 > -1 && index_1 < count && index_2 > -1 {
-            self.riff_sequences.swap(index_1 as usize, index_2 as usize);
-        }
-    }
-
     pub fn add_riff_arrangement(&mut self, riff_arrangement: RiffArrangement) {
         self.riff_arrangements.push(riff_arrangement);
     }
@@ -5956,52 +5890,27 @@ impl Song {
         &mut self.riff_arrangements
     }
 
-    pub fn riff_arrangement_move_left(&mut self, riff_arrangement_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = 0;
-        for riff_arrangement in self.riff_arrangements.iter_mut() {
-            if riff_arrangement.uuid() == riff_arrangement_uuid {
-                index_1 = count;
-            }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
+    pub fn riff_arrangement_move_riff_item_to_position(&mut self, riff_arrangement_uuid: String, riff_item_uuid: String, to_position_index: usize) {
+        // find the sequence
+        if let Some(riff_arrangement) = self.riff_arrangement_mut(riff_arrangement_uuid) {
+            // find the riff set
+            if let Some(mut index) = riff_arrangement.items().iter().position(|riff_item| riff_item_uuid.starts_with(riff_item.uuid().as_str()) ) {
+                let riff_items = riff_arrangement.items_mut();
 
-            count += 1;
-        }
-
-        if index_1 > 0 && index_2 > -1 {
-            self.riff_arrangements.swap(index_1 as usize, index_2 as usize);
-        }
-    }
-
-    pub fn riff_arrangement_move_right(&mut self, riff_arrangement_uuid: String) {
-        let mut index_1 = -1;
-        let mut index_2 = -1;
-        let mut count = self.riff_arrangements.len() as i32 - 1;
-        let mut riff_arrangement_uuids: Vec<String> = self.riff_arrangements.iter_mut().map(|riff_arrangement| riff_arrangement.uuid()).collect();
-
-        riff_arrangement_uuids.reverse();
-        for current_riff_arrangement_uuid in riff_arrangement_uuids.iter_mut() {
-            if *current_riff_arrangement_uuid == riff_arrangement_uuid {
-                index_1 = count;
+                // move the riff item
+                if index < to_position_index {
+                    while index < to_position_index {
+                        riff_items.swap(index, index + 1);
+                        index += 1;
+                    }
+                }
+                else if index > to_position_index {
+                    while index > to_position_index {
+                        riff_items.swap(index, index - 1);
+                        index -= 1;
+                    }
+                }
             }
-            else {
-                index_2 = count;
-            }
-            if index_1 > -1 && index_2 > -1 {
-                break;
-            }
-
-            count -= 1;
-        }
-
-        if index_1 > -1 && index_1 < count && index_2 > -1 {
-            self.riff_arrangements.swap(index_1 as usize, index_2 as usize);
         }
     }
 
@@ -6780,7 +6689,7 @@ impl RiffBufferTrackEventProcessor {
                         events.push(track_event);
                     }
                     TrackEvent::NoteOff(note_off) => {
-                        debug!("{} - **************** Note off detected at: block={}, start_sample={}, end_sample={}, original position={}, frame={}, note={}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index, start_sample, end_sample, position, adjusted_position, note_off.note());
+                        // debug!("{} - **************** Note off detected at: block={}, start_sample={}, end_sample={}, original position={}, frame={}, note={}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index, start_sample, end_sample, position, adjusted_position, note_off.note());
                         self.playing_notes.retain(|note| note_off.note() != *note);
                         let mut track_event = riff_track_event.clone();
                         track_event.set_position(adjusted_position);
@@ -6821,7 +6730,7 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
             false
         };
 
-        if self.play && !self.mute {
+        if self.play {
             match &self.track_event_blocks {
                 Some(riffs) => {
                     if riffs.is_empty() {
@@ -6849,8 +6758,8 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                                 };
 
                                 if riff_size_in_samples > 0 {
-                                    debug!("{} - Riff size in samples: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), riff_size_in_samples);
-                                    debug!("{} - Processing block...: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index);
+                                    // debug!("{} - Riff size in samples: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), riff_size_in_samples);
+                                    // debug!("{} - Processing block...: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index);
                                     // debug!("riff_size_in_samples: {}", riff_size_in_samples);
                                     let mut start_sample = (self.block_index * (self.block_size as i32)) % riff_size_in_samples;
                                     let mut end_sample = start_sample + (self.block_size as i32);
@@ -6871,12 +6780,12 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                                         let wrapped_end_sample = overflow;
                                         let wrapped_block_sample_off_set = self.block_size as i32 - overflow;
                                         // debug!("start_sample={}, end_sample={}", start_sample, end_sample);
-                                        debug!("{} - Wrapping...", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
+                                        // debug!("{} - Wrapping...", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
                                         self.extract_events(&mut events_to_play, &mut param_events_to_play, &mut cloned_param_events, false, param_block_index, &cloned_events, &wrapped_start_sample, &wrapped_end_sample, wrapped_block_sample_off_set);
-                                        debug!("{} - Wrapped.", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
+                                        // debug!("{} - Wrapped.", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
                                     }
 
-                                    debug!("{} - Processed block.", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
+                                    // debug!("{} - Processed block.", std::thread::current().name().unwrap_or_else(|| "Unknown Track"));
                                 }
                             }
                         }

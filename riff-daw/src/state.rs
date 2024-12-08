@@ -51,6 +51,12 @@ pub struct DAWState {
     playing: bool,
     play_mode: PlayMode,
     playing_riff_set: Option<String>,
+    playing_riff_sequence: Option<String>,
+    playing_riff_arrangement: Option<String>,
+    // (f64 - sequence length, Vec<(f64 - riff set ref length, String - riff set ref id, String riff set id)>)
+    playing_riff_sequence_summary_data: Option<(f64, Vec<(f64, String, String)>)>,
+    // (f64 - arrangement length, Vec<(f64 - set/sequence length, RiffItem, Vec<(f64, RiffItem)>)>)
+    playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>,
     play_position_in_frames: u32,
     track_event_copy_buffer: Vec<TrackEvent>,
     riff_references_copy_buffer: Vec<RiffReference>,
@@ -78,6 +84,9 @@ pub struct DAWState {
     selected_automation: Vec<String>,
     automation_event_copy_buffer: Vec<TrackEvent>,
     selected_riff_events: Vec<String>,
+    riff_set_selected_uuid: Option<String>,
+    riff_sequence_riff_set_reference_selected_uuid: Option<(String, String)>,
+    riff_arrangement_riff_item_selected_uuid: Option<(String, String)>,
 }
 
 impl DAWState {
@@ -99,6 +108,10 @@ impl DAWState {
             playing: false,
             play_mode: PlayMode::Song,
             playing_riff_set: None,
+            playing_riff_sequence: None,
+            playing_riff_arrangement: None,
+            playing_riff_sequence_summary_data: None,
+            playing_riff_arrangement_summary_data: None,
             play_position_in_frames: 0,
             track_event_copy_buffer: vec![],
             riff_references_copy_buffer: vec![],
@@ -126,6 +139,9 @@ impl DAWState {
             selected_automation: Vec::new(),
             automation_event_copy_buffer: vec![],
             selected_riff_events: Vec::new(),
+            riff_set_selected_uuid: None,
+            riff_sequence_riff_set_reference_selected_uuid: None,
+            riff_arrangement_riff_item_selected_uuid: None,
         }
     }
 
@@ -1526,7 +1542,7 @@ impl DAWState {
                 }
             }
 
-            self.get_riff_sequence_play_events(riff_sequence, &mut track_riff_refs_map, &mut track_running_position);
+            self.playing_riff_sequence_summary_data = Some(self.get_riff_sequence_play_events(riff_sequence, &mut track_riff_refs_map, &mut track_running_position));
 
             // convert and send events
             for track in self.project().song().tracks().iter() {
@@ -1570,18 +1586,79 @@ impl DAWState {
 
 
 
-    pub fn get_riff_sequence_play_events(&self, riff_sequence: &RiffSequence, track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>, track_running_position: &mut HashMap<String, f64>) {
-        for riff_set_reference in riff_sequence.riff_sets().iter() {
-            if let Some(riff_set) = self.project().song().riff_set(riff_set_reference.item_uuid().to_string()) {
-                debug!("state.play_sequence: riff set name={}", riff_set.name());
-                self.get_riff_set_play_events(riff_set, track_riff_refs_map, track_running_position);
+    pub fn get_riff_arrangement_play_events(
+        &self,
+        riff_arrangement: &RiffArrangement,
+        track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>,
+        track_running_position: &mut HashMap<String, f64>) -> (f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>) {
+        let mut riff_arrangement_actual_play_length = 0.0;
+        let mut riff_item_actual_play_lengths = vec![];
+        for riff_item in riff_arrangement.items().iter() {
+            match riff_item.item_type() {
+                RiffItemType::RiffSet => {
+                    if let Some(riff_set) = self.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                        debug!("state.play_arrangement: riff set name={}", riff_set.name());
+                        let riff_set_actual_play_length = self.get_riff_set_play_events(riff_set, track_riff_refs_map, track_running_position);
+                        riff_arrangement_actual_play_length += riff_set_actual_play_length;
+                        riff_item_actual_play_lengths.push(
+                            (
+                                riff_set_actual_play_length,
+                                riff_item.clone(),
+                                vec![]
+                            )
+                        );
+                    }
+                }
+                RiffItemType::RiffSequence => {
+                    if let Some(riff_sequence) = self.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                        debug!("state.play_arrangement: riff sequence name={}", riff_sequence.name());
+                        let riff_sequence_actual_details = self.get_riff_sequence_play_events(riff_sequence, track_riff_refs_map, track_running_position);
+                        riff_arrangement_actual_play_length += riff_sequence_actual_details.0;
+                        riff_item_actual_play_lengths.push(
+                            (
+                                riff_sequence_actual_details.0,
+                                riff_item.clone(),
+                                riff_sequence_actual_details.1.iter().map(|data| {
+                                    (data.0, RiffItem::new_with_uuid_string(data.1.clone(), RiffItemType::RiffSet, data.2.clone()))
+                                }).collect_vec()
+                            )
+                        );
+                    }
+                }
             }
         }
+
+        (riff_arrangement_actual_play_length, riff_item_actual_play_lengths)
     }
 
 
 
-    pub fn get_riff_set_play_events(&self, riff_set: &RiffSet, track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>, track_running_position: &mut HashMap<String, f64>) {
+    pub fn get_riff_sequence_play_events(
+        &self,
+        riff_sequence: &RiffSequence,
+        track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>,
+        track_running_position: &mut HashMap<String, f64>) -> (f64, Vec<(f64, String, String)>) {
+        let mut riff_sequence_actual_play_length = 0.0;
+        let mut riff_set_actual_play_lengths = vec![];
+        for riff_set_reference in riff_sequence.riff_sets().iter() {
+            if let Some(riff_set) = self.project().song().riff_set(riff_set_reference.item_uuid().to_string()) {
+                debug!("state.play_sequence: riff set name={}", riff_set.name());
+                let riff_set_actual_play_length = self.get_riff_set_play_events(riff_set, track_riff_refs_map, track_running_position);
+                riff_sequence_actual_play_length += riff_set_actual_play_length;
+                riff_set_actual_play_lengths.push((riff_set_actual_play_length, riff_set_reference.uuid(), riff_set_reference.item_uuid().to_string()));
+            }
+        }
+
+        (riff_sequence_actual_play_length, riff_set_actual_play_lengths)
+    }
+
+
+
+    pub fn get_riff_set_play_events(
+        &self,
+        riff_set: &RiffSet,
+        track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>,
+        track_running_position: &mut HashMap<String, f64>) -> f64 {
         let mut riff_lengths = vec![];
 
         // get the track riff_lengths
@@ -1630,24 +1707,25 @@ impl DAWState {
                 }
             }
         }
+
+        lowest_common_factor_in_beats as f64
     }
 
 
 
-    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String) {
-        let song_length_in_beats = 400.0;
+    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64) {
+        let mut song_length_in_beats = 400.0;
 
         let already_playing = self.playing();
 
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffArrangement);
         let song = self.project().song();
-        let play_position_in_frames = 0;
-        let tracks = song.tracks();
         let bpm = song.tempo();
         let sample_rate = song.sample_rate();
+        let play_position_in_frames = play_position_in_beats / bpm * 60.0 * sample_rate;
         let block_size = song.block_size();
-        let start_block = (play_position_in_frames as f64 / block_size) as i32;
+        let start_block = (play_position_in_frames / block_size) as i32;
 
         // get the riff arrangement
         if let Some(riff_arrangement) = song.riff_arrangement(riff_arrangement_uuid) {
@@ -1683,6 +1761,13 @@ impl DAWState {
                 }
             }
 
+            self.playing_riff_arrangement_summary_data = Some(self.get_riff_arrangement_play_events(riff_arrangement, &mut track_riff_refs_map, &mut track_running_position));
+
+            // find the longest track running position and set the length to be played to that
+            if let Some(largest_track_length) = track_running_position.values().into_iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
+                song_length_in_beats = *largest_track_length;
+            }
+
             // convert and send events
             for track in self.project().song().tracks().iter() {
                 let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
@@ -1699,15 +1784,16 @@ impl DAWState {
                 let automation: Vec<TrackEvent> = vec![];
                 let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
+                self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
             }
         }
 
         let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
 
         // tell each track audio to play
-        for track in tracks {
+        for track in self.project().song().tracks() {
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));
-            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, number_of_blocks));
+            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(-1, -1));
         }
 
         // set the start block and the number of blocks in the jack audio layer
@@ -1715,6 +1801,71 @@ impl DAWState {
                 Ok(_) => (),
                 Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff arrangement on: {}", error),
         }
+    }
+
+
+
+    pub fn calculate_riff_arrangement_length(
+        &mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+        riff_arrangement_uuid: String,
+    ) -> f64 {
+        let song = self.project().song();
+        let mut riff_arrangement_length = 0.0;
+
+        // get the riff arrangement
+        if let Some(riff_arrangement) = song.riff_arrangement(riff_arrangement_uuid) {
+            // process all the items in the arrangement
+            for item in riff_arrangement.items().iter() {
+                match item.item_type() {
+                    RiffItemType::RiffSet => {
+                        // find the riff set and process its events
+                        if let Some(riff_set) = self.project().song().riff_sets().iter().find(|current_riff_set| current_riff_set.uuid() == item.item_uuid()) {
+                            let mut riff_lengths = vec![];
+
+                            // get the track riff_lengths
+                            for track in self.project().song().tracks().iter() {
+                                // get the riff_ref
+                                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                                    // get the riff
+                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                        riff_lengths.push(riff.length() as i32);
+                                    }
+                                }
+                            }
+
+                            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                            riff_arrangement_length += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                        }
+                    }
+                    RiffItemType::RiffSequence => {
+                        // find the riff sequence and process its events
+                        if let Some(riff_sequence) = self.project().song().riff_sequences().iter().find(|current_riff_sequence| current_riff_sequence.uuid() == item.item_uuid()) {
+                            for riff_set_reference in riff_sequence.riff_sets().iter() {
+                                if let Some(riff_set) = self.project().song().riff_set(riff_set_reference.item_uuid().to_string()) {
+                                    let mut riff_lengths = vec![];
+
+                                    // get the track riff_lengths
+                                    for track in self.project().song().tracks().iter() {
+                                        // get the riff_ref
+                                        if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                                            // get the riff
+                                            if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                riff_lengths.push(riff.length() as i32);
+                                            }
+                                        }
+                                    }
+
+                                    let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                                    riff_arrangement_length += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        riff_arrangement_length
     }
 
 
@@ -1802,8 +1953,8 @@ impl DAWState {
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
         // these should come from configuration and be selected from a menu and dialogue
-        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_l", "system:playback_9");
-        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_r", "system:playback_10");
+        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_l", "system:playback_1");
+        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_r", "system:playback_2");
         let _ = jack_async_client.as_client().connect_ports_by_name("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "DAW:midi_control_in");
         let _ = jack_async_client.as_client().connect_ports_by_name("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in");
 
@@ -2262,6 +2413,30 @@ impl DAWState {
     pub fn set_playing_riff_set(&mut self, playing_riff_set: Option<String>) {
         self.playing_riff_set = playing_riff_set;
     }
+
+    pub fn playing_riff_sequence(&self) -> &Option<String> {
+        &self.playing_riff_sequence
+    }
+
+    pub fn playing_riff_sequence_mut(&mut self) -> &Option<String> {
+        &self.playing_riff_sequence
+    }
+
+    pub fn set_playing_riff_sequence(&mut self, playing_riff_sequence: Option<String>) {
+        self.playing_riff_sequence = playing_riff_sequence;
+    }
+
+    pub fn playing_riff_arrangement(&self) -> &Option<String> {
+        &self.playing_riff_arrangement
+    }
+
+    pub fn playing_riff_arrangement_mut(&mut self) -> &Option<String> {
+        &self.playing_riff_arrangement
+    }
+
+    pub fn set_playing_riff_arrangement(&mut self, playing_riff_arrangement: Option<String>) {
+        self.playing_riff_arrangement = playing_riff_arrangement;
+    }
     pub fn centre_split_pane_position(&self) -> i32 {
         self.centre_split_pane_position
     }
@@ -2482,6 +2657,38 @@ impl DAWState {
 
     pub fn selected_riff_events_mut(&mut self) -> &mut Vec<String> {
         &mut self.selected_riff_events
+    }
+
+    pub fn playing_riff_sequence_summary_data(&self) -> &Option<(f64, Vec<(f64, String, String)>)> {
+        &self.playing_riff_sequence_summary_data
+    }
+
+    pub fn playing_riff_arrangement_summary_data(&self) -> &Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)> {
+        &self.playing_riff_arrangement_summary_data
+    }
+
+    pub fn riff_arrangement_riff_item_selected_uuid(&self) -> &Option<(String, String)> {
+        &self.riff_arrangement_riff_item_selected_uuid
+    }
+
+    pub fn riff_sequence_riff_set_reference_selected_uuid(&self) -> &Option<(String, String)> {
+        &self.riff_sequence_riff_set_reference_selected_uuid
+    }
+
+    pub fn riff_set_selected_uuid(&self) -> &Option<String> {
+        &self.riff_set_selected_uuid
+    }
+
+    pub fn set_riff_arrangement_riff_item_selected_uuid(&mut self, riff_arrangement_riff_item_selected_uuid: Option<(String, String)>) {
+        self.riff_arrangement_riff_item_selected_uuid = riff_arrangement_riff_item_selected_uuid;
+    }
+
+    pub fn set_riff_sequence_riff_set_reference_selected_uuid(&mut self, riff_sequence_riff_set_reference_selected_uuid: Option<(String, String)>) {
+        self.riff_sequence_riff_set_reference_selected_uuid = riff_sequence_riff_set_reference_selected_uuid;
+    }
+
+    pub fn set_riff_set_selected_uuid(&mut self, riff_set_selected_uuid: Option<String>) {
+        self.riff_set_selected_uuid = riff_set_selected_uuid;
     }
 }
 

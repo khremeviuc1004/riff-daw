@@ -222,6 +222,7 @@
             <property name="orientation">vertical</property>
             <child>
               <object class="GtkScrolledWindow">
+                <property name="name">riff_sequence_riff_set_heads_scrolled_window</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="hexpand">True</property>

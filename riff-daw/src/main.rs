@@ -4777,6 +4777,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::RiffSequenceRiffSetAdd(riff_sequence_uuid, riff_set_uuid, riff_set_reference_uuid) => {
                 debug!("Main - rx_ui processing loop - riff sequence - riff set add: {}, {}", riff_sequence_uuid.as_str(), riff_set_uuid.as_str());
+                let state_arc = state.clone();
                 match state.lock() {
                     Ok(mut state) => {
                         let selected_riff_set_instance_details = if let Some(selected_riff_set_uuid) = state.riff_sequence_riff_set_reference_selected_uuid() {
@@ -4795,15 +4796,32 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         else { None };
 
                         if let Some(selected_riff_set_position) = selected_riff_set_position {
-                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
-                                riff_sequence.add_riff_set_at_position(riff_set_reference_uuid, riff_set_uuid, selected_riff_set_position + 1);
+                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid.clone()) {
+                                riff_sequence.add_riff_set_at_position(riff_set_reference_uuid, riff_set_uuid.clone(), selected_riff_set_position + 1);
                             }
                         }
                         else {
-                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid) {
-                                riff_sequence.add_riff_set(riff_set_reference_uuid, riff_set_uuid);
+                            if let Some(riff_sequence) = state.get_project().song_mut().riff_sequence_mut(riff_sequence_uuid.clone()) {
+                                riff_sequence.add_riff_set(riff_set_reference_uuid, riff_set_uuid.clone());
                             }
                         }
+                        let riff_set_name = if let Some(riff_set) = state.project().song().riff_sets().iter().find(|riff_set| riff_set.uuid() == riff_set_uuid.clone()) {
+                            riff_set.name().to_string()
+                        }
+                        else {
+                            "".to_string()
+                        };
+                        let track_uuids: Vec<String> = state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+                        gui.add_riff_sequence_riff_set_blade(
+                            tx_from_ui,
+                            riff_sequence_uuid,
+                            riff_set_reference_uuid.to_string(),
+                            riff_set_uuid,
+                            track_uuids,
+                            gui.selected_style_provider.clone(),
+                            riff_set_name,
+                            state_arc,
+                        );
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence - riff set add - could not get lock on state"),
                 }

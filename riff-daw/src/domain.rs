@@ -3502,7 +3502,12 @@ impl TrackBackgroundProcessorHelper {
         if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
-                    vst24_plugin.vst_plugin_instance_mut().editor_idle();
+                    if let Some(mut editor) = vst24_plugin.editor_mut().as_mut() {
+                        if editor.is_open() {
+                            // editor.idle(); // doesn't do anything
+                            vst24_plugin.vst_plugin_instance_mut().editor_idle();
+                        }
+                    }
                 }
                 BackgroundProcessorAudioPluginType::Vst3 => todo!(),
                 BackgroundProcessorAudioPluginType::Clap(_) => {
@@ -3516,7 +3521,12 @@ impl TrackBackgroundProcessorHelper {
         for effect_plugin in self.effect_plugin_instances.iter_mut() {
             match effect_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
-                    vst24_plugin.vst_plugin_instance_mut().editor_idle();
+                    if let Some(mut editor) = vst24_plugin.editor_mut().as_mut() {
+                        if editor.is_open() {
+                            // editor.idle(); // doesn't do anything
+                            vst24_plugin.vst_plugin_instance_mut().editor_idle();
+                        }
+                    }
                 }
                 BackgroundProcessorAudioPluginType::Vst3 => todo!(),
                 BackgroundProcessorAudioPluginType::Clap(_) => {
@@ -4226,6 +4236,9 @@ impl InstrumentTrackBackgroundProcessor {
                 let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
                 let mut audio_buffer_swapped = host_buffer_swapped.bind(&outputs, &mut inputs);
 
+                const ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS: i32 = 5;
+                let mut iteration_count = 0;
+
                 let mut track_background_processor_helper =
                     TrackBackgroundProcessorHelper::new(
                         track_uuid.clone(),
@@ -4252,8 +4265,13 @@ impl InstrumentTrackBackgroundProcessor {
 
                 loop {
                     track_background_processor_helper.handle_incoming_events();
-                    track_background_processor_helper.refresh_instrument_plugin_editor();
-                    track_background_processor_helper.refresh_effect_plugin_editors();
+
+                    if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
+                        track_background_processor_helper.refresh_instrument_plugin_editor();
+                        track_background_processor_helper.refresh_effect_plugin_editors();
+                    }
+                    iteration_count += 1;
+
                     track_background_processor_helper.handle_host_events_from_plugins();
                     track_background_processor_helper.handle_request_plugin_preset_data();
                     track_background_processor_helper.handle_request_effect_plugins_parameters();

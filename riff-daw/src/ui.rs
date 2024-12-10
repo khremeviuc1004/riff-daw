@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem};
-use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType};
+use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType};
 use crate::state::DAWState;
 use crate::utils::DAWUtils;
@@ -586,6 +586,7 @@ impl MainWindow {
 
     pub fn new(
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        tx_to_audio: Sender<AudioLayerInwardEvent>,
         state: Arc<Mutex<DAWState>>
     ) -> MainWindow {
         let application = gtk::Application::new(
@@ -626,6 +627,7 @@ impl MainWindow {
 
         {
             let state = state.clone();
+            let tx_to_audio = tx_to_audio.clone();
             wnd_main.connect_delete_event(move |window, _| {
                 let dirty = if let Ok(state) = state.lock() {
                     state.dirty
@@ -649,6 +651,9 @@ impl MainWindow {
                     message_dialogue.hide();
 
                     if result == ResponseType::Yes {
+                        if let Ok(mut state) = state.lock() {
+                            state.close_all_tracks(tx_to_audio.clone());
+                        }
                         gtk::Inhibit(false)
                     }
                     else {
@@ -656,9 +661,12 @@ impl MainWindow {
                     }
                 }
                 else {
+                    if let Ok(mut state) = state.lock() {
+                        state.close_all_tracks(tx_to_audio.clone());
+                    }
                     gtk::Inhibit(false)
                 }
-        });
+            });
         }
 
         let selected_style_provider = CssProvider::new();
@@ -757,7 +765,7 @@ impl MainWindow {
         main_window.ui.configuration_dialogue.add_button("Cancel", gtk::ResponseType::Cancel);
         main_window.ui.configuration_dialogue.add_button("Ok", gtk::ResponseType::Ok);
 
-        main_window.setup_menus(tx_from_ui.clone(), state.clone());
+        main_window.setup_menus(tx_from_ui.clone());
         main_window.setup_main_tool_bar(tx_from_ui.clone());
         main_window.setup_track_grid(tx_from_ui.clone(), state.clone());
         main_window.setup_mixer();
@@ -975,6 +983,18 @@ impl MainWindow {
     }
 
     pub fn clear_ui(&mut self) {
+        if let Ok(mut riff_set_view_riff_set_beat_grids) = self.riff_set_view_riff_set_beat_grids.lock() {
+            riff_set_view_riff_set_beat_grids.clear();
+        }
+
+        if let Ok(mut riff_sequence_view_riff_set_ref_beat_grids) = self.riff_sequence_view_riff_set_ref_beat_grids.lock() {
+            riff_sequence_view_riff_set_ref_beat_grids.clear();
+        }
+
+        if let Ok(mut riff_arrangement_view_riff_set_ref_beat_grids) = self.riff_arrangement_view_riff_set_ref_beat_grids.lock() {
+            riff_arrangement_view_riff_set_ref_beat_grids.clear();
+        }
+
         self.track_details_dialogue_track_instrument_choice_signal_handlers.clear();
 
         // clear track detail panel references
@@ -2914,7 +2934,6 @@ impl MainWindow {
     pub fn setup_menus(
         &mut self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-        _state: Arc<Mutex<DAWState>>,
     ) {
         {
             let tx_from_ui = tx_from_ui.clone();

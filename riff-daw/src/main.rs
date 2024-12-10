@@ -120,7 +120,7 @@ fn main() {
     let mut gui = {
         let tx_from_ui = tx_from_ui.clone();
         let state = state.clone();
-        MainWindow::new(tx_from_ui, state)
+        MainWindow::new(tx_from_ui, tx_to_audio.clone(), state)
     };
 
     if let Some(application) = gui.ui.wnd_main.application() {
@@ -386,24 +386,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(state) => {
                         let mut state = state;
-                        if let Ok(mut track_render_audio_consumers) = state.track_render_audio_consumers_mut().lock() {
-                            track_render_audio_consumers.clear();
-                        }
-                        // need to kill audio threads for tracks in the current file
-                        let current_track_uuids = state.get_project().song_mut().tracks_mut().iter_mut().map(|track| {
-                            track.uuid().to_string()
-                        }).collect::<Vec<String>>();
-
-                        for current_track_uuid in current_track_uuids.iter() {
-                            // kill the vst thread
-                            state.send_to_track_background_processor(current_track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::Kill);
-
-                            // remove the consumer from the audio layer
-                            match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
-                                Ok(_) => (),
-                                Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
-                            }
-                        }
+                        state.close_all_tracks(tx_to_audio.clone());
+                        state.reset_state();
 
                         let project = Project::new();
 
@@ -475,24 +459,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state_arc2 = state.clone();
                     match state.lock() {
                         Ok(mut state) => {
-                            if let Ok(mut track_render_audio_consumers) = state.track_render_audio_consumers_mut().lock() {
-                                track_render_audio_consumers.clear();
-                            }
-                            // need to kill audio threads for tracks in the current file
-                            let current_track_uuids = state.get_project().song_mut().tracks_mut().iter_mut().map(|track| {
-                                track.uuid().to_string()
-                            }).collect::<Vec<String>>();
-
-                            for current_track_uuid in current_track_uuids.iter() {
-                                // kill the vst thread
-                                state.send_to_track_background_processor(current_track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::Kill);
-
-                                // remove the consumer from the audio layer
-                                match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
-                                    Ok(_) => (),
-                                    Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
-                                }
-                            }
+                            state.close_all_tracks(tx_to_audio.clone());
+                            state.reset_state();
 
                             state.load_from_file(
                                 vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone());

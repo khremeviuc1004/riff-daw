@@ -2693,6 +2693,61 @@ impl DAWState {
     pub fn set_riff_set_selected_uuid(&mut self, riff_set_selected_uuid: Option<String>) {
         self.riff_set_selected_uuid = riff_set_selected_uuid;
     }
+
+    pub fn close_all_tracks(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>) {
+        if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers_mut().lock() {
+            track_render_audio_consumers.clear();
+        }
+        // need to kill audio threads for tracks in the current file
+        let current_track_uuids = self.get_project().song_mut().tracks_mut().iter_mut().map(|track| {
+            track.uuid().to_string()
+        }).collect::<Vec<String>>();
+
+        for current_track_uuid in current_track_uuids.iter() {
+            // kill the vst thread
+            self.send_to_track_background_processor(current_track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::Kill);
+
+            // remove the consumer from the audio layer
+            match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
+                Ok(_) => (),
+                Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
+            }
+        }
+    }
+
+    pub fn reset_state(&mut self) {
+        self.selected_track = None;
+        self.selected_riff_uuid_map.clear();
+        self.selected_riff_ref_uuid = None;
+        self.current_file_path = None;
+        self.instrument_track_senders.clear();
+        self.instrument_track_receivers.clear();
+        self.audio_plugin_parameters.clear();
+        self.active_loop = None;
+        self.playing_riff_set = None;
+        self.playing_riff_sequence = None;
+        self.playing_riff_arrangement = None;
+        self.playing_riff_sequence_summary_data = None;
+        self.playing_riff_arrangement_summary_data = None;
+        self.play_position_in_frames = 0;
+        self.track_event_copy_buffer.clear();
+        self.riff_references_copy_buffer.clear();
+        self.selected_effect_plugin_uuid = None;
+        self.selected_riff_arrangement_uuid = None;
+        self.sample_data.clear();
+        if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers.lock() {
+            track_render_audio_consumers.clear();
+        }
+        self.vst_instrument_plugins.clear();
+        self.vst_effect_plugins.clear();
+        self.dirty = false;
+        self.selected_automation.clear();
+        self.automation_event_copy_buffer.clear();
+        self.selected_riff_events.clear();
+        self.playing_riff_set = None;
+        self.playing_riff_sequence = None;
+        self.playing_riff_arrangement = None;
+    }
 }
 
 

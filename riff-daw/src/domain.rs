@@ -4218,13 +4218,13 @@ impl InstrumentTrackBackgroundProcessor {
                 const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
-                let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(2);
                 let render_producer_block = render_ring_buffer_block.producer();
                 let render_consumer_block = render_ring_buffer_block.consumer();
                 let track_render_audio_consumer_details =
                     AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), render_consumer_block);
 
-                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(2);
                 let producer_ring_buffer_block = ring_buffer_block.producer();
                 let consumer_ring_buffer_block = ring_buffer_block.consumer();
                 let audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), consumer_ring_buffer_block);

@@ -103,6 +103,7 @@ fn main() {
     let (tx_to_audio, rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
     let (jack_midi_sender_ui, jack_midi_receiver_ui) = unbounded::<AudioLayerOutwardEvent>();
     let (jack_midi_sender, jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
+    let (jack_time_critical_midi_sender, jack_time_critical_midi_receiver) = unbounded::<AudioLayerTimeCriticalOutwardEvent>();
 
     let state = {
         let tx_from_ui = tx_from_ui.clone();
@@ -141,74 +142,9 @@ fn main() {
     set_up_initial_project_in_ui(&tx_to_audio, &track_audio_coast, &mut gui, tx_from_ui.clone(), state.clone(), vst_host_time_info.clone());
 
     // scan for audio plugins
-    {
-        if let Ok(vst_path) = std::env::var(VST_PATH_ENVIRONMENT_VARIABLE_NAME) {
-            if let Ok(clap_path) = std::env::var(CLAP_PATH_ENVIRONMENT_VARIABLE_NAME) {
-                match state.lock() {
-                    Ok(mut state) => {
-                        if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
-                            let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone());
-                            for (key, value) in instruments.iter() {
-                                state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                                state.configuration.scanned_vst_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                            }
-                            state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+    scan_audio_plugins(state.clone(), &gui);
 
-                            for (key, value) in effects.iter() {
-                                state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                                state.configuration.scanned_vst_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                            }
-                            state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                            state.configuration.save();
-                        }
-                        else {
-                            let mut intermediate_map = HashMap::new();
-                            for (key, value) in state.configuration.scanned_vst_instrument_plugins.successfully_scanned.iter() {
-                                intermediate_map.insert(key.to_string(), value.to_string());
-                            }
-                            for (key, value) in intermediate_map.iter() {
-                                state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                            }
-                            state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                            intermediate_map.clear();
-                            for (key, value) in state.configuration.scanned_vst_effect_plugins.successfully_scanned.iter() {
-                                intermediate_map.insert(key.to_string(), value.to_string());
-                            }
-                            for (key, value) in intermediate_map.iter() {
-                                state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                            }
-                            state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-                        }
-
-                        gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
-                    }
-                    Err(_) => {}
-                }
-            }
-        }
-    }
-
-    {
-        let state = state.clone();
-        let autosave_keep_alive = autosave_keep_alive.clone();
-        let _ = std::thread::Builder::new().name(DAW_AUTO_SAVE_THREAD_NAME.to_string()).spawn(move || {
-            loop {
-                if let Ok(mut state) = state.lock() {
-                    if !state.playing() {
-                        state.autosave();
-                    }
-                }
-                std::thread::sleep(Duration::from_secs(300));
-                if let Ok(keep_alive) = autosave_keep_alive.lock() {
-                    if !*keep_alive {
-                        break;
-                    }
-                }
-            }
-        });
-    }
+    start_autosave(state.clone(), autosave_keep_alive.clone());
 
     // handle incoming events in the gui thread - lots of ui interaction
     {
@@ -218,6 +154,7 @@ fn main() {
         let rx_to_audio = rx_to_audio.clone();
         let jack_midi_sender = jack_midi_sender.clone();
         let jack_midi_sender_ui = jack_midi_sender_ui.clone();
+        let jack_time_critical_midi_sender = jack_time_critical_midi_sender.clone();
         let vst_host_time_info = vst_host_time_info.clone();
         let tx_from_ui = tx_from_ui.clone();
         let jack_midi_receiver = jack_midi_receiver_ui.clone();
@@ -233,6 +170,7 @@ fn main() {
                 &rx_to_audio,
                 &jack_midi_sender,
                 &jack_midi_sender_ui,
+                &jack_time_critical_midi_sender,
                 &track_audio_coast,
                 &mut gui,
                 &vst_host_time_info,
@@ -270,22 +208,23 @@ fn main() {
         });
     }
 
-    create_jack_event_processing_thread(
+    create_jack_time_critical_event_processing_thread(
         tx_from_ui.clone(),
-        jack_midi_receiver.clone(), 
-        state.clone(), 
+        jack_time_critical_midi_receiver.clone(),
+        state.clone()
     );
 
     // kick off the audio layer
     {
         let rx_to_audio = rx_to_audio;
-        let jack_midi_sender_ = jack_midi_sender.clone();
+        let jack_midi_sender = jack_midi_sender.clone();
         let jack_midi_sender_ui = jack_midi_sender_ui;
+        let jack_time_critical_midi_sender = jack_time_critical_midi_sender.clone();
         let jack_audio_coast = jack_audio_coast;
 
         match state.lock() {
             Ok(mut state) => {
-                state.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_audio_coast, vst_host_time_info);
+                state.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, jack_audio_coast, vst_host_time_info);
             }
             Err(_) => {}
         }
@@ -301,6 +240,75 @@ fn main() {
         Err(_) => {}
     };
 }
+
+pub fn start_autosave(state: Arc<Mutex<DAWState>>, autosave_keep_alive: Arc<Mutex<bool>>)     {
+    let _ = std::thread::Builder::new().name(DAW_AUTO_SAVE_THREAD_NAME.to_string()).spawn(move || {
+        loop {
+            if let Ok(mut state) = state.lock() {
+                if !state.playing() {
+                    state.autosave();
+                }
+            }
+            std::thread::sleep(Duration::from_secs(300));
+            if let Ok(keep_alive) = autosave_keep_alive.lock() {
+                if !*keep_alive {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+
+pub fn scan_audio_plugins(state: Arc<Mutex<DAWState>>, gui: &MainWindow)     {
+    if let Ok(vst_path) = std::env::var(VST_PATH_ENVIRONMENT_VARIABLE_NAME) {
+        if let Ok(clap_path) = std::env::var(CLAP_PATH_ENVIRONMENT_VARIABLE_NAME) {
+            match state.lock() {
+                Ok(mut state) => {
+                    if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
+                        let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone());
+                        for (key, value) in instruments.iter() {
+                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                            state.configuration.scanned_vst_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                        }
+                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+
+                        for (key, value) in effects.iter() {
+                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
+                            state.configuration.scanned_vst_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                        }
+                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+
+                        state.configuration.save();
+                    }
+                    else {
+                        let mut intermediate_map = HashMap::new();
+                        for (key, value) in state.configuration.scanned_vst_instrument_plugins.successfully_scanned.iter() {
+                            intermediate_map.insert(key.to_string(), value.to_string());
+                        }
+                        for (key, value) in intermediate_map.iter() {
+                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                        }
+                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+
+                        intermediate_map.clear();
+                        for (key, value) in state.configuration.scanned_vst_effect_plugins.successfully_scanned.iter() {
+                            intermediate_map.insert(key.to_string(), value.to_string());
+                        }
+                        for (key, value) in intermediate_map.iter() {
+                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
+                        }
+                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+                    }
+
+                    gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+                }
+                Err(_) => {}
+            }
+        }
+    }
+}
+
 
 pub fn build_ui(application: &gtk::Application) {
     let test_action = gio::SimpleAction::new("test", None);
@@ -6970,9 +6978,9 @@ fn do_progress_dialogue_pulse(gui: &mut MainWindow, progress_bar_pulse_delay_cou
     }
 }
 
-fn create_jack_event_processing_thread(
+fn create_jack_time_critical_event_processing_thread(
     tx_from_ui: Sender<DAWEvents>,
-    jack_midi_receiver: Receiver<AudioLayerOutwardEvent>,
+    jack_time_critical_midi_receiver: Receiver<AudioLayerTimeCriticalOutwardEvent>,
     state: Arc<Mutex<DAWState>>,
 ) {
 
@@ -6987,229 +6995,161 @@ fn create_jack_event_processing_thread(
                 let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new() ;
 
                 loop {
-                    match jack_midi_receiver.try_recv() {
+                    match jack_time_critical_midi_receiver.try_recv() {
                         Ok(audio_layer_outward_event) => {
                             match audio_layer_outward_event {
-                                AudioLayerOutwardEvent::MidiEvent(jack_midi_event) => {
-                                let midi_msg_type = jack_midi_event.data[0] as i32;
+                                AudioLayerTimeCriticalOutwardEvent::MidiEvent(jack_midi_event) => {
+                                    let midi_msg_type = jack_midi_event.data[0] as i32;
 
-                                match state.lock() {
-                                    Ok(state) => {
-                                        match state.selected_track() {
-                                            Some(track_uuid) => {
-                                                match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
-                                                    Some(track) => {
-                                                        let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
-                                                            midi_track.midi_device().midi_channel()
-                                                        } else {
-                                                            0
-                                                        };
-                                                        if (144..=159).contains(&midi_msg_type) {
-                                                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
-                                                        }
-                                                        else if (128..=143).contains(&midi_msg_type) {
-                                                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
-                                                        }
-                                                        else if (176..=191).contains(&midi_msg_type) {
-                                                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                                                        }
-                                                        else if (224..=239).contains(&midi_msg_type) {
-                                                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                                                        }
-                                                        else {
-                                                            debug!("Unknown jack midi event: ");
-                                                            for event_byte in jack_midi_event.data.iter() {
-                                                                debug!(" {}", event_byte);
+                                    match state.lock() {
+                                        Ok(state) => {
+                                            match state.selected_track() {
+                                                Some(track_uuid) => {
+                                                    match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
+                                                        Some(track) => {
+                                                            let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
+                                                                midi_track.midi_device().midi_channel()
+                                                            } else {
+                                                                0
+                                                            };
+                                                            if (144..=159).contains(&midi_msg_type) {
+                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
+                                                            } else if (128..=143).contains(&midi_msg_type) {
+                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
+                                                            } else if (176..=191).contains(&midi_msg_type) {
+                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
+                                                            } else if (224..=239).contains(&midi_msg_type) {
+                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
+                                                            } else {
+                                                                debug!("Unknown jack midi event: ");
+                                                                for event_byte in jack_midi_event.data.iter() {
+                                                                    debug!(" {}", event_byte);
+                                                                }
+                                                                debug!("");
                                                             }
-                                                            debug!("");
-                                                        }
-                                                    },
-                                                    None => (),
-                                                };
-                                            },
-                                            None => debug!("Play note immediate: no track number given."),
-                                        }
-                                    },
-                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - play note immediate - could not get lock on state"),
-                                };
-                                let mut selected_riff_uuid = None;
-                                let mut selected_riff_track_uuid = None;
-                                match state.lock() {
-                                    Ok(state) => {
-                                        selected_riff_track_uuid = state.selected_track();
-
-                                        match selected_riff_track_uuid {
-                                            Some(track_uuid) => {
-                                                selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
-                                                selected_riff_track_uuid = Some(track_uuid);
-                                            },
-                                            None => (),
-                                        }
-                                    },
-                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
-                                };
-                                match state.lock() {
-                                    Ok(mut state) => {
-                                        let tempo = state.project().song().tempo();
-                                        let sample_rate = state.project().song().sample_rate();
-
-                                        if *state.playing_mut() && *state.recording_mut() {
-                                            let play_mode = state.play_mode();
-                                            let playing_riff_set = state.playing_riff_set().clone();
-                                            let mut riff_changed = false;
+                                                        },
+                                                        None => (),
+                                                    };
+                                                },
+                                                None => debug!("Play note immediate: no track number given."),
+                                            }
+                                        },
+                                        Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - play note immediate - could not get lock on state"),
+                                    }
+                                    let mut selected_riff_uuid = None;
+                                    let mut selected_riff_track_uuid = None;
+                                    match state.lock() {
+                                        Ok(state) => {
+                                            selected_riff_track_uuid = state.selected_track();
 
                                             match selected_riff_track_uuid {
                                                 Some(track_uuid) => {
-                                                    match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
-                                                        Some(track_type) => match track_type {
-                                                            TrackType::InstrumentTrack(track) => {
-                                                                match selected_riff_uuid {
-                                                                    Some(uuid) => {
-                                                                        for riff in track.riffs_mut().iter_mut() {
-                                                                            if riff.uuid().to_string() == *uuid {
-                                                                                if (144..=159).contains(&midi_msg_type) { //note on
-                                                                                    debug!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                    let note = Note::new_with_params(
-                                                                                        tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
-                                                                                    recorded_playing_notes.insert(note.note(), note.position());
-                                                                                    riff.events_mut().push(TrackEvent::Note(note));
-                                                                                }
-                                                                                else if (128..=143).contains(&midi_msg_type) { // note off
-                                                                                    let note_number = jack_midi_event.data[1] as i32;
-                                                                                    if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
-                                                                                        // find the note in the riff
-                                                                                        for track_event in riff.events_mut().iter_mut() {
-                                                                                            if track_event.position() == *note_position {
-                                                                                                if let TrackEvent::Note(note) = track_event {
-                                                                                                    if note.note() == note_number {
-                                                                                                        note.set_length(tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate - note.position());
-                                                                                                        riff_changed = true;
-                                                                                                        break;
+                                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                                    selected_riff_track_uuid = Some(track_uuid);
+                                                },
+                                                None => (),
+                                            }
+                                        },
+                                        Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
+                                    }
+                                    match state.lock() {
+                                        Ok(mut state) => {
+                                            let tempo = state.project().song().tempo();
+                                            let sample_rate = state.project().song().sample_rate();
+
+                                            if *state.playing_mut() && *state.recording_mut() {
+                                                let play_mode = state.play_mode();
+                                                let playing_riff_set = state.playing_riff_set().clone();
+                                                let mut riff_changed = false;
+
+                                                match selected_riff_track_uuid {
+                                                    Some(track_uuid) => {
+                                                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
+                                                            Some(track_type) => match track_type {
+                                                                TrackType::InstrumentTrack(track) => {
+                                                                    match selected_riff_uuid {
+                                                                        Some(uuid) => {
+                                                                            for riff in track.riffs_mut().iter_mut() {
+                                                                                if riff.uuid().to_string() == *uuid {
+                                                                                    if (144..=159).contains(&midi_msg_type) { //note on
+                                                                                        let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                        let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                        debug!(
+                                                                                            "Adding note to riff: delta frames={}, actual_position={}, adjusted_position={}, note={}, velocity={}",
+                                                                                            jack_midi_event.delta_frames,
+                                                                                            actual_position,
+                                                                                            adjusted_position,
+                                                                                            jack_midi_event.data[1] as i32,
+                                                                                            jack_midi_event.data[2] as i32);
+                                                                                        let note = Note::new_with_params(
+                                                                                            adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
+                                                                                        recorded_playing_notes.insert(note.note(), note.position());
+                                                                                        riff.events_mut().push(TrackEvent::Note(note));
+                                                                                    } else if (128..=143).contains(&midi_msg_type) { // note off
+                                                                                        let note_number = jack_midi_event.data[1] as i32;
+                                                                                        if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
+                                                                                            let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                            let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                            // find the note in the riff
+                                                                                            for track_event in riff.events_mut().iter_mut() {
+                                                                                                if track_event.position() == *note_position {
+                                                                                                    if let TrackEvent::Note(note) = track_event {
+                                                                                                        if note.note() == note_number {
+                                                                                                            note.set_length(adjusted_position - note.position());
+                                                                                                            riff_changed = true;
+                                                                                                            break;
+                                                                                                        }
                                                                                                     }
                                                                                                 }
                                                                                             }
                                                                                         }
+                                                                                        recorded_playing_notes.remove(&note_number);
+                                                                                    } else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                        debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                        riff.events_mut().push(
+                                                                                            TrackEvent::Controller(
+                                                                                                Controller::new(
+                                                                                                    tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                    } else if (224..=239).contains(&midi_msg_type) {
+                                                                                        debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                        riff.events_mut().push(
+                                                                                            TrackEvent::PitchBend(
+                                                                                                PitchBend::new_from_midi_bytes(
+                                                                                                    tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
                                                                                     }
-                                                                                    recorded_playing_notes.remove(&note_number);
-                                                                                }
-                                                                                else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                                                                                    debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                    riff.events_mut().push(
-                                                                                        TrackEvent::Controller(
-                                                                                            Controller::new(
-                                                                                                tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                                                                                }
-                                                                                else if (224..=239).contains(&midi_msg_type) {
-                                                                                    debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                    riff.events_mut().push(
-                                                                                        TrackEvent::PitchBend(
-                                                                                            PitchBend::new_from_midi_bytes(
-                                                                                                tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                }
 
-                                                                                break;
+                                                                                    break;
+                                                                                }
                                                                             }
-                                                                        }
-                                                                    },
-                                                                    None => debug!("Jack midi receiver - no selected riff."),
-                                                                }
+                                                                        },
+                                                                        None => debug!("Jack midi receiver - no selected riff."),
+                                                                    }
+                                                                },
+                                                                TrackType::AudioTrack(_) => (),
+                                                                TrackType::MidiTrack(_) => (),
                                                             },
-                                                            TrackType::AudioTrack(_) => (),
-                                                            TrackType::MidiTrack(_) => (),
-                                                        },
-                                                        None => (),
-                                                    };
+                                                            None => (),
+                                                        };
 
-                                                    if play_mode == PlayMode::RiffSet && riff_changed {
-                                                        if let Some(playing_riff_set) = playing_riff_set {
-                                                            debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
-                                                            state.play_riff_set_update_track_as_riff(playing_riff_set, track_uuid);
+                                                        if play_mode == PlayMode::RiffSet && riff_changed {
+                                                            if let Some(playing_riff_set) = playing_riff_set {
+                                                                debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
+                                                                state.play_riff_set_update_track_as_riff(playing_riff_set, track_uuid);
+                                                            }
                                                         }
-                                                    }
-                                                },
-                                                None => debug!("Record: no track number given."),
+                                                    },
+                                                    None => debug!("Record: no track number given."),
+                                                }
                                             }
-                                        }
-                                    },
-                                    Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
-                                };
-                                }
-                                AudioLayerOutwardEvent::PlayPositionInFrames(play_position_in_frames) => {
-                                }
-                                AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
-                                    debug!("Midi generic MMC event: ");
-                                    let command_byte = mmc_sysex_bytes[4];
-                                    match command_byte {
-                                        1 => {
-                                            match tx_from_ui.send(DAWEvents::TransportStop) {
-                                                Ok(_) => {}
-                                                Err(_) => {}
-                                            }
-                                        }
-                                        2 => {
-                                            match tx_from_ui.send(DAWEvents::TransportPlay) {
-                                                Ok(_) => {}
-                                                Err(_) => {}
-                                            }
-                                        }
-                                        4 => {
-                                            match tx_from_ui.send(DAWEvents::TransportMoveForward) {
-                                                Ok(_) => {}
-                                                Err(_) => {}
-                                            }
-                                        }
-                                        5 => {
-                                            match tx_from_ui.send(DAWEvents::TransportMoveBack) {
-                                                Ok(_) => {}
-                                                Err(_) => {}
-                                            }
-                                        }
-                                        6 => {
-                                            match state.lock() {
-                                                Ok(state) => {
-                                                    let recording = !state.recording();
-                                                },
-                                                Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - record - could not get lock on state"),
-                                            };
-                                        }
-                                        _ => {}
+                                        },
+                                        Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
                                     }
                                 }
-                                AudioLayerOutwardEvent::MidiControlEvent(jack_midi_event) => {
+                                AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel(jack_midi_event) => {
                                     match state.lock() {
                                         Ok(mut state) => {
-                                            if jack_midi_event.data[0] as i32 == 144 && jack_midi_event.data[1] as usize >= 36_usize {
-                                                // let riff_thing_index = jack_midi_event.data[1] as usize - 36_usize;
-                                                // let track_riffs_stack_visible_name = gui.get_track_riffs_stack_visible_name();
-                                                // if track_riffs_stack_visible_name == "Track Grid" {
-                                                //     state.play_song(tx_to_audio.clone());
-                                                // } else if track_riffs_stack_visible_name == "Riffs" {
-                                                //     let riffs_stack_visible_name = gui.get_riffs_stack_visible_name();
-                                                //     if riffs_stack_visible_name == "riff_sets" {
-                                                //         let riff_set_uuid = if let Some(riff_set) = state.get_project().song_mut().riff_sets_mut().get_mut(riff_thing_index) {
-                                                //             riff_set.uuid()
-                                                //         } else {
-                                                //             "".to_string()
-                                                //         };
-                                                //         state.play_riff_set(tx_to_audio.clone(), riff_set_uuid);
-                                                //     } else if riffs_stack_visible_name == "riff_sequences" {
-                                                //         let riff_sequence_uuid = if let Some(riff_sequence) = state.get_project().song_mut().riff_sequences_mut().get_mut(riff_thing_index) {
-                                                //             riff_sequence.uuid()
-                                                //         } else {
-                                                //             "".to_string()
-                                                //         };
-                                                //         state.play_riff_sequence(tx_to_audio.clone(), riff_sequence_uuid);
-                                                //     } else if riffs_stack_visible_name == "riff_arrangement" {
-                                                //         let riff_arrangement_uuid = if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangements_mut().get_mut(riff_thing_index) {
-                                                //             riff_arrangement.uuid()
-                                                //         } else {
-                                                //             "".to_string()
-                                                //         };
-                                                //         state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid);
-                                                //     }
-                                                // }
-                                            } else if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
-                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                            if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
+                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                                 // need to send some track volume (176) or pan (177) messages
                                                 let position_in_frames = jack_midi_event.delta_frames;
                                                 let position_in_beats = (position_in_frames as f64) / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
@@ -7227,31 +7167,14 @@ fn create_jack_event_processing_thread(
                                                     }
                                                 }
                                             } else {
-                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                             }
                                         }
                                         Err(_) => {}
                                     }
                                 }
-                                AudioLayerOutwardEvent::JackRestartRequired => {
-                                    // match state.lock() {
-                                    //     Ok(mut state) => {
-                                    //         state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
-                                    //     }
-                                    //     Err(_) => {}
-                                    // }
-                                }
-                                AudioLayerOutwardEvent::JackConnect(jack_port_from_name, jack_port_to_name) => {
-                                    // match state.lock() {
-                                    //     Ok(mut state) => {
-                                    //         state.jack_connection_add(jack_port_from_name, jack_port_to_name);
-                                    //     }
-                                    //     Err(_) => {}
-                                    // }
-                                }
-                                AudioLayerOutwardEvent::MasterChannelLevels(left_channel_level, right_channel_level) => {},
-                                }
-                        },
+                            }
+                        }
                         Err(_) => (),
                     }
 
@@ -7267,6 +7190,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        rx_to_audio: &Receiver<AudioLayerInwardEvent>,
                        jack_midi_sender: &Sender<AudioLayerOutwardEvent>,
                        jack_midi_sender_ui: &Sender<AudioLayerOutwardEvent>,
+                       jack_time_critical_midi_sender: &Sender<AudioLayerTimeCriticalOutwardEvent>,
                        jack_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                        gui: &mut MainWindow,
                        vst_host_time_info: &Arc<parking_lot::RwLock<TimeInfo>>,
@@ -7275,151 +7199,6 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
     match jack_midi_receiver.try_recv() {
         Ok(audio_layer_outward_event) => {
             match audio_layer_outward_event {
-                AudioLayerOutwardEvent::MidiEvent(jack_midi_event) => {
-                    // let midi_msg_type = jack_midi_event.data[0] as i32;
-
-                    // match state.lock() {
-                    //     Ok(state) => {
-                    //         match state.selected_track() {
-                    //             Some(track_uuid) => {
-                    //                 match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
-                    //                     Some(track) => {
-                    //                         let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
-                    //                             midi_track.midi_device().midi_channel()
-                    //                         } else {
-                    //                             0
-                    //                         };
-                    //                         if (144..=159).contains(&midi_msg_type) {
-                    //                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
-                    //                         }
-                    //                         else if (128..=143).contains(&midi_msg_type) {
-                    //                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
-                    //                         }
-                    //                         else if (176..=191).contains(&midi_msg_type) {
-                    //                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                    //                         }
-                    //                         else if (224..=239).contains(&midi_msg_type) {
-                    //                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                    //                         }
-                    //                         else {
-                    //                             debug!("Unknown jack midi event: ");
-                    //                             for event_byte in jack_midi_event.data.iter() {
-                    //                                 debug!(" {}", event_byte);
-                    //                             }
-                    //                             debug!("");
-                    //                         }
-                    //                     },
-                    //                     None => (),
-                    //                 };
-                    //             },
-                    //             None => debug!("Play note immediate: no track number given."),
-                    //         }
-                    //     },
-                    //     Err(_) => debug!("Main - rx_ui processing loop - play note immediate - could not get lock on state"),
-                    // };
-                    // let mut selected_riff_uuid = None;
-                    // let mut selected_riff_track_uuid = None;
-                    // match state.lock() {
-                    //     Ok(state) => {
-                    //         selected_riff_track_uuid = state.selected_track();
-
-                    //         match selected_riff_track_uuid {
-                    //             Some(track_uuid) => {
-                    //                 selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
-                    //                 selected_riff_track_uuid = Some(track_uuid);
-                    //             },
-                    //             None => (),
-                    //         }
-                    //     },
-                    //     Err(_) => debug!("Main - rx_ui processing loop - Record - could not get lock on state"),
-                    // };
-                    // match state.lock() {
-                    //     Ok(mut state) => {
-                    //         let tempo = state.project().song().tempo();
-                    //         let sample_rate = state.project().song().sample_rate();
-
-                    //         if *state.playing_mut() && *state.recording_mut() {
-                    //             let play_mode = state.play_mode();
-                    //             let playing_riff_set = state.playing_riff_set().clone();
-                    //             let mut riff_changed = false;
-
-                    //             match selected_riff_track_uuid {
-                    //                 Some(track_uuid) => {
-                    //                     match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
-                    //                         Some(track_type) => match track_type {
-                    //                             TrackType::InstrumentTrack(track) => {
-                    //                                 match selected_riff_uuid {
-                    //                                     Some(uuid) => {
-                    //                                         for riff in track.riffs_mut().iter_mut() {
-                    //                                             if riff.uuid().to_string() == *uuid {
-                    //                                                 if (144..=159).contains(&midi_msg_type) { //note on
-                    //                                                     debug!("Adding note to riff: delta frames={}, note={}, velocity={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                    //                                                     let note = Note::new_with_params(
-                    //                                                         tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
-                    //                                                     recorded_playing_notes.insert(note.note(), note.position());
-                    //                                                     riff.events_mut().push(TrackEvent::Note(note));
-                    //                                                 }
-                    //                                                 else if (128..=143).contains(&midi_msg_type) { // note off
-                    //                                                     let note_number = jack_midi_event.data[1] as i32;
-                    //                                                     if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
-                    //                                                         // find the note in the riff
-                    //                                                         for track_event in riff.events_mut().iter_mut() {
-                    //                                                             if track_event.position() == *note_position {
-                    //                                                                 if let TrackEvent::Note(note) = track_event {
-                    //                                                                     if note.note() == note_number {
-                    //                                                                         note.set_length(tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate - note.position());
-                    //                                                                         riff_changed = true;
-                    //                                                                         break;
-                    //                                                                     }
-                    //                                                                 }
-                    //                                                             }
-                    //                                                         }
-                    //                                                     }
-                    //                                                     recorded_playing_notes.remove(&note_number);
-                    //                                                 }
-                    //                                                 else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                    //                                                     debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                    //                                                     riff.events_mut().push(
-                    //                                                         TrackEvent::Controller(
-                    //                                                             Controller::new(
-                    //                                                                 tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                    //                                                 }
-                    //                                                 else if (224..=239).contains(&midi_msg_type) {
-                    //                                                     debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                    //                                                     riff.events_mut().push(
-                    //                                                         TrackEvent::PitchBend(
-                    //                                                             PitchBend::new_from_midi_bytes(
-                    //                                                                 tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                    //                                                 }
-
-                    //                                                 break;
-                    //                                             }
-                    //                                         }
-                    //                                     },
-                    //                                     None => debug!("Jack midi receiver - no selected riff."),
-                    //                                 }
-                    //                             },
-                    //                             TrackType::AudioTrack(_) => (),
-                    //                             TrackType::MidiTrack(_) => (),
-                    //                         },
-                    //                         None => (),
-                    //                     };
-
-                    //                     if play_mode == PlayMode::RiffSet && riff_changed {
-                    //                         if let Some(playing_riff_set) = playing_riff_set {
-                    //                             debug!("RiffSet riff updated - now calling state.play_riff_set_update_track");
-                    //                             state.play_riff_set_update_track(playing_riff_set, track_uuid);
-                    //                         }
-                    //                     }
-                    //                 },
-                    //                 None => debug!("Record: no track number given."),
-                    //             }
-                    //         }
-                    //     },
-                    //     Err(_) => debug!("Main - rx_ui processing loop - Record - could not get lock on state"),
-                    // };
-                    // // gui.ui.piano_roll_drawing_area.queue_draw();
-                }
                 AudioLayerOutwardEvent::PlayPositionInFrames(play_position_in_frames) => {
                     match state.lock() {
                         Ok(mut state) => {
@@ -7508,44 +7287,23 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     gui.ui.automation_drawing_area.queue_draw();
                 }
                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
-                    // debug!("Midi generic MMC event: ");
-                    // let command_byte = mmc_sysex_bytes[4];
-                    // match command_byte {
-                    //     1 => {
-                    //         match tx_from_ui.send(DAWEvents::TransportStop) {
-                    //             Ok(_) => {}
-                    //             Err(_) => {}
-                    //         }
-                    //     }
-                    //     2 => {
-                    //         match tx_from_ui.send(DAWEvents::TransportPlay) {
-                    //             Ok(_) => {}
-                    //             Err(_) => {}
-                    //         }
-                    //     }
-                    //     4 => {
-                    //         match tx_from_ui.send(DAWEvents::TransportMoveForward) {
-                    //             Ok(_) => {}
-                    //             Err(_) => {}
-                    //         }
-                    //     }
-                    //     5 => {
-                    //         match tx_from_ui.send(DAWEvents::TransportMoveBack) {
-                    //             Ok(_) => {}
-                    //             Err(_) => {}
-                    //         }
-                    //     }
-                    //     6 => {
-                    //         match state.lock() {
-                    //             Ok(state) => {
-                    //                 let recording = !state.recording();
-                    //                 gui.ui.transport_record_button.set_active(recording);
-                    //             },
-                    //             Err(_) => debug!("Main - rx_ui processing loop - record - could not get lock on state"),
-                    //         };
-                    //     }
-                    //     _ => {}
-                    // }
+                    debug!("Midi generic MMC event: ");
+                    let command_byte = mmc_sysex_bytes[4];
+                    match command_byte {
+                        1 => { let _ = tx_from_ui.send(DAWEvents::TransportStop); }
+                        2 => { let _ = tx_from_ui.send(DAWEvents::TransportPlay); }
+                        4 => { let _ = tx_from_ui.send(DAWEvents::TransportMoveForward); }
+                        5 => { let _ = tx_from_ui.send(DAWEvents::TransportMoveBack); }
+                        6 => {
+                            match state.lock() {
+                                Ok(state) => {
+                                    let recording = !state.recording();
+                                },
+                                Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - record - could not get lock on state"),
+                            };
+                        }
+                        _ => {}
+                    }
                 }
                 AudioLayerOutwardEvent::MidiControlEvent(jack_midi_event) => {
                     match state.lock() {
@@ -7580,24 +7338,6 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                         state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0);
                                     }
                                 }
-                            } else if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
-                                // debug!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
-                                // // need to send some track volume (176) or pan (177) messages
-                                // let position_in_frames = jack_midi_event.delta_frames;
-                                // let position_in_beats = (position_in_frames as f64) / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
-                                // let track_index = jack_midi_event.data[1] as i32 - 1;
-                                // let track_change_type = if jack_midi_event.data[0] as i32 == 176 {
-                                //     TrackChangeType::Volume(Some(position_in_beats), jack_midi_event.data[2] as f32 / 127.0)
-                                // } else {
-                                //     TrackChangeType::Pan(Some(position_in_beats), (jack_midi_event.data[2] as f32 - 63.5) / 63.5)
-                                // };
-
-                                // if let Some(track) = state.project().song().tracks().get(track_index as usize) {
-                                //     match tx_from_ui.send(DAWEvents::TrackChange(track_change_type, Some(track.uuid().to_string()))) {
-                                //         Ok(_) => {}
-                                //         Err(_) => {}
-                                //     }
-                                // }
                             } else {
                                 debug!("Main - rx_ui processing loop - jack AudioLayerOutwardEvent::MidiControlEvent - received a unknown message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                             }
@@ -7608,7 +7348,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                 AudioLayerOutwardEvent::JackRestartRequired => {
                     match state.lock() {
                         Ok(mut state) => {
-                            state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+                            state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
                         }
                         Err(_) => {}
                     }

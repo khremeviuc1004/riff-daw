@@ -19,7 +19,7 @@ use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
 use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
-use crate::event::EventProcessorType;
+use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
 
 extern {
@@ -1943,12 +1943,13 @@ impl DAWState {
         rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
         jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
         jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
         vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
-        let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender.clone(), jack_midi_sender_ui.clone(), coast, vst_host_time_info);
+        let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender, jack_midi_sender_ui.clone(), jack_time_critical_midi_sender, coast, vst_host_time_info);
         let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
@@ -1965,6 +1966,7 @@ impl DAWState {
                         rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                         jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                         jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+                        jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                         vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) {
@@ -1978,8 +1980,9 @@ impl DAWState {
                     let audio = Audio::new_with_consumers(
                         &jack_client,
                         rx_to_audio,
-                        jack_midi_sender.clone(),
+                        jack_midi_sender,
                         jack_midi_sender_ui.clone(),
+                        jack_time_critical_midi_sender.clone(),
                         coast,
                         consumers,
                         vec![],
@@ -1993,12 +1996,12 @@ impl DAWState {
                     self.set_jack_client(jack_async_client);
                 }
                 Err(_) => {
-                    self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, coast, vst_host_time_info);
+                    self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
                 }
             }
         }
         else {
-            self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, coast, vst_host_time_info);
+            self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
         }
     }
 

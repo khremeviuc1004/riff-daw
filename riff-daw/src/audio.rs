@@ -12,6 +12,7 @@ use log::*;
 
 use crate::domain::{AudioBlock, TRANSPORT};
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
+use crate::event::AudioLayerTimeCriticalOutwardEvent;
 
 const MAX_MIDI: usize = 3;
 
@@ -233,6 +234,7 @@ pub struct Audio {
     rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
     jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
     jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+    jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
     coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
     custom_midi_out_ports: Vec<Port<MidiOut>>,
     keep_alive: bool,
@@ -246,6 +248,7 @@ impl Audio {
                rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+               jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
     ) -> Self {
@@ -284,6 +287,7 @@ impl Audio {
             rx_to_audio,
             jack_midi_sender,
             jack_midi_sender_ui,
+            jack_time_critical_midi_sender,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -297,6 +301,7 @@ impl Audio {
                               rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                               jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+                              jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                               coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                               audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
@@ -337,6 +342,7 @@ impl Audio {
             rx_to_audio,
             jack_midi_sender,
             jack_midi_sender_ui,
+            jack_time_critical_midi_sender,
             coast,
             custom_midi_out_ports: vec![],
             keep_alive: true,
@@ -656,7 +662,7 @@ impl Audio {
                     note_off_velocity: 0,
                 };
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(note_on));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(note_on));
             }
             else if event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143 { //note off
                 let note_off = MidiEvent {
@@ -669,27 +675,27 @@ impl Audio {
                     note_off_velocity: 0,
                 };
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(note_off));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(note_off));
             }
             else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
                 let controller = Self::create_midi_event(event, &mut delta_frames);
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(controller));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(controller));
             }
             else if event.bytes.len() >= 3 && 224 <= event.bytes[0] && event.bytes[0]  <= 239  { // pitch bend
                 let pitch_bend = Self::create_midi_event(event, &mut delta_frames);
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(pitch_bend));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(pitch_bend));
             }
             else if event.bytes.len() >= 3 && 160 <= event.bytes[0] && event.bytes[0]  <= 175  { // polyphonic key pressure
                 let polyphonic_key_pressure = Self::create_midi_event(event, &mut delta_frames);
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(polyphonic_key_pressure));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(polyphonic_key_pressure));
             }
             else if event.bytes.len() >= 3 && 208 <= event.bytes[0] && event.bytes[0]  <= 223  { // channel pressure
                 let channel_pressure = Self::create_midi_event(event, &mut delta_frames);
 
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiEvent(channel_pressure));
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(channel_pressure));
             }
         }
     }
@@ -744,8 +750,12 @@ impl Audio {
             }
             else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
                 let controller = Self::create_midi_event(event, &mut delta_frames);
-
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(controller));
+                if controller.data[0] as i32 >= 176 && (controller.data[0] as i32 <= (176 + 15)) {
+                    let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel(controller));
+                }
+                else {
+                    let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(controller));
+                }
             }
             else if event.bytes.len() >= 3 && event.bytes.len() == 6 && event.bytes[0] == 240 && event.bytes[1] == 127 && event.bytes[3] == 6 {
                 let mmc_sysex_bytes: [u8; 6] = [240, 127, event.bytes[2], 6, event.bytes[4], 247];

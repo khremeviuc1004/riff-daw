@@ -491,13 +491,17 @@ pub enum TrackBackgroundProcessorOutwardEvent {
 }
 
 pub enum AudioLayerOutwardEvent {
-    MidiEvent(MidiEvent),
     MidiControlEvent(MidiEvent),
     GeneralMMCEvent([u8; 6]),
     PlayPositionInFrames(u32),
     JackRestartRequired,
     JackConnect(String, String), // from, to
     MasterChannelLevels(f32, f32),
+}
+
+pub enum AudioLayerTimeCriticalOutwardEvent {
+    MidiEvent(MidiEvent),
+    TrackVolumePanLevel(MidiEvent),
 }
 
 pub enum AudioPluginHostOutwardEvent {

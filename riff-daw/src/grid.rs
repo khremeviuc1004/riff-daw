@@ -3390,9 +3390,10 @@ impl CustomPainter for AutomationCustomPainter {
                             };
                 
                             if let Some(events) = events {
-                                let riff_refs = track.riff_refs();
-
-                                Self::draw_track(context, height, adjusted_entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, track, riff_refs);
+                                if let CurrentView::Track = current_view {
+                                    let riff_refs = track.riff_refs();
+                                    Self::draw_track(context, height, adjusted_entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, track, riff_refs);
+                                }
 
                                 let unselected_event_colour = (red, green, blue, 1.0);
 

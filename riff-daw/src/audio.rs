@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::convert::From;
 use std::ops::IndexMut;
 use std::sync::{Arc, Mutex};
-
+use crossbeam_channel::TrySendError;
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
 use rb::RbConsumer;
 use vst::api::{TimeInfo, TimeInfoFlags};
@@ -759,7 +759,12 @@ impl Audio {
             }
             else if event.bytes.len() >= 3 && event.bytes.len() == 6 && event.bytes[0] == 240 && event.bytes[1] == 127 && event.bytes[3] == 6 {
                 let mmc_sysex_bytes: [u8; 6] = [240, 127, event.bytes[2], 6, event.bytes[4], 247];
-                let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes));
+                match self.jack_midi_sender.send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes)) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        debug!("jack problem sending General MMC event: {:?}", err);
+                    }
+                }
             }
             else if event.bytes.len() == 3 {
                 debug!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);

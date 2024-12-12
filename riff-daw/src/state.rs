@@ -1588,12 +1588,12 @@ impl DAWState {
 
     pub fn get_riff_arrangement_play_events(
         &self,
-        riff_arrangement: &RiffArrangement,
+        riff_items: &Vec<RiffItem>,
         track_riff_refs_map: &mut HashMap<String, Vec<RiffReference>>,
         track_running_position: &mut HashMap<String, f64>) -> (f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>) {
         let mut riff_arrangement_actual_play_length = 0.0;
         let mut riff_item_actual_play_lengths = vec![];
-        for riff_item in riff_arrangement.items().iter() {
+        for riff_item in riff_items.iter() {
             match riff_item.item_type() {
                 RiffItemType::RiffSet => {
                     if let Some(riff_set) = self.project().song().riff_set(riff_item.item_uuid().to_string()) {
@@ -1720,15 +1720,16 @@ impl DAWState {
 
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffArrangement);
-        let song = self.project().song();
-        let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
+        // let song = self.project().song();
+        let bpm = self.project().song().tempo();
+        let sample_rate = self.project().song().sample_rate();
         let play_position_in_frames = play_position_in_beats / bpm * 60.0 * sample_rate;
-        let block_size = song.block_size();
+        let block_size = self.project().song().block_size();
         let start_block = (play_position_in_frames / block_size) as i32;
 
         // get the riff arrangement
-        if let Some(riff_arrangement) = song.riff_arrangement(riff_arrangement_uuid) {
+        let mut playing_riff_arrangement_summary_data: (f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>) = (0.0, vec![]);
+        if let Some(riff_arrangement) = self.project().song().riff_arrangement(riff_arrangement_uuid) {
             let mut track_riff_refs_map = HashMap::new();
             let mut track_running_position = HashMap::new();
 
@@ -1761,7 +1762,7 @@ impl DAWState {
                 }
             }
 
-            self.playing_riff_arrangement_summary_data = Some(self.get_riff_arrangement_play_events(riff_arrangement, &mut track_riff_refs_map, &mut track_running_position));
+            playing_riff_arrangement_summary_data = self.get_riff_arrangement_play_events(riff_arrangement.items(), &mut track_riff_refs_map, &mut track_running_position);
 
             // find the longest track running position and set the length to be played to that
             if let Some(largest_track_length) = track_running_position.values().into_iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
@@ -1781,12 +1782,18 @@ impl DAWState {
                     None => Vec::<RiffReference>::new(),
                     Some(riff_refs) => riff_refs,
                 };
-                let automation: Vec<TrackEvent> = vec![];
-                let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
+                let vst_event_blocks = if let Some(track_automation) = riff_arrangement.automation(&track.uuid().to_string()) {
+                    DAWUtils::convert_to_event_blocks(track_automation.events(), track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
+                }
+                else {
+                    let automation: Vec<TrackEvent> = vec![];
+                    /*let vst_event_blocks = */DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)//;
+                };
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
             }
         }
+        self.playing_riff_arrangement_summary_data = Some(playing_riff_arrangement_summary_data);
 
         let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
 
@@ -2747,6 +2754,10 @@ impl DAWState {
         self.playing_riff_set = None;
         self.playing_riff_sequence = None;
         self.playing_riff_arrangement = None;
+    }
+
+    pub fn set_playing_riff_arrangement_summary_data(&mut self, playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>) {
+        self.playing_riff_arrangement_summary_data = playing_riff_arrangement_summary_data;
     }
 }
 

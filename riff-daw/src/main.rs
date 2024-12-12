@@ -62,9 +62,6 @@ fn main() {
     };
     TRANSPORT.set(RwLock::new(transport));
 
-    // recorded notes
-    let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new();
-
     // setup history
     let mut history_manager = Arc::new(Mutex::new(HistoryManager::new()));
 
@@ -174,7 +171,6 @@ fn main() {
                 &track_audio_coast,
                 &mut gui,
                 &vst_host_time_info,
-                &mut recorded_playing_notes,
             );
             process_track_background_processor_events(
                 &mut audio_plugin_windows,
@@ -5380,7 +5376,8 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
                         if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
                             Some(riff_arr_automation.events_mut())
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            Some(riff_arrangement.automation_mut(&track_uuid).unwrap().events_mut())
                         }
                     } else {
                         None
@@ -5537,7 +5534,8 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                             if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
                                 Some(riff_arr_automation.events_mut())
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                Some(riff_arrangement.automation_mut(&track_uuid).unwrap().events_mut())
                             }
                         } else {
                             None
@@ -7024,8 +7022,17 @@ fn create_jack_time_critical_event_processing_thread(
                                         Ok(mut state) => {
                                             let tempo = state.project().song().tempo();
                                             let sample_rate = state.project().song().sample_rate();
+                                            let current_view = state.current_view().clone();
+                                            let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                                Some(selected_riff_arrangement_uuid.to_string())
+                                            }
+                                            else {
+                                                None
+                                            };
+                                            let playing = state.playing();
+                                            let recording = state.recording();
 
-                                            if *state.playing_mut() && *state.recording_mut() {
+                                            if playing && recording {
                                                 let play_mode = state.play_mode();
                                                 let playing_riff_set = state.playing_riff_set().clone();
                                                 let mut riff_changed = false;
@@ -7035,69 +7042,126 @@ fn create_jack_time_critical_event_processing_thread(
                                                         match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
                                                             Some(track_type) => match track_type {
                                                                 TrackType::InstrumentTrack(track) => {
-                                                                    match selected_riff_uuid {
-                                                                        Some(uuid) => {
-                                                                            for riff in track.riffs_mut().iter_mut() {
-                                                                                if riff.uuid().to_string() == *uuid {
-                                                                                    if (144..=159).contains(&midi_msg_type) { //note on
-                                                                                        let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
-                                                                                        let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
-                                                                                        debug!(
-                                                                                            "Adding note to riff: delta frames={}, actual_position={}, adjusted_position={}, note={}, velocity={}",
-                                                                                            jack_midi_event.delta_frames,
-                                                                                            actual_position,
-                                                                                            adjusted_position,
-                                                                                            jack_midi_event.data[1] as i32,
-                                                                                            jack_midi_event.data[2] as i32);
-                                                                                        let note = Note::new_with_params(
-                                                                                            adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
-                                                                                        recorded_playing_notes.insert(note.note(), note.position());
-                                                                                        riff.events_mut().push(TrackEvent::Note(note));
-                                                                                    } else if (128..=143).contains(&midi_msg_type) { // note off
-                                                                                        let note_number = jack_midi_event.data[1] as i32;
-                                                                                        if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
-                                                                                            let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
-                                                                                            let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
-                                                                                            // find the note in the riff
-                                                                                            for track_event in riff.events_mut().iter_mut() {
-                                                                                                if track_event.position() == *note_position {
-                                                                                                    if let TrackEvent::Note(note) = track_event {
-                                                                                                        if note.note() == note_number {
-                                                                                                            note.set_length(adjusted_position - note.position());
-                                                                                                            riff_changed = true;
-                                                                                                            break;
+                                                                    match current_view {
+                                                                        CurrentView::Track => {
+                                                                            // add the controller events to the track automation
+                                                                            if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                debug!("Adding controller to track automation: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                track.automation_mut().events_mut().push(
+                                                                                    TrackEvent::Controller(
+                                                                                        Controller::new(
+                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                            } else if (224..=239).contains(&midi_msg_type) {
+                                                                                debug!("Adding pitch bend to track_automation: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                track.automation_mut().events_mut().push(
+                                                                                    TrackEvent::PitchBend(
+                                                                                        PitchBend::new_from_midi_bytes(
+                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                            }
+                                                                        }
+                                                                        CurrentView::RiffSet => {
+                                                                            match selected_riff_uuid {
+                                                                                Some(uuid) => {
+                                                                                    for riff in track.riffs_mut().iter_mut() {
+                                                                                        if riff.uuid().to_string() == *uuid {
+                                                                                            if (144..=159).contains(&midi_msg_type) { //note on
+                                                                                                let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                                let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                                debug!(
+                                                                                                    "Adding note to riff: delta frames={}, actual_position={}, adjusted_position={}, note={}, velocity={}",
+                                                                                                    jack_midi_event.delta_frames,
+                                                                                                    actual_position,
+                                                                                                    adjusted_position,
+                                                                                                    jack_midi_event.data[1] as i32,
+                                                                                                    jack_midi_event.data[2] as i32);
+                                                                                                let note = Note::new_with_params(
+                                                                                                    adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
+                                                                                                recorded_playing_notes.insert(note.note(), note.position());
+                                                                                                riff.events_mut().push(TrackEvent::Note(note));
+                                                                                                riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                            } else if (128..=143).contains(&midi_msg_type) { // note off
+                                                                                                let note_number = jack_midi_event.data[1] as i32;
+                                                                                                if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
+                                                                                                    let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                                    let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                                    // find the note in the riff
+                                                                                                    for track_event in riff.events_mut().iter_mut() {
+                                                                                                        if track_event.position() == *note_position {
+                                                                                                            if let TrackEvent::Note(note) = track_event {
+                                                                                                                if note.note() == note_number {
+                                                                                                                    note.set_length(adjusted_position - note.position());
+                                                                                                                    riff_changed = true;
+                                                                                                                    break;
+                                                                                                                }
+                                                                                                            }
                                                                                                         }
                                                                                                     }
                                                                                                 }
+                                                                                                recorded_playing_notes.remove(&note_number);
+                                                                                            } else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                                debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                                riff.events_mut().push(
+                                                                                                    TrackEvent::Controller(
+                                                                                                        Controller::new(
+                                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                                riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                            } else if (224..=239).contains(&midi_msg_type) {
+                                                                                                debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                                riff.events_mut().push(
+                                                                                                    TrackEvent::PitchBend(
+                                                                                                        PitchBend::new_from_midi_bytes(
+                                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                                riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
                                                                                             }
+
+                                                                                            break;
                                                                                         }
-                                                                                        recorded_playing_notes.remove(&note_number);
-                                                                                    } else if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                                                                                        debug!("Adding controller to riff: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                        riff.events_mut().push(
+                                                                                    }
+                                                                                },
+                                                                                None => debug!("Jack midi receiver - no selected riff."),
+                                                                            }
+                                                                        }
+                                                                        CurrentView::RiffSequence => {
+                                                                            // not doing anything for sequences at this point in time
+                                                                        }
+                                                                        CurrentView::RiffArrangement => {
+                                                                            if let Some(selected_riff_arrangement_uuid) = selected_riff_arrangement_uuid {
+                                                                                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangements_mut().iter_mut().find(|riff_arrangement| riff_arrangement.uuid() == selected_riff_arrangement_uuid.to_string()) {
+                                                                                    let track_automation = if let Some(track_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                                                                        track_automation
+                                                                                    }
+                                                                                    else {
+                                                                                        riff_arrangement.add_track_automation(track_uuid.clone());
+                                                                                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                                                                                    };
+
+                                                                                    if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                        debug!("Adding controller to riff arrangement: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                        track_automation.events_mut().push(
                                                                                             TrackEvent::Controller(
                                                                                                 Controller::new(
                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                        track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
                                                                                     } else if (224..=239).contains(&midi_msg_type) {
-                                                                                        debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                        riff.events_mut().push(
+                                                                                        debug!("Adding pitch bend to riff arrangement: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                        track_automation.events_mut().push(
                                                                                             TrackEvent::PitchBend(
                                                                                                 PitchBend::new_from_midi_bytes(
                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                        track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
                                                                                     }
-
-                                                                                    break;
                                                                                 }
                                                                             }
-                                                                        },
-                                                                        None => debug!("Jack midi receiver - no selected riff."),
+                                                                        }
                                                                     }
                                                                 },
                                                                 TrackType::AudioTrack(_) => (),
                                                                 TrackType::MidiTrack(_) => (),
                                                             },
                                                             None => (),
-                                                        };
+                                                        }
 
                                                         if play_mode == PlayMode::RiffSet && riff_changed {
                                                             if let Some(playing_riff_set) = playing_riff_set {
@@ -7162,7 +7226,6 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        jack_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                        gui: &mut MainWindow,
                        vst_host_time_info: &Arc<parking_lot::RwLock<TimeInfo>>,
-                       recorded_playing_notes: &mut HashMap<i32, f64>,
 ) {
     match jack_midi_receiver.try_recv() {
         Ok(audio_layer_outward_event) => {
@@ -7559,26 +7622,49 @@ fn process_track_background_processor_events(
                 }
             }
 
-            // find the track
-            state.get_project().song_mut().tracks_mut().iter_mut().for_each(|track_type| {
-                match track_type {
-                    TrackType::InstrumentTrack(track) => {
-                        if automation_track_uuid == track.uuid().to_string() {
-                            if let Some(event) = automation_event.clone() {
-                                track.automation_mut().events_mut().push(event);
+            // if playing and recording add automation to  to the correct domain entity based on the current view.
+            if state.playing() && state.recording() {
+                if let Some(event) = automation_event {
+                    let current_view = state.current_view().clone();
+                    let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                        Some(selected_riff_arrangement_uuid.to_string())
+                    }
+                    else {
+                        None
+                    };
+                    if let CurrentView::RiffArrangement = current_view {
+                        if let Some(selected_riff_arrangement_uuid) = selected_riff_arrangement_uuid {
+                            if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_riff_arrangement_uuid) {
+                                let automation = if let Some(automation) = riff_arrangement.automation_mut(&automation_track_uuid) {
+                                    automation
+                                }
+                                else {
+                                    riff_arrangement.add_track_automation(automation_track_uuid.clone());
+                                    riff_arrangement.automation_mut(&automation_track_uuid).unwrap()
+                                };
+
+                                automation.events_mut().push(event);
+                                automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
                             }
                         }
                     }
-                    TrackType::AudioTrack(track) => {
-                        if automation_track_uuid == track.uuid().to_string() {
-                            if let Some(event) = automation_event.clone() {
-                                track.automation_mut().events_mut().push(event);
+                    else if let CurrentView::Track = current_view {
+                        if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track_type| track_type.uuid().to_string() == automation_track_uuid) {
+                            match track_type {
+                                TrackType::InstrumentTrack(track) => {
+                                    track.automation_mut().events_mut().push(event);
+                                    track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                }
+                                TrackType::AudioTrack(track) => {
+                                    track.automation_mut().events_mut().push(event);
+                                    track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    _ => {}
                 }
-            });
+            }
 
             // change the track instrument name
             for (track_uuid, name) in track_instrument_names.iter() {

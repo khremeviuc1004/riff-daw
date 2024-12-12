@@ -3820,10 +3820,18 @@ impl TrackBackgroundProcessorHelper {
                         }
                         if !effect_events.is_empty() && !self.mute {
                             if let Some(effect_plugin) = self.effect_plugin_instances.iter_mut().find(|effect| effect.uuid().to_string() == effect_uuid) {
+                                let plugin_uuid = effect_plugin.uuid().to_string();
                                 match effect_plugin {
                                     BackgroundProcessorAudioPluginType::Vst24(effect_plugin) => {
                                         let vst_plugin_instance = effect_plugin.vst_plugin_instance_mut();
                                         self.midi_sender.store_events(DAWUtils::convert_events_with_timing_in_frames_to_vst(&effect_events, 0));
+                                        for event in effect_events.iter() {
+                                            if let TrackEvent::AudioPluginParameter(plugin_parameter) = event {
+                                                if plugin_uuid == plugin_parameter.plugin_uuid() {
+                                                    vst_plugin_instance.get_parameter_object().set_parameter(plugin_parameter.index, plugin_parameter.value);
+                                                }
+                                            }
+                                        }
                                         vst_plugin_instance.process_events(self.midi_sender.events());
                                     }
                                     BackgroundProcessorAudioPluginType::Vst3 => {}
@@ -3840,6 +3848,7 @@ impl TrackBackgroundProcessorHelper {
 
         if !events.is_empty() && !self.mute {
             if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                let plugin_uuid = instrument_plugin.uuid().to_string();
                 match instrument_plugin {
                     BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
                         let vst_midi_events = DAWUtils::convert_events_with_timing_in_frames_to_vst(
@@ -3847,6 +3856,17 @@ impl TrackBackgroundProcessorHelper {
                             0);
                         let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
                         self.midi_sender.store_events(vst_midi_events);
+                        if events.len() == 0 {
+                            debug!("Somehow the events have been exhausted.");
+                        }
+                        for event in events.iter() {
+                            if let TrackEvent::AudioPluginParameter(plugin_parameter) = event {
+                                if plugin_uuid == plugin_parameter.plugin_uuid() {
+                                    debug!("Sent a plugin parameter to the instrument plugin.");
+                                    vst_plugin_instance.get_parameter_object().set_parameter(plugin_parameter.index, plugin_parameter.value);
+                                }
+                            }
+                        }
                         vst_plugin_instance.process_events(self.midi_sender.events());
                     }
                     BackgroundProcessorAudioPluginType::Vst3 => {}

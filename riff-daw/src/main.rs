@@ -81,7 +81,7 @@ fn main() {
         None
     };
 
-    // VST timing
+    // VST2 timing
     let vst_host_time_info = Arc::new(parking_lot::RwLock::new(TimeInfo {
         sample_pos: 0.0,
         sample_rate: 44100.0,

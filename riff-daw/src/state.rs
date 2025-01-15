@@ -2745,8 +2745,6 @@ impl DAWState {
         if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers.lock() {
             track_render_audio_consumers.clear();
         }
-        self.instrument_plugins.clear();
-        self.effect_plugins.clear();
         self.dirty = false;
         self.selected_automation.clear();
         self.automation_event_copy_buffer.clear();

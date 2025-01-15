@@ -8057,6 +8057,7 @@ impl MainWindow {
         match self.track_details_dialogues.get_mut(&track_uuid) {
             Some(track_details_dialogue) => {
                 // clear and add the riffs
+                let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
                 let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
                 track_riff_choice.remove_all();
                 let mut first_riff = true;
@@ -8069,6 +8070,16 @@ impl MainWindow {
                             track_riff_choice.set_active_id(Some(uuid.as_str()));
                             first_riff = false;
                         }
+                    }
+                }
+
+                let selected_riff_uuid_option: Option<NonNull<String>> = unsafe {
+                    track_details_riff_choice_entry.data("selected_riff_uuid")
+                };
+                if let Some(selected_riff_uuid) = selected_riff_uuid_option {
+                    unsafe {
+                        let selected_riff_uuid = selected_riff_uuid.as_ref();
+                        track_riff_choice.set_active_id(Some(selected_riff_uuid.as_str()));
                     }
                 }
 
@@ -8094,7 +8105,7 @@ impl MainWindow {
                         }
 
                         // set the active element without generating an event
-                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") {
+                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") || instrument_id.ends_with(".vst3") || instrument_id.contains(".vst3:") {
                             if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track_uuid) {
                                 track_instrument_choice.block_signal(signal_handler_id);
 

@@ -4,4 +4,5 @@ members = [
     "riff-daw",
     "vst_checker",
     "clap_checker",
+    "vst3_checker",
 ]

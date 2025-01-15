@@ -93,10 +93,10 @@ void checkPlugin(char* vst3_plugin_path)
                     std::cout << "Output event bus " << index << " channel count: " << outputEventBusInfo.channelCount << std::endl;
                 }
 
-                Steinberg::IPlugView* plugview = controller.get()->createView(Steinberg::Vst::ViewType::kEditor);
+                Steinberg::IPtr<Steinberg::IPlugView> plugview = controller.get()->createView(Steinberg::Vst::ViewType::kEditor);
                 Steinberg::ViewRect* viewRect = new Steinberg::ViewRect(1, 1, 1, 1);
-                plugview->getSize(viewRect);
-                if (plugview->attached(0, Steinberg::kPlatformTypeX11EmbedWindowID) != Steinberg::kResultOk)
+                plugview.get()->getSize(viewRect);
+                if (plugview.get()->attached(0, Steinberg::kPlatformTypeX11EmbedWindowID) != Steinberg::kResultOk)
                 {
                     std::cout << "Failed to open window." << std::endl;
                 }
@@ -165,9 +165,9 @@ void checkPlugin(char* vst3_plugin_path)
                 processContext.samplesToNextClock = 0;
 
                 Steinberg::Vst::HostProcessData processData;
-                processData.prepare(*component, 1024, processSetUp.symbolicSampleSize);
+                processData.prepare(*component, processSetUp.maxSamplesPerBlock, processSetUp.symbolicSampleSize);
                 processData.processMode = Steinberg::Vst::ProcessModes::kRealtime;
-                processData.numSamples = 1024;
+                processData.numSamples = processSetUp.maxSamplesPerBlock;
                 processData.inputEvents = new Steinberg::Vst::EventList[inputEventBusCount];
                 processData.outputEvents = new Steinberg::Vst::EventList[outputEventBusCount];
                 processData.processContext = &processContext;

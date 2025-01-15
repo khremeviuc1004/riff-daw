@@ -3097,7 +3097,7 @@ impl MainWindow {
         }
 
         {
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_export_wave.connect_button_press_event(move |_menu_item, _btn|{
                 let dialog = FileChooserDialog::new(Some("Export to wave file..."),     Some(&window), FileChooserAction::Save);
@@ -3147,6 +3147,14 @@ impl MainWindow {
                 configuration_dialogue.run();
                 configuration_dialogue.hide();
 
+                Inhibit(true)
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.menu_item_cut.connect_button_press_event(move |_menu_item, _btn|{
+                // TODO implement
                 Inhibit(true)
             });
         }
@@ -7653,7 +7661,7 @@ impl MainWindow {
         let midi_input_devices: Vec<String> = state.midi_devices();
         let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
 
-        for (key, value) in state.vst_instrument_plugins().iter() {
+        for (key, value) in state.instrument_plugins().iter() {
             instrument_plugins.insert(key.clone(), value.clone());
         }
 
@@ -7861,7 +7869,7 @@ impl MainWindow {
         self.update_riff_sets(&tx_from_ui, state, &state_arc, &mut track_uuids);
         self.update_riff_sequences(&tx_from_ui, state, &state_arc, &mut track_uuids, false);
         self.update_riff_arrangements(tx_from_ui, state, state_arc, track_uuids, false);
-        self.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+        self.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
 
         debug!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
     }

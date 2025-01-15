@@ -6,6 +6,9 @@ pub const VST_PATH_ENVIRONMENT_VARIABLE_NAME: &str = "VST_PATH";
 pub const CLAP: &str = "CLAP";
 pub const CLAP_CHECKER_EXECUTABLE_NAME: &str = "clap_checker";
 pub const CLAP_PATH_ENVIRONMENT_VARIABLE_NAME: &str = "CLAP_PATH";
+pub const VST3: &str = "VST3";
+pub const VST3_CHECKER_EXECUTABLE_NAME: &str = "vst3_checker";
+pub const VST3_PATH_ENVIRONMENT_VARIABLE_NAME: &str = "VST3_PATH";
 
 pub const TRACK_VIEW_TRACK_PANEL_HEIGHT: i32 = 19;
 pub const RIFF_SET_VIEW_TRACK_PANEL_HEIGHT: i32 = 51;

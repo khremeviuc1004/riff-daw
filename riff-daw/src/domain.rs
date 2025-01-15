@@ -1,9 +1,13 @@
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
 use std::default::Default;
 use std::io::prelude::*;
+use std::ops::Index;
+use std::os::raw::c_char;
+use std::sync::mpsc::TryRecvError;
 use std::thread;
 
 use clap_sys::{ext::{gui::{clap_window, CLAP_WINDOW_API_X11, clap_window_handle}}, process::clap_process};
+use clap_sys::events::{clap_event_param_gesture, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE};
 use clap_sys::ext::params::CLAP_EXT_PARAMS;
 use jack::{MidiOut, Port, Control};
 use log::*;
@@ -18,11 +22,15 @@ use state::InitCell;
 use strum_macros::EnumString;
 use thread_priority::*;
 use uuid::Uuid;
+use widestring::U16String;
 use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
+use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGestureBegin, ParamGestureEnd, ParamValue};
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
 use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
 use crate::event::EventProcessorType;
+use crate::vst3_cxx_bridge::{ffi, Vst3Host};
+use crate::vst3_cxx_bridge::ffi::{showPluginEditor, vst3_plugin_get_window_width};
 
 extern {
     fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
@@ -1738,11 +1746,11 @@ impl VstHost {
 
 impl Host for VstHost {
     fn automate(&self, index: i32, value: f32) {
-        debug!("Vst plugin automate data.");
+        debug!("Vst2 plugin automate data.");
         debug!("Parameter {} had its value changed to {}", index, value);
         match self.sender.send(AudioPluginHostOutwardEvent::Automation(self.track_uuid.clone(), self.plugin_uuid.clone(), self.instrument, index, value)) {
             Ok(_) => (),
-            Err(_error) => debug!("Problem sending plugin param automation from vst host."),
+            Err(_error) => debug!("Problem sending plugin param automation from vst2 host."),
         }
     }
 
@@ -2017,7 +2025,7 @@ pub trait BackgroundProcessorAudioPlugin {
 }
 pub enum BackgroundProcessorAudioPluginType {
     Vst24(BackgroundProcessorVst24AudioPlugin),
-    Vst3,
+    Vst3(BackgroundProcessorVst3AudioPlugin),
     Clap(BackgroundProcessorClapAudioPlugin),
 }
 
@@ -2027,7 +2035,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.uuid()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.uuid()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.uuid()
             }
@@ -2039,7 +2049,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.uuid_mut()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.uuid_mut()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.uuid_mut()
             }
@@ -2051,7 +2063,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.xid()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.xid()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.xid()
             }
@@ -2063,7 +2077,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.set_xid(xid);
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_xid(xid);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_xid(xid);
             }
@@ -2075,7 +2091,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.xid_mut()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.xid_mut()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.xid_mut()
             }
@@ -2087,7 +2105,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.rx_from_host()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.rx_from_host()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.rx_from_host()
             }
@@ -2099,7 +2119,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.rx_from_host_mut()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.rx_from_host_mut()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.rx_from_host_mut()
             }
@@ -2111,7 +2133,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.stop_processing();
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.stop_processing();
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.stop_processing();
             }
@@ -2123,7 +2147,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.shutdown();
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.shutdown();
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.shutdown();
             }
@@ -2135,7 +2161,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.set_tempo(tempo);
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_tempo(tempo);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_tempo(tempo);
             }
@@ -2147,7 +2175,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.preset_data()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => "".to_string(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.preset_data()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.preset_data()
             }
@@ -2159,7 +2189,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.set_preset_data(data);
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_preset_data(data);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_preset_data(data);
             }
@@ -2171,7 +2203,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.get_window_size()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.get_window_size()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.get_window_size()
             }
@@ -2183,7 +2217,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.name()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.name()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.name()
             }
@@ -2195,7 +2231,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.tempo()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => 140.0,
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.tempo()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.tempo()
             }
@@ -2207,7 +2245,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.sample_rate()
             }
-            BackgroundProcessorAudioPluginType::Vst3 => 44100.0,
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.sample_rate()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.sample_rate()
             }
@@ -2219,7 +2259,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                 vst24_plugin.set_sample_rate(sample_rate);
             }
-            BackgroundProcessorAudioPluginType::Vst3 => {}
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_sample_rate(sample_rate);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_sample_rate(sample_rate);
             }
@@ -2446,8 +2488,10 @@ impl BackgroundProcessorVst24AudioPlugin {
 
 #[derive()]
 pub struct BackgroundProcessorClapAudioPlugin {
+    track_uuid: String,
     uuid: Uuid,
     xid: Option<u32>,
+    tx_from_clap_host: Sender<AudioPluginHostOutwardEvent>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
     plugin: simple_clap_host_helper_lib::plugin::instance::Plugin, 
     process_data: ProcessData,
@@ -2455,6 +2499,7 @@ pub struct BackgroundProcessorClapAudioPlugin {
     tempo: f64,
     sample_rate: f64,
     stop_now: bool,
+    param_gesture_begin: HashMap<i32, bool>,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
@@ -2613,15 +2658,17 @@ impl BackgroundProcessorClapAudioPlugin {
         let (plugin, process_data, host_receiver) = create_clap_audio_plugin(
             clap_plugin_loaders, 
             library_path.as_str(), 
-            track_uuid, 
+            track_uuid.clone(),
             uuid.to_string(), 
             sub_plugin_id, 
-            tx_from_clap_host, 
+            tx_from_clap_host.clone(),
             false,
         );
         Self {
+            track_uuid,
             uuid,
             xid: None,
+            tx_from_clap_host,
             rx_from_host,
             plugin, 
             process_data,
@@ -2629,6 +2676,7 @@ impl BackgroundProcessorClapAudioPlugin {
             tempo: 140.0,
             sample_rate: 44100.0,
             stop_now: false,
+            param_gesture_begin: HashMap::new(),
         }
     }
 
@@ -2711,6 +2759,30 @@ impl BackgroundProcessorClapAudioPlugin {
 
                 process((&self.plugin).as_ptr(), &process_data);
 
+                // check for output events
+                for event in self.process_data.output_events.events.lock().iter() {
+                    match event {
+                        ParamValue(param) => {
+                            debug!("CLAP_EVENT_PARAM_VALUE received: {:?}", param);
+                            if let Some(has_begun) = self.param_gesture_begin.get(&(param.param_id as i32)) {
+                                if *has_begun {
+                                    debug!("CLAP_EVENT_PARAM_VALUE sending AudioPluginHostOutwardEvent::Automation.");
+                                    let _ = self.tx_from_clap_host.send(AudioPluginHostOutwardEvent::Automation(self.track_uuid.clone(), self.uuid.to_string(), false, param.param_id as i32, param.value as f32));
+                                }
+                            }
+                        }
+                        ParamGestureBegin(param_gesture) => {
+                            debug!("CLAP_EVENT_PARAM_GESTURE_BEGIN received: {:?}", param_gesture);
+                            self.param_gesture_begin.insert(param_gesture.param_id as i32, true);
+                        }
+                        ParamGestureEnd(param_gesture) => {
+                            debug!("CLAP_EVENT_PARAM_GESTURE_END received: {:?}", param_gesture);
+                            self.param_gesture_begin.remove(&(param_gesture.param_id as i32));
+                        }
+                        _ => {}
+                    }
+                }
+
                 if self.stop_now {
                     return;
                 }
@@ -2737,6 +2809,222 @@ impl BackgroundProcessorClapAudioPlugin {
     }
 }
 
+#[derive()]
+pub struct BackgroundProcessorVst3AudioPlugin {
+    track_uuid: String,
+    daw_plugin_uuid: Uuid,
+    vst3_plugin_uid: String,
+    library_path: String,
+    xid: Option<u32>,
+    tx_from_host: Sender<AudioPluginHostOutwardEvent>,
+    rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
+    instrument: bool,
+}
+
+impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
+    fn uuid(&self) -> Uuid {
+        self.daw_plugin_uuid.clone()
+    }
+
+    fn uuid_mut(&mut self) -> Uuid {
+        self.daw_plugin_uuid.clone()
+    }
+
+    fn name(&self) -> String {
+        ffi::getVstPluginName(self.daw_plugin_uuid.to_string())
+    }
+
+    fn xid(&self) -> Option<u32> {
+        self.xid.clone()
+    }
+
+    fn set_xid(&mut self, xid: Option<u32>) {
+        self.xid = xid;
+        if let Some(xid) = self.xid.as_ref() {
+            let vst3host = Box::new(Vst3Host(self.track_uuid.clone(), self.daw_plugin_uuid.to_string(), self.instrument, self.tx_from_host.clone()));
+            ffi::showPluginEditor(
+                self.daw_plugin_uuid.to_string(),
+                *xid,
+                vst3host,
+                |context: Box<Vst3Host>, new_window_width: i32, new_window_height: i32| {
+                    debug!("Vst3 plugin window resize.");
+                    debug!("New size: width={},  height={}", new_window_width, new_window_height);
+                    match context.3.send(AudioPluginHostOutwardEvent::SizeWindow(context.0.clone(), context.1.clone(), context.2, new_window_width, new_window_height)) {
+                        Ok(_) => (),
+                        Err(_error) => debug!("Problem sending plugin window resize from vst3 plugin."),
+                    }
+                    context
+                }
+            );
+        }
+    }
+
+    fn xid_mut(&mut self) -> &mut Option<u32> {
+        &mut self.xid
+    }
+
+    fn get_window_size(&self) -> (i32, i32) {
+        (
+            ffi::vst3_plugin_get_window_width(self.daw_plugin_uuid.to_string()) as i32,
+            ffi::vst3_plugin_get_window_height(self.daw_plugin_uuid.to_string()) as i32
+        )
+    }
+
+    fn rx_from_host(&self) -> &Receiver<AudioPluginHostOutwardEvent> {
+        &self.rx_from_host
+    }
+
+    fn rx_from_host_mut(&mut self) -> &mut Receiver<AudioPluginHostOutwardEvent> {
+        &mut self.rx_from_host
+    }
+
+    fn set_tempo(&mut self, tempo: f64) {
+        // todo!()
+    }
+
+    fn tempo(&self) -> f64 {
+        140.0
+    }
+
+    fn stop_processing(&mut self) {
+        ffi::setProcessing(self.daw_plugin_uuid.to_string(), false);
+    }
+
+    fn shutdown(&mut self) {
+        ffi::setProcessing(self.daw_plugin_uuid.to_string(), false);
+        ffi::setActive(self.daw_plugin_uuid.to_string(), false);
+    }
+
+    fn preset_data(&mut self) -> String {
+        let mut data: [u8; 1000000] = [0; 1000000];
+        let data_length = data.len() as u32;
+        let bytes_written = ffi::vst3_plugin_get_preset(self.daw_plugin_uuid.to_string(), &mut data, data_length);
+
+        if (bytes_written > 0) {
+            return base64::encode(&data[0..bytes_written as usize]);
+        }
+        "".to_string()
+    }
+
+    fn set_preset_data(&mut self, data: String) {
+        if let Ok(mut data) = base64::decode(&data) {
+            debug!("vst3 set_preset_data - data length={}", data.len());
+            ffi::vst3_plugin_set_preset(self.daw_plugin_uuid.to_string(), &mut data);
+        }
+    }
+
+    fn sample_rate(&self) -> f64 {
+        44100.0
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        // todo!()
+    }
+}
+
+impl BackgroundProcessorVst3AudioPlugin {
+    pub fn new_with_uuid(
+        track_uuid: String,
+        daw_plugin_uuid: Uuid,
+        vst3_plugin_uid: String,
+        library_path: String,
+        instrument: bool,
+    ) -> Self {
+        let (tx_from_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
+        let vst3host = Box::new(Vst3Host(track_uuid.clone(), daw_plugin_uuid.to_string(), instrument, tx_from_host.clone()));
+        create_vst3_audio_plugin(
+            library_path.clone(),
+            daw_plugin_uuid.to_string(),
+            vst3_plugin_uid.clone(),
+            vst3host,
+        );
+        Self {
+            track_uuid: track_uuid.clone(),
+            daw_plugin_uuid: daw_plugin_uuid.clone(),
+            vst3_plugin_uid,
+            library_path,
+            xid: None,
+            tx_from_host: tx_from_host.clone(),
+            rx_from_host,
+            instrument,
+        }
+    }
+
+    pub fn repaint(&self) {
+        ffi::vst3_plugin_get_window_refresh(self.daw_plugin_uuid.to_string());
+    }
+
+    pub fn process_events(&self, events: &Vec<TrackEvent>) {
+        for event in events {
+            if let TrackEvent::NoteOn(note) = event {
+                debug!("Note on: note={}, velocity={}", note.note, note.velocity);
+                ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOn, 0, note.note as u32, note.velocity as u32, 0);
+            }
+            else if let TrackEvent::NoteOff(note) = event {
+                debug!("Note off: note={}, velocity={}", note.note, note.velocity);
+                ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOff, 0, note.note as u32, note.velocity as u32, 0);
+            }
+        }
+    }
+
+    pub fn process_param_events(&self, events: &Vec<&PluginParameter>) {
+        for event in events {
+            debug!("Parameter: id={}, value={}", event.index, event.value);
+            ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Parameter, 0, event.index as u32, (event.value * 127.0) as u32, 0);
+        }
+    }
+
+    pub fn process(&mut self, background_processor_buffer: &mut AudioBuffer<f32>) {
+        let (inputBuffer, mut outputBuffer) = background_processor_buffer.split();
+        let channel1InputBuffer = inputBuffer.get(0);
+        let channel2InputBuffer = inputBuffer.get(1);
+        let channel1OutputBuffer = outputBuffer.get_mut(0);
+        let channel2OutputBuffer = outputBuffer.get_mut(1);
+        ffi::vst3_plugin_process(self.daw_plugin_uuid.to_string(), channel1InputBuffer, channel2InputBuffer, channel1OutputBuffer, channel2OutputBuffer);
+    }
+
+    pub fn get_parameter_count(&self) -> i32 {
+        ffi::vst3_plugin_get_parameter_count(self.daw_plugin_uuid.to_string())
+    }
+
+    pub fn get_parameter(&self, index: i32) -> (i32, String, Uuid, String, String, f32, String) {
+        let mut id: u32 = 0;
+        let mut title: [u16; 128] = [0; 128];
+        let mut short_title: [u16; 128] = [0; 128];
+        let mut units: [u16; 128] = [0; 128];
+        let mut step_count = 0;
+        let mut default_normalised_value = 0.0;
+        let mut unit_id = 0;
+        let mut flags = 0;
+
+        ffi::vst3_plugin_get_parameter_info(self.daw_plugin_uuid.to_string(), index, &mut id, &mut title, &mut short_title, &mut units, &mut step_count, &mut default_normalised_value, &mut unit_id, &mut flags);
+        let converted_title = Self::convert_vst3_string128(title);
+        let converted_short_title = Self::convert_vst3_string128(short_title);
+        let converted_units = Self::convert_vst3_string128(units);
+        // if index < 128 {
+        //     debug!("Parameter: index={} ,id={} ,title={} ,short title={} ,units={} ,step_count={} ,default normalised value={} ,unit id={} ,flags={}", index, id, converted_title, converted_short_title, converted_units, step_count, default_normalised_value, unit_id, flags);
+        // }
+        (id as i32, self.track_uuid.clone(), self.daw_plugin_uuid.clone(), converted_title, converted_short_title, 1.0, converted_units)
+    }
+
+    fn convert_vst3_string128(vst3_string128: [u16; 128]) -> String {
+        let mut u16_string = U16String::from_vec(vst3_string128);
+        for (pos, result) in u16_string.chars().enumerate() {
+            if let Ok(character) = result {
+                if character == '\0' {
+                    u16_string.truncate(pos);
+                    break;
+                }
+            }
+        }
+
+        return if let Ok(converted_string) = u16_string.to_string() {
+            converted_string
+        } else {
+            "Can't convert".to_string()
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub enum AudioPluginType {
@@ -3129,7 +3417,20 @@ impl TrackBackgroundProcessorHelper {
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
                     else {
-                        BackgroundProcessorAudioPluginType::Vst3
+                        let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
+                            vst_plugin_uid
+                        }
+                        else {
+                            "0".to_string()
+                        };
+                        let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
+                            self.track_uuid.clone(),
+                            uuid,
+                            vst_plugin_uid,
+                            library_path,
+                            false,
+                        );
+                        BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
                     };
 
                     self.effect_plugin_instances.push(plugin_instance);
@@ -3180,7 +3481,25 @@ impl TrackBackgroundProcessorHelper {
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
                     else {
-                        BackgroundProcessorAudioPluginType::Vst3
+                        let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
+                            vst_plugin_uid
+                        }
+                        else {
+                            "0".to_string()
+                        };
+                        let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
+                            self.track_uuid.clone(),
+                            uuid,
+                            vst_plugin_uid,
+                            library_path,
+                            true,
+                        );
+                        let instrument_name = vst3_plugin.name();
+                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
+                            Ok(_) => debug!("Sent instrument name to main processing loop."),
+                            Err(_) => debug!("Failed to send instrument name to main processing loop."),
+                        }
+                        BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
                     };
 
                     self.instrument_plugin_instances.clear();
@@ -3387,7 +3706,7 @@ impl TrackBackgroundProcessorHelper {
                                             vst_host.add_track_event_outward_routing(track_event_routing, ring_buffer, producer);
                                         }
                                     }
-                                    BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                                     BackgroundProcessorAudioPluginType::Clap(_) => {
 
                                     }
@@ -3409,7 +3728,7 @@ impl TrackBackgroundProcessorHelper {
                                     vst_host.remove_track_event_outward_routing(route_uuid);
                                 }
                             }
-                            BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                             BackgroundProcessorAudioPluginType::Clap(_) => {
 
                             }
@@ -3481,7 +3800,16 @@ impl TrackBackgroundProcessorHelper {
                         self.midi_sender.store_events(all_note_offs);
                         vst_24_plugin.vst_plugin_instance_mut().process_events(self.midi_sender.events())
                     }
-                    BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                        let mut all_note_offs: Vec<TrackEvent> = Vec::new();
+
+                        for note in self.event_processor.playing_notes().iter() {
+                            let note_off = NoteOff::new_with_params(0.0, *note, 0);
+                            all_note_offs.push(TrackEvent::NoteOff(note_off));
+                        }
+                        debug!("Sending note off events to the VST3 instrument: {}", all_note_offs.len());
+                        vst3_plugin.process_events(&all_note_offs);
+                    }
                     BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                         let mut all_note_offs: Vec<TrackEvent> = Vec::new();
             
@@ -3509,7 +3837,9 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    vst3_plugin.repaint();
+                }
                 BackgroundProcessorAudioPluginType::Clap(_) => {
 
                 }
@@ -3528,7 +3858,7 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                 BackgroundProcessorAudioPluginType::Clap(_) => {
 
                 }
@@ -3547,19 +3877,49 @@ impl TrackBackgroundProcessorHelper {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument VstHost automation from VST thread to state: {}", error),
                                 }
-                            },
+                            }
                             AudioPluginHostOutwardEvent::SizeWindow(_, _, _, width, height) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width, height)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument VstHost size window from VST thread to state: {}", error),
                                 }
-                            },
-                        },
+                            }
+                        }
                         Err(_) => (),
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3 => todo!(),
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    match vst3_plugin.rx_from_host().try_recv() {
+                        Ok(event) => match event {
+                            AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Vst3Host automation from VST3 thread to state: {}", error),
+                                }
+                            }
+                            AudioPluginHostOutwardEvent::SizeWindow(_, _, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width, height)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Vst3Host size window from VST3 thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => ()
+                    }
+                }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
+                    match clap_plugin.rx_from_host().try_recv() {
+                        Ok(event) => {
+                            if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, is_instrument, param_index, param_value) = event {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
                     match clap_plugin.host_receiver.try_recv() {
                         Ok(message) => match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
@@ -3596,8 +3956,38 @@ impl TrackBackgroundProcessorHelper {
                         Err(_) => (),
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3 => {}
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    match vst3_plugin.rx_from_host().try_recv() {
+                        Ok(event) => match event {
+                            AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying effect Vst3Host automation from VST3 thread to state: {}", error),
+                                }
+                            }
+                            AudioPluginHostOutwardEvent::SizeWindow(_, plugin_uuid, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(self.track_uuid.clone(), plugin_uuid, width, height)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying effect Vst3Host size window from VST3 thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => ()
+                    }
+                }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
+                    match clap_plugin.rx_from_host().try_recv() {
+                        Ok(event) => {
+                            if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, is_instrument, param_index, param_value) = event {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
                     match clap_plugin.host_receiver.try_recv() {
                         Ok(message) => match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
@@ -3655,7 +4045,16 @@ impl TrackBackgroundProcessorHelper {
                         plugin_parameters.push((index, self.track_uuid.clone(), instrument_plugin.uuid(), params.get_parameter_name(index), params.get_parameter_label(index), params.get_parameter(index), params.get_parameter_text(index)));
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3 => {}
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    let parameterCount = vst3_plugin.get_parameter_count();
+
+                    for index in 0..parameterCount {
+                        let mut parameter = vst3_plugin.get_parameter(index);
+                        parameter.1 = self.track_uuid.clone();
+                        parameter.2 = vst3_plugin.uuid();
+                        plugin_parameters.push(parameter);
+                    }
+                }
                 BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                     if let Some(params) = instrument_plugin.plugin.get_extension::<Params>() {
                         if let Ok(info) = params.info(&instrument_plugin.plugin) {
@@ -3701,7 +4100,7 @@ impl TrackBackgroundProcessorHelper {
                                 plugin_parameters.push((self.request_effect_params_for_uuid.clone(), index, params.get_parameter_name(index), params.get_parameter_label(index), params.get_parameter(index), params.get_parameter_text(index)));
                             }
                         }
-                        BackgroundProcessorAudioPluginType::Vst3 => {}
+                        BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                         BackgroundProcessorAudioPluginType::Clap(effect) => {
                             if let Some(params) = effect.plugin.get_extension::<Params>() {
                                 if let Ok(info) = params.info(&effect.plugin) {
@@ -3834,7 +4233,7 @@ impl TrackBackgroundProcessorHelper {
                                         }
                                         vst_plugin_instance.process_events(self.midi_sender.events());
                                     }
-                                    BackgroundProcessorAudioPluginType::Vst3 => {}
+                                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                                     BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
 
                                     }
@@ -3869,7 +4268,9 @@ impl TrackBackgroundProcessorHelper {
                         }
                         vst_plugin_instance.process_events(self.midi_sender.events());
                     }
-                    BackgroundProcessorAudioPluginType::Vst3 => {}
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                        vst3_plugin.process_events(&events);
+                    }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                         debug!("{} - process_plugin_events: sending events to clap plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
                         instrument_plugin.process_events(&events);
@@ -3891,7 +4292,10 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                     }
-                    BackgroundProcessorAudioPluginType::Vst3 => {}
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
+                        vst3_plugin.process_param_events(&plugin_param_events);
+                    }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                         if let Some(params) = instrument_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
                             match params.info(instrument_plugin.plugin()) {
@@ -3918,7 +4322,7 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                     }
-                    BackgroundProcessorAudioPluginType::Vst3 => {}
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                     BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
                         if let Some(params) = effect_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
                             match params.info(effect_plugin.plugin()) {
@@ -3966,7 +4370,7 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                     }
-                    BackgroundProcessorAudioPluginType::Vst3 => {}
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                     BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
 
                     }
@@ -4314,7 +4718,9 @@ impl InstrumentTrackBackgroundProcessor {
                                 let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
                                 vst_plugin_instance.process(&mut audio_buffer);
                             }
-                            BackgroundProcessorAudioPluginType::Vst3 => {}
+                            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                                vst3_plugin.process(&mut audio_buffer);
+                            }
                             BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                                 instrument_plugin.process(&mut audio_buffer, false);
 
@@ -4380,7 +4786,9 @@ impl InstrumentTrackBackgroundProcessor {
                                 }
                                 effect.vst_plugin_instance_mut().process(audio_buffer_in_use);
                             }
-                            BackgroundProcessorAudioPluginType::Vst3 => {}
+                            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                                vst3_plugin.process(audio_buffer_in_use);
+                            }
                             BackgroundProcessorAudioPluginType::Clap(effect) => {
                                 effect.process(audio_buffer_in_use, true);
 
@@ -4634,7 +5042,7 @@ impl AudioTrackBackgroundProcessor {
                             BackgroundProcessorAudioPluginType::Vst24(effect) => {
                                 effect.vst_plugin_instance_mut().process(audio_buffer_in_use);
                             }
-                            BackgroundProcessorAudioPluginType::Vst3 => {}
+                            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
                             BackgroundProcessorAudioPluginType::Clap(_effect) => {
 
                             }
@@ -6129,8 +6537,8 @@ impl<T> MidiConsumerDetails<T> {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DAWConfiguration {
     pub audio: AudioConfiguration,
-    pub scanned_vst_instrument_plugins: ScannedVstPlugins,
-    pub scanned_vst_effect_plugins: ScannedVstPlugins,
+    pub scanned_instrument_plugins: ScannedPlugins,
+    pub scanned_effect_plugins: ScannedPlugins,
     pub midi_input_connections: MidiInputConnections,
     pub midi_output_connections: MidiOutputConnections,
 }
@@ -6139,8 +6547,8 @@ impl DAWConfiguration {
     pub fn new() -> Self {
         Self {
             audio: AudioConfiguration::new(),
-            scanned_vst_instrument_plugins: ScannedVstPlugins::new(),
-            scanned_vst_effect_plugins: ScannedVstPlugins::new(),
+            scanned_instrument_plugins: ScannedPlugins::new(),
+            scanned_effect_plugins: ScannedPlugins::new(),
             midi_input_connections: MidiInputConnections::new(),
             midi_output_connections: MidiOutputConnections::new(),
         }
@@ -6202,11 +6610,11 @@ impl AudioConfiguration {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ScannedVstPlugins {
+pub struct ScannedPlugins {
     pub successfully_scanned: HashMap<String, String>, // key=id (path:shell id:bool), value=name
 }
 
-impl ScannedVstPlugins {
+impl ScannedPlugins {
     pub fn new() -> Self {
         Self {
             successfully_scanned: HashMap::new(),

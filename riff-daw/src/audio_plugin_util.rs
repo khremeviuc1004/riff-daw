@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::{Arc, mpsc::Sender, Mutex}};
 use std::{path::Path};
+use std::os::raw::c_char;
 use std::path::PathBuf;
-use std::process::{Command};
+use std::process::{Command, Stdio};
 
 use log::*;
 
@@ -12,6 +13,8 @@ use vst::{host::{PluginInstance, PluginLoader}, plugin::Category, plugin::Plugin
 use vst::api::TimeInfo;
 
 use crate::{domain::{VstHost}, event::AudioPluginHostOutwardEvent, constants::{VST24_CHECKER_EXECUTABLE_NAME, CLAP_CHECKER_EXECUTABLE_NAME}};
+use crate::constants::VST3_CHECKER_EXECUTABLE_NAME;
+use crate::vst3_cxx_bridge::{ffi, Vst3Host};
 
 pub fn create_vst24_audio_plugin(
     vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
@@ -205,6 +208,31 @@ pub fn create_vst24_audio_plugin(
     }
  }
 
+pub fn create_vst3_audio_plugin(
+    library_path: String,
+    daw_plugin_uuid: String,
+    vst3_plugin_uid: String,
+    vst3_host: Box<Vst3Host>,
+) -> bool {
+    return ffi::createPlugin(
+        library_path,
+        daw_plugin_uuid,
+        vst3_plugin_uid,
+        44100.0,
+        1024,
+        vst3_host,
+        |context: Box<Vst3Host>, param_id: i32, param_value: f32| {
+            debug!("Vst3 plugin automation data.");
+            debug!("Parameter {} had its value changed to {}", param_id, param_value);
+            match context.3.send(AudioPluginHostOutwardEvent::Automation(context.0.clone(), context.1.clone(), context.2, param_id, param_value)) {
+                Ok(_) => (),
+                Err(_error) => debug!("Problem sending plugin param automation from vst3 plugin."),
+            }
+            context
+        }
+    );
+}
+
  pub fn create_clap_audio_plugin(
     plugin_libraries: Arc<Mutex<HashMap<String, PluginLibrary>>>,
     audio_plugin_path: &str,
@@ -298,7 +326,7 @@ pub fn create_vst24_audio_plugin(
     }
 }
 
-pub fn scan_for_audio_plugins(vst_path: String, clap_path: String) -> (HashMap<String, String>, HashMap<String, String>) {
+pub fn scan_for_audio_plugins(vst_path: String, clap_path: String, vst3_path: String) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut instrument_audio_plugins: HashMap<String, String> = HashMap::new();
     let mut effect_audio_plugins: HashMap<String, String> = HashMap::new();
 
@@ -307,10 +335,18 @@ pub fn scan_for_audio_plugins(vst_path: String, clap_path: String) -> (HashMap<S
             scan_for_audio_plugins_of_type(vst24_checker, vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
         }
     }
-    
+
     if let Some(clap_checker) = find_executable_in_path(CLAP_CHECKER_EXECUTABLE_NAME) {
         if let Some(clap_checker) = clap_checker.to_str() {
             scan_for_audio_plugins_of_type(clap_checker, clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
+        }
+    }
+
+    if let Some(vst3_checker) = find_executable_in_path(VST3_CHECKER_EXECUTABLE_NAME) {
+        if let Some(vst3_checker) = vst3_checker.to_str() {
+            for path in vst3_path.split(",") {
+                scan_for_audio_plugins_of_type(vst3_checker, path, &mut instrument_audio_plugins, &mut effect_audio_plugins);
+            }
         }
     }
 
@@ -326,77 +362,84 @@ fn scan_for_audio_plugins_of_type(
     if let Ok(read_dir) = std::fs::read_dir(shared_library_path) {
         for dir_entry in read_dir {
             if let Ok(entry) = dir_entry {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_file() || file_type.is_symlink() {
-                        if let Some(path) = entry.path().to_str() {
-                            if path.ends_with(".so") || path.ends_with(".clap") {
-                                debug!("Found shared library: {}", path);
-                                let plugin_path = path.to_string();
+                if let Some(path) = entry.path().to_str() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() || file_type.is_symlink() {
+                            debug!("Found shared library: {}", path);
+                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string());
+                        }
+                        else if file_type.is_dir() && path.ends_with(".vst3") && audio_plugin_checker.ends_with(VST3_CHECKER_EXECUTABLE_NAME) {
+                            debug!("Found vst3 library: {}", path);
+                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-                                if let Ok(output) = Command::new(audio_plugin_checker)
-                                    .arg(format!("\"{}\"", plugin_path.as_str()))
-                                    .output() {
-                                    if let Ok(command_output) = std::str::from_utf8(&output.stdout) {
-                                        debug!("{}", command_output);
-                                        if command_output.contains("##########") {
-                                            for line in command_output.lines() {
-                                                if line.starts_with("##########") {
-                                                    let adjusted_line = line.replace("##########", "");
-                                                    let elements = adjusted_line.split(':').collect::<Vec<&str>>();
-                                                    let plugin_name = match elements.first() {
-                                                        Some(plugin_name) => *plugin_name,
-                                                        None => "unknown",
-                                                    };
-                                                    let library_path = match elements.get(1) {
-                                                        Some(path) => *path,
-                                                        None => "",
-                                                    };
-                                                    let plugin_id = match elements.get(2) {
-                                                        Some(id) => *id,
-                                                        None => "",
-                                                    };
-                                                    let plugin_category = match elements.get(3) {
-                                                        Some(category) => (*category).parse::<isize>().unwrap_or(0),
-                                                        None => 0,
-                                                    };
-                                                    let plugin_type = match elements.get(4) {
-                                                        Some(plugin_type) => *plugin_type,
-                                                        None => "unknown",
-                                                    };
+fn do_plugin_check(audio_plugin_checker: &str, instrument_audio_plugins: &mut HashMap<String, String>, effect_audio_plugins: &mut HashMap<String, String>, plugin_path: String) {
+    if let Ok(child) = Command::new(audio_plugin_checker)
+        .arg(plugin_path.as_str())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn() {
+        if let Ok(output) = child.wait_with_output() {
+            let status = output.status;
+            debug!("Status: {}", status);
+            if let Ok(command_output) = std::str::from_utf8(&output.stdout) {
+                debug!("Command stdout: {}", command_output);
+                if command_output.contains("##########") {
+                    for line in command_output.lines() {
+                        if line.starts_with("##########") {
+                            let adjusted_line = line.replace("##########", "");
+                            let elements = adjusted_line.split(':').collect::<Vec<&str>>();
+                            let plugin_name = match elements.first() {
+                                Some(plugin_name) => *plugin_name,
+                                None => "unknown",
+                            };
+                            let library_path = match elements.get(1) {
+                                Some(path) => *path,
+                                None => "",
+                            };
+                            let plugin_id = match elements.get(2) {
+                                Some(id) => *id,
+                                None => "",
+                            };
+                            let plugin_category = match elements.get(3) {
+                                Some(category) => (*category).parse::<isize>().unwrap_or(0),
+                                None => 0,
+                            };
+                            let plugin_type = match elements.get(4) {
+                                Some(plugin_type) => *plugin_type,
+                                None => "unknown",
+                            };
 
 
-                                                    if !plugin_name.is_empty() &&
-                                                        !library_path.is_empty() {
-                                                        let id = format!("{}:{}:{}", library_path, plugin_id, plugin_type);
-                                                        let plugin_name = format!("{} ({})", plugin_name, plugin_type);
+                            if !plugin_name.is_empty() &&
+                                !library_path.is_empty() {
+                                let id = format!("{}:{}:{}", library_path, plugin_id, plugin_type);
+                                let plugin_name = format!("{} ({})", plugin_name, plugin_type);
 
-                                                        match plugin_category {
-                                                            // unknown
-                                                            0 => {
-                                                                effect_audio_plugins.insert(id, plugin_name);
-                                                            }
-                                                            // effect
-                                                            1 => {
-                                                                effect_audio_plugins.insert(id, plugin_name);
-                                                            }
-                                                            // instrument
-                                                            2 => {
-                                                                instrument_audio_plugins.insert(id, plugin_name);
-                                                            }
-                                                            // generator
-                                                            11 => {
-                                                                instrument_audio_plugins.insert(id, plugin_name);
-                                                            }
-                                                            _ => {}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                match plugin_category {
+                                    // unknown
+                                    0 => {
+                                        effect_audio_plugins.insert(id, plugin_name);
                                     }
-                                    else {
-                                        debug!("Couldn't process command output.");
+                                    // effect
+                                    1 => {
+                                        effect_audio_plugins.insert(id, plugin_name);
                                     }
+                                    // instrument
+                                    2 => {
+                                        instrument_audio_plugins.insert(id, plugin_name);
+                                    }
+                                    // generator
+                                    11 => {
+                                        instrument_audio_plugins.insert(id, plugin_name);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }

@@ -76,8 +76,8 @@ pub struct DAWState {
     sample_data: HashMap<String, SampleData>,
     track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>>,
     centre_split_pane_position: i32,
-    vst_instrument_plugins: IndexMap<String, String>,
-    vst_effect_plugins: IndexMap<String, String>,
+    instrument_plugins: IndexMap<String, String>,
+    effect_plugins: IndexMap<String, String>,
     track_grid_cursor_follow: bool,
     pub current_view: CurrentView,
     pub dirty: bool,
@@ -130,8 +130,8 @@ impl DAWState {
             sample_data: HashMap::new(),
             track_render_audio_consumers: Arc::new(Mutex::new(HashMap::new())),
             centre_split_pane_position: 600,
-            vst_instrument_plugins: IndexMap::new(),
-            vst_effect_plugins: IndexMap::new(),
+            instrument_plugins: IndexMap::new(),
+            effect_plugins: IndexMap::new(),
             track_grid_cursor_follow: true,
             current_view: CurrentView::Track,
             selected_riff_arrangement_uuid: None,
@@ -334,7 +334,7 @@ impl DAWState {
                     instrument_details.push(':');
                     instrument_details.push_str(instrument.plugin_type());
 
-                    if instrument_details.contains(".so") || instrument_details.contains(".clap") {
+                    if instrument_details.contains(".so") || instrument_details.contains(".clap") || instrument_details.contains(".vst3") {
                         match track_uuid {
                             Some(_) => {
                                 match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
@@ -468,7 +468,7 @@ impl DAWState {
                     instrument.set_sub_plugin_id(sub_plugin_id);
                     instrument.set_plugin_type(plugin_type);
 
-                    if instrument_details.contains(".so") || instrument_details.contains(".clap") {
+                    if instrument_details.contains(".so") || instrument_details.contains(".clap") || instrument_details.contains(".vst3") {
                         // instrument.load(vst_plugin_loaders, track_uuid.clone(), instrument_details, tx_audio.clone(), rx_vst, tx_from_vst, track_audio_coast);
                         match self.instrument_track_senders_mut().get_mut(&track_uuid) {
                             Some(sender) => {
@@ -2453,17 +2453,17 @@ impl DAWState {
     pub fn set_centre_split_pane_position(&mut self, centre_split_pane_position: i32) {
         self.centre_split_pane_position = centre_split_pane_position;
     }
-    pub fn vst_instrument_plugins(&self) -> &IndexMap<String, String> {
-        &self.vst_instrument_plugins
+    pub fn instrument_plugins(&self) -> &IndexMap<String, String> {
+        &self.instrument_plugins
     }
-    pub fn vst_instrument_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
-        &mut self.vst_instrument_plugins
+    pub fn instrument_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.instrument_plugins
     }
-    pub fn vst_effect_plugins(&self) -> &IndexMap<String, String> {
-        &self.vst_effect_plugins
+    pub fn effect_plugins(&self) -> &IndexMap<String, String> {
+        &self.effect_plugins
     }
-    pub fn vst_effect_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
-        &mut self.vst_effect_plugins
+    pub fn effect_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.effect_plugins
     }
     pub fn track_grid_cursor_follow(&self) -> bool {
         self.track_grid_cursor_follow
@@ -2745,8 +2745,8 @@ impl DAWState {
         if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers.lock() {
             track_render_audio_consumers.clear();
         }
-        self.vst_instrument_plugins.clear();
-        self.vst_effect_plugins.clear();
+        self.instrument_plugins.clear();
+        self.effect_plugins.clear();
         self.dirty = false;
         self.selected_automation.clear();
         self.automation_event_copy_buffer.clear();

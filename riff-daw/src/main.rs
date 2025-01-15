@@ -29,7 +29,8 @@ use ui::*;
 
 use crate::{grid::Grid, utils::DAWUtils};
 use crate::audio::Audio;
-use crate::constants::EVENT_DELETION_BEAT_TOLERANCE;
+use crate::constants::{EVENT_DELETION_BEAT_TOLERANCE, VST3_PATH_ENVIRONMENT_VARIABLE_NAME};
+use crate::vst3_cxx_bridge::ffi;
 
 mod constants;
 mod domain;
@@ -42,6 +43,7 @@ mod utils;
 mod audio_plugin_util;
 mod history;
 mod lua_api;
+mod vst3_cxx_bridge;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -49,6 +51,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 extern {
     fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
 }
+
 
 fn main() {
     // transport
@@ -259,47 +262,48 @@ pub fn start_autosave(state: Arc<Mutex<DAWState>>, autosave_keep_alive: Arc<Mute
 pub fn scan_audio_plugins(state: Arc<Mutex<DAWState>>, gui: &MainWindow)     {
     if let Ok(vst_path) = std::env::var(VST_PATH_ENVIRONMENT_VARIABLE_NAME) {
         if let Ok(clap_path) = std::env::var(CLAP_PATH_ENVIRONMENT_VARIABLE_NAME) {
-            match state.lock() {
-                Ok(mut state) => {
-                    if state.configuration.scanned_vst_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_vst_effect_plugins.successfully_scanned.is_empty() {
-                        let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone());
-                        for (key, value) in instruments.iter() {
-                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                            state.configuration.scanned_vst_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+            if let Ok(vst3_path) = std::env::var(VST3_PATH_ENVIRONMENT_VARIABLE_NAME) {
+                match state.lock() {
+                    Ok(mut state) => {
+                        if state.configuration.scanned_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_effect_plugins.successfully_scanned.is_empty() {
+                            let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone(), vst3_path.clone());
+                            for (key, value) in instruments.iter() {
+                                state.instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                                state.configuration.scanned_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                            }
+                            state.instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
 
-                        for (key, value) in effects.iter() {
-                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                            state.configuration.scanned_vst_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+                            for (key, value) in effects.iter() {
+                                state.effect_plugins_mut().insert(key.to_string(), value.to_string());
+                                state.configuration.scanned_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
+                            }
+                            state.effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
 
-                        state.configuration.save();
+                            state.configuration.save();
+                        } else {
+                            let mut intermediate_map = HashMap::new();
+                            for (key, value) in state.configuration.scanned_instrument_plugins.successfully_scanned.iter() {
+                                intermediate_map.insert(key.to_string(), value.to_string());
+                            }
+                            for (key, value) in intermediate_map.iter() {
+                                state.instrument_plugins_mut().insert(key.to_string(), value.to_string());
+                            }
+                            state.instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+
+                            intermediate_map.clear();
+                            for (key, value) in state.configuration.scanned_effect_plugins.successfully_scanned.iter() {
+                                intermediate_map.insert(key.to_string(), value.to_string());
+                            }
+                            for (key, value) in intermediate_map.iter() {
+                                state.effect_plugins_mut().insert(key.to_string(), value.to_string());
+                            }
+                            state.effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
+                        }
+
+                        gui.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
                     }
-                    else {
-                        let mut intermediate_map = HashMap::new();
-                        for (key, value) in state.configuration.scanned_vst_instrument_plugins.successfully_scanned.iter() {
-                            intermediate_map.insert(key.to_string(), value.to_string());
-                        }
-                        for (key, value) in intermediate_map.iter() {
-                            state.vst_instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                        intermediate_map.clear();
-                        for (key, value) in state.configuration.scanned_vst_effect_plugins.successfully_scanned.iter() {
-                            intermediate_map.insert(key.to_string(), value.to_string());
-                        }
-                        for (key, value) in intermediate_map.iter() {
-                            state.vst_effect_plugins_mut().insert(key.to_string(), value.to_string());
-                        }
-                        state.vst_effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-                    }
-
-                    gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+                    Err(_) => {}
                 }
-                Err(_) => {}
             }
         }
     }
@@ -1252,7 +1256,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
 
                             state.update_track_senders_and_receivers(instrument_track_senders_local, instrument_track_receivers_local);
-                            gui.update_available_audio_plugins_in_ui(state.vst_instrument_plugins(), state.vst_effect_plugins());
+                            gui.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - Track Added - could not get lock on state"),
                     }
@@ -3967,7 +3971,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let midi_input_devices: Vec<String> = state.midi_devices();
                                 let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
 
-                                for (key, value) in state.vst_instrument_plugins().iter() {
+                                for (key, value) in state.instrument_plugins().iter() {
                                     instrument_plugins.insert(key.clone(), value.clone());
                                 }
 
@@ -7622,7 +7626,7 @@ fn process_track_background_processor_events(
                 }
             }
 
-            // if playing and recording add automation to  to the correct domain entity based on the current view.
+            // if playing and recording add automation to the correct domain entity based on the current view.
             if state.playing() && state.recording() {
                 if let Some(event) = automation_event {
                     let current_view = state.current_view().clone();

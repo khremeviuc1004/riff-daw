@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
 use clap_sys::events::{CLAP_CORE_EVENT_SPACE_ID, clap_event_header, CLAP_EVENT_MIDI, clap_event_midi, clap_event_note, clap_event_note_expression, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, clap_event_param_value, CLAP_EVENT_PARAM_VALUE, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME};
+use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
@@ -674,7 +675,25 @@ impl DAWUtils {
                     };
                     events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(pitch_bend_clap_event));
                 }
-                TrackEvent::AudioPluginParameter(_) => {}
+                TrackEvent::AudioPluginParameter(parameter) => {
+                    let param_value = clap_event_param_value{
+                        header: clap_event_header {
+                            size: std::mem::size_of::<clap_event_midi>() as u32,
+                            time: parameter.position() as u32,
+                            space_id: CLAP_CORE_EVENT_SPACE_ID,
+                            type_: CLAP_EVENT_PARAM_VALUE,
+                            flags: 0,
+                        },
+                        param_id: parameter.index as clap_id,
+                        value: parameter.value as f64,
+                        channel: -1,
+                        port_index: 1,
+                        key: -1,
+                        note_id: -1,
+                        cookie: std::ptr::null_mut(),
+                    };
+                    events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::ParamValue(param_value));
+                }
                 TrackEvent::Sample(_) => {}
                 _ => {}
             }

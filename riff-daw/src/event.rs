@@ -35,6 +35,7 @@ pub enum ShowType {
     Velocity,
     NoteExpression,
     Controller,
+    PitchBend,
     InstrumentParameter,
     EffectParameter,
 }

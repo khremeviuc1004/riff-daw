@@ -3409,7 +3409,6 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let note_y_pos_inverted = controller_value as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                         let x = controller.position() * adjusted_beat_width_in_pixels;
                                                         let y = height - note_y_pos_inverted;
-                                                        let width = 1.0;
 
                                                         let is_selected = state.selected_automation().iter().any(|id| {
                                                             id.as_str() == controller.id().as_str()
@@ -3427,6 +3426,30 @@ impl CustomPainter for AutomationCustomPainter {
                                                             Err(error) => debug!("Problem drawing not controller in the automation view: {:?}", error),
                                                         }
                                                     }
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::PitchBend => {
+                                            if let TrackEvent::PitchBend(pitch_bend) = track_event {
+                                                let pitch_bend_value = pitch_bend.value();
+                                                let note_y_pos_inverted = ((pitch_bend_value as f64 + 8192.0) / 16384.0 * 127.0) * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = pitch_bend.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+
+                                                let is_selected = state.selected_automation().iter().any(|id| {
+                                                    id.as_str() == pitch_bend.id().as_str()
+                                                });
+                                                if is_selected {
+                                                    event_colour = (0.0, 0.0, 1.0, 1.0);
+                                                }
+                                                context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
+
+                                                context.move_to(x, height / 2.0);
+                                                context.line_to(x, y);
+
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing not pitch bend in the automation view: {:?}", error),
                                                 }
                                             }
                                         }

@@ -16341,6 +16341,19 @@
                           </packing>
                         </child>
                         <child>
+                          <object class="GtkRadioToolButton" id="automation_grid_edit_pitch_bend">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">Pitch Bend</property>
+                            <property name="use-underline">True</property>
+                            <property name="group">automation_grid_edit_note_velocity</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">True</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkRadioToolButton" id="automation_grid_edit_instrument_parameters">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
@@ -16969,6 +16982,41 @@
                           </packing>
                         </child>
                         <child>
+                          <object class="GtkBox" id="automation_grid_edit_pitch_bend_box">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                            <child>
+                              <placeholder/>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="name">automation_pitch_bend</property>
+                            <property name="title" translatable="yes">Pitch Bend</property>
+                            <property name="position">3</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkBox" id="automation_grid_edit_instrument_parameters_box">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
@@ -16999,7 +17047,7 @@
                           <packing>
                             <property name="name">automation_instrument</property>
                             <property name="title" translatable="yes">Instrument</property>
-                            <property name="position">3</property>
+                            <property name="position">4</property>
                           </packing>
                         </child>
                         <child>
@@ -17056,7 +17104,7 @@
                           <packing>
                             <property name="name">automation_effects</property>
                             <property name="title" translatable="yes">Effects</property>
-                            <property name="position">4</property>
+                            <property name="position">5</property>
                           </packing>
                         </child>
                       </object>

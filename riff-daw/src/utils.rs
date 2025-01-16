@@ -172,6 +172,7 @@ impl DAWUtils {
         passage_length_in_beats: f64,
         midi_channel: i32,
     ) -> (Vec<Vec<TrackEvent>>, Vec<Vec<PluginParameter>>) {
+        debug!("Automation events for track: {}", automation.len());
         // TODO need to make sure that this doesn't cross over into the next measure
         // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - 1024.0; 
         let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
@@ -181,6 +182,7 @@ impl DAWUtils {
         let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel);
         debug!("Number of riff ref events extracted for track: {}", track_events.len());
         let plugin_parameter_events = Self::convert_automation_events(automation, bpm, sample_rate, &mut track_events, midi_channel);
+        debug!("Number of riff ref automation parameter events extracted for track: {}", plugin_parameter_events.len());
 
         let event_blocks = Self::create_track_event_blocks(block_size_in_samples, passage_length_in_frames, &mut track_events);
         let param_event_blocks = Self::create_plugin_parameter_blocks(block_size_in_samples, passage_length_in_frames, &plugin_parameter_events);
@@ -334,7 +336,8 @@ impl DAWUtils {
                 _ => {}
             }
         }
-        plugin_parameter_events.sort_by_key(|a| a.position() as i32);
+        events_all.sort_by_key(|track_event| track_event.position() as i32);
+        plugin_parameter_events.sort_by_key(|parameter| parameter.position() as i32);
         plugin_parameter_events
     }
 

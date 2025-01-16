@@ -270,6 +270,7 @@ pub struct Ui {
     pub automation_grid_edit_note_velocity: RadioToolButton,
     pub automation_grid_edit_note_expression: RadioToolButton,
     pub automation_grid_edit_controllers: RadioToolButton,
+    pub automation_grid_edit_pitch_bend: RadioToolButton,
     pub automation_grid_edit_instrument_parameters: RadioToolButton,
     pub automation_grid_edit_effect_parameters: RadioToolButton,
 
@@ -279,6 +280,7 @@ pub struct Ui {
     pub automation_grid_edit_note_velocity_box: Box,
     pub automation_grid_edit_note_expression_box: Box,
     pub automation_grid_edit_controllers_box: Box,
+    pub automation_grid_edit_pitch_bend_box: Box,
     pub automation_grid_edit_instrument_parameters_box: Box,
     pub automation_grid_edit_effect_parameters_box: Box,
     pub automation_edit_panel_stack: Stack,
@@ -4287,6 +4289,21 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible(true);
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::Controller)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Error: {}", error),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let automation_edit_panel_stack = self.ui.automation_edit_panel_stack.clone();
+            let automation_grid_edit_pitch_bend_box = self.ui.automation_grid_edit_pitch_bend_box.clone();
+            self.ui.automation_grid_edit_pitch_bend.connect_clicked(move |_|{
+                automation_edit_panel_stack.set_visible_child(&automation_grid_edit_pitch_bend_box);
+                automation_edit_panel_stack.set_visible(true);
+
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::PitchBend)) {
                     Ok(_) => (),
                     Err(error) => debug!("Error: {}", error),
                 }

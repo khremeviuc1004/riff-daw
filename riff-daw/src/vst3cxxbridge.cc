@@ -636,17 +636,45 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
             }
             case EventType::Controller:
             {
+                // need to get the controller mapping
+                Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
+                if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
+                {
+                    Steinberg::Vst::ParamID id = 0;
+                    midiMapping->getMidiControllerAssignment(0, 0, data1, id);
+                    int32_t index = 0;
+                    Steinberg::Vst::IParamValueQueue *parameterQueue = processData.inputParameterChanges->addParameterData(id , index);
+                    std::cout << "Parameter: blockPosition=" << blockPosition << ", controller=" << data1 << ", value=" << (static_cast<double>(data2) / 127.0) << ", index=" << index << ", id=" << id << std::endl;
+                    if (parameterQueue && parameterQueue->addPoint(blockPosition, (static_cast<double>(data2) / 127.0), index))
+                    {
+                        std::cout << "Problem adding parameter to the queue." << std::endl;
+                    }
+                }
                 break;
             }
             case EventType::PitchBend:
             {
+                // need to get the pitch bend mapping
+                Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
+                if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
+                {
+                    Steinberg::Vst::ParamID id = 0;
+                    midiMapping->getMidiControllerAssignment(0, 0, Steinberg::Vst::ControllerNumbers::kPitchBend, id);
+                    int32_t index = 0;
+                    Steinberg::Vst::IParamValueQueue *parameterQueue = processData.inputParameterChanges->addParameterData(id , index);
+                    std::cout << "Parameter: blockPosition=" << blockPosition << ", value=" << (static_cast<float>(data3 + 8192) / 16384.0) << ", index=" << index << ", id=" << id << std::endl;
+                    if (parameterQueue && parameterQueue->addPoint(blockPosition, (static_cast<float>(data3 + 8192) / 16384.0), index))
+                    {
+                        std::cout << "Problem adding parameter to the queue." << std::endl;
+                    }
+                }
                 break;
             }
             case EventType::Parameter:
             {
                 int32_t index = 0;
                 Steinberg::Vst::IParamValueQueue *parameterQueue = processData.inputParameterChanges->addParameterData(data1, index);
-                    std::cout << "Parameter: blockPosition=" << blockPosition << ", value=" << (static_cast<double>(data2) / 127.0) << ", index=" << index << std::endl;
+                std::cout << "Parameter: blockPosition=" << blockPosition << ", value=" << (static_cast<double>(data2) / 127.0) << ", index=" << index << std::endl;
                 if (parameterQueue && parameterQueue->addPoint(blockPosition, (static_cast<double>(data2) / 127.0), index))
                 {
                     std::cout << "Problem adding parameter to the queue." << std::endl;

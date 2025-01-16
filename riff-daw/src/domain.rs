@@ -2956,13 +2956,32 @@ impl BackgroundProcessorVst3AudioPlugin {
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
         for event in events {
-            if let TrackEvent::NoteOn(note) = event {
-                debug!("Note on: note={}, velocity={}", note.note, note.velocity);
-                ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOn, 0, note.note as u32, note.velocity as u32, 0);
-            }
-            else if let TrackEvent::NoteOff(note) = event {
-                debug!("Note off: note={}, velocity={}", note.note, note.velocity);
-                ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOff, 0, note.note as u32, note.velocity as u32, 0);
+            match event {
+                TrackEvent::ActiveSense => {}
+                TrackEvent::AfterTouch => {}
+                TrackEvent::ProgramChange => {}
+                TrackEvent::Note(_) => {}
+                TrackEvent::NoteOn(note) => {
+                    debug!("Note on: note={}, velocity={}", note.note, note.velocity);
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOn, 0, note.note as u32, note.velocity as u32, 0);
+                }
+                TrackEvent::NoteOff(note) => {
+                    debug!("Note off: note={}, velocity={}", note.note, note.velocity);
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOff, 0, note.note as u32, note.velocity as u32, 0);
+                }
+                TrackEvent::NoteExpression(_) => {}
+                TrackEvent::Controller(controller) => {
+                    debug!("Controller: type={}, value={}", controller.controller(), controller.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Controller, 0, controller.controller() as u32, controller.value() as u32, 0);
+                }
+                TrackEvent::PitchBend(pitch_bend) => {
+                    debug!("Pitch Bend: value={}", pitch_bend.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::PitchBend, 0, 0, 0, pitch_bend.value());
+                }
+                TrackEvent::KeyPressure => {}
+                TrackEvent::AudioPluginParameter(_) => {}
+                TrackEvent::Sample(_) => {}
+                TrackEvent::Measure(_) => {}
             }
         }
     }
@@ -4233,9 +4252,12 @@ impl TrackBackgroundProcessorHelper {
                                         }
                                         vst_plugin_instance.process_events(self.midi_sender.events());
                                     }
-                                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
-                                    BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
-
+                                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                                        vst3_plugin.process_events(&effect_events);
+                                    }
+                                    BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
+                                        debug!("{} - process_plugin_events: sending events to clap effect plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
+                                        effect_plugin.process_events(&effect_events);
                                     }
                                 }
                             }
@@ -4272,7 +4294,7 @@ impl TrackBackgroundProcessorHelper {
                         vst3_plugin.process_events(&events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
-                        debug!("{} - process_plugin_events: sending events to clap plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
+                        debug!("{} - process_plugin_events: sending events to clap instrument plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
                         instrument_plugin.process_events(&events);
                     }
                 }
@@ -4322,7 +4344,10 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                     }
-                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
+                        vst3_plugin.process_param_events(&plugin_param_events);
+                    }
                     BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
                         if let Some(params) = effect_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
                             match params.info(effect_plugin.plugin()) {

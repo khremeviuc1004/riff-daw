@@ -29,6 +29,7 @@ extern {
 pub enum AutomationViewMode {
     NoteVelocities,
     Controllers,
+    PitchBend,
     Instrument,
     Effect,
     NoteExpression,

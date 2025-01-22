@@ -1,6 +1,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -596,6 +597,7 @@ pub struct MainWindow {
     pub riff_arrangement_view_riff_set_ref_beat_grids: Arc<Mutex<HashMap<String, Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>>>>,
 
     pub tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    pub midi_file_import_file_chooser: FileChooserDialog,
 }
 
 impl MainWindow {
@@ -743,6 +745,17 @@ impl MainWindow {
         let piano_roll_window_stack = Stack::new();
         piano_roll_window.set_child(Some(&piano_roll_window_stack));
 
+        let window = ui.get_wnd_main().clone();
+        let midi_file_import_file_chooser = FileChooserDialog::new(Some("Import midi file"), Some(&window), FileChooserAction::Open);
+        let filter = FileFilter::new();
+        filter.add_mime_type("audio/midi");
+        filter.set_name(Some("DAW project file"));
+        filter.add_pattern("*.mid");
+        midi_file_import_file_chooser.add_filter(&filter);
+        midi_file_import_file_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
+        midi_file_import_file_chooser.add_button("Ok", gtk::ResponseType::Ok);
+
+
         let mut main_window = MainWindow {
             ui: ui.clone(),
             piano_roll_grid: None,
@@ -776,6 +789,7 @@ impl MainWindow {
             scripting_window,
             scripting_window_stack,
             widgets: vec![],
+            midi_file_import_file_chooser,
         };
 
         main_window.ui.configuration_dialogue.add_button("Cancel", gtk::ResponseType::Cancel);
@@ -3027,19 +3041,17 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
+            let dialog = self.midi_file_import_file_chooser.clone();
             self.ui.menu_item_import_midi.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Import midi file"),     Some(&window), FileChooserAction::Open);
-                let filter = FileFilter::new();
-                filter.add_mime_type("audio/midi");
-                filter.set_name(Some("DAW project file"));
-                filter.add_pattern("*.mid");
-                dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
                 let result = dialog.run();
                 if result == gtk::ResponseType::Ok {
                     let filename = dialog.filename();
+                    let current_folder = dialog.current_folder();
+                    if let Some(current_folder) = current_folder {
+                        if !dialog.list_shortcut_folders().iter().any(|folder| folder.as_os_str().eq(current_folder.as_os_str())) {
+                            let _ = dialog.add_shortcut_folder(current_folder);
+                        }
+                    }
                     let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename.unwrap()));
                 }
                 dialog.hide();

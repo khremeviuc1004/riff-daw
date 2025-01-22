@@ -2997,7 +2997,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     {
                                         match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
-                                                let events = if let CurrentView::RiffArrangement = current_view {
+                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                                            Some(riff.events_vec())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                                else if let CurrentView::RiffArrangement = current_view {
                                                     let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                                                         Some(selected_arrangement_uuid.clone())
                                                     } else {
@@ -3154,11 +3165,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 None => debug!("Main - rx_ui processing loop - automation select - problem getting selected track number"),
                             };
 
+                            let mut state = state;
+                            if !add_to_select {
+                                state.selected_automation_mut().clear();
+                            }
+
                             if !selected.is_empty() {
-                                let mut state = state;
-                                if !add_to_select {
-                                    state.selected_automation_mut().clear();
-                                }
                                 state.selected_automation_mut().append(&mut selected);
                             }
                         },
@@ -3185,7 +3197,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.project().song().tempo()
                             };
 
-                            let controller_view_mode = {
+                            let automation_view_mode = {
                                 match state.automation_view_mode() {
                                     AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
                                     AutomationViewMode::Controllers => AutomationViewMode::Controllers,
@@ -3223,7 +3235,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         match tracks.iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
                                                 let automation = track_type.automation_mut();
-                                                match controller_view_mode {
+                                                match automation_view_mode {
                                                     AutomationViewMode::NoteVelocities => {
                                                         let mut snap_in_beats = 1.0;
                                                         match &gui.automation_grid {

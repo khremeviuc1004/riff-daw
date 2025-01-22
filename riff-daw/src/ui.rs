@@ -21,7 +21,7 @@ use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType};
-use crate::state::DAWState;
+use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
 use crate::utils::DAWUtils;
 
 
@@ -181,7 +181,21 @@ pub struct Ui {
     pub piano_roll_increase_note_length_btn: ToolButton,
     pub piano_roll_decrease_note_length_btn: ToolButton,
 
+    pub piano_roll_mpe_all_voices_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_0_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_1_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_2_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_3_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_4_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_5_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_6_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_7_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_8_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_9_btn: RadioToolButton,
+    pub piano_roll_mpe_voice_10_btn: RadioToolButton,
+
     pub piano_roll_dock_toggle_btn: ToggleToolButton,
+
     pub sample_roll_dock_toggle_btn: ToggleToolButton,
     pub sample_library_dock_toggle_btn: ToggleToolButton,
     pub automation_dock_toggle_btn: ToggleToolButton,
@@ -4685,7 +4699,7 @@ impl MainWindow {
 
             self.set_piano_roll_grid(Some(piano_roll_grid_arc.clone()));
 
-            let piano_roll_grid_ruler = BeatGridRuler::new(2.0, 50.0, 4, tx_from_ui);
+            let piano_roll_grid_ruler = BeatGridRuler::new(2.0, 50.0, 4, tx_from_ui.clone());
             let piano_roll_grid_ruler_arc = Arc::new(Mutex::new(piano_roll_grid_ruler));
 
             self.set_piano_roll_grid_ruler(Some(piano_roll_grid_ruler_arc.clone()));
@@ -5199,6 +5213,90 @@ impl MainWindow {
                         Ok(mut grid) => grid.handle_decrease_entity_length(&piano_roll_drawing_area),
                         Err(_) => (),
                     }
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_all_voices_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::ALL));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_0_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId0));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_1_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId1));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_2_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId2));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_3_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId3));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_4_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId4));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_5_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId5));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_6_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId6));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_7_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId7));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_8_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId8));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_9_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId9));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_mpe_voice_10_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId::NoteId10));
                 });
             }
 

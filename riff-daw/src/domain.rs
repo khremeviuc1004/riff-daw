@@ -29,6 +29,7 @@ use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}
 
 use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
 use crate::event::EventProcessorType;
+use crate::state::MidiPolyphonicExpressionNoteId;
 use crate::vst3_cxx_bridge::{ffi, Vst3Host};
 use crate::vst3_cxx_bridge::ffi::{showPluginEditor, vst3_plugin_get_window_width};
 
@@ -469,7 +470,7 @@ impl Measure {
 #[derive(Clone, Copy, Serialize, Deserialize, Default, EnumString)]
 pub enum NoteExpressionType {
     #[default]
-    Volume,
+    Volume = 0,
     Pan,
     Tuning,
     Vibrato,
@@ -577,6 +578,8 @@ pub struct Note {
     #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
     id: Uuid,
     #[serde(default)]
+    note_id: i32,
+    #[serde(default)]
     port: u16,
     #[serde(default)]
     channel: u16,
@@ -633,19 +636,9 @@ impl DAWItemVerticalIndex for Note {
 }
 
 impl Note {
-	pub fn new() -> Note {
+	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32, duration: f64) -> Note {
 		Note {
-            port:0,
-            channel: 0,
-			position: 0.0,
-			note: 60,
-			velocity: 127,
-            length: 1.0,
-            id: Uuid::new_v4(),
-		}
-	}
-	pub fn new_with_params(position: f64, note: i32, velocity: i32, duration: f64) -> Note {
-		Note {
+            note_id,
             channel: 0,
             port: 0,
 			position,
@@ -699,11 +692,21 @@ impl Note {
     pub fn set_channel(&mut self, channel: u16) {
         self.channel = channel;
     }
+
+    pub fn note_id(&self) -> i32 {
+        self.note_id
+    }
+
+    pub fn set_note_id(&mut self, note_id: i32) {
+        self.note_id = note_id;
+    }
 }
 
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct NoteOn {
+    #[serde(default)]
+    note_id: i32,
     #[serde(default)]
     port: u16,
     #[serde(default)]
@@ -723,17 +726,9 @@ impl DAWItemPosition for NoteOn {
 }
 
 impl NoteOn {
-	pub fn new() -> NoteOn {
+	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOn {
 		NoteOn {
-            port: 0,
-            channel: 0,
-			position: 0.0,
-			note: 60,
-			velocity: 127,
-		}
-	}
-	pub fn new_with_params(position: f64, note: i32, velocity: i32) -> NoteOn {
-		NoteOn {
+            note_id,
             port: 0,
             channel: 0,
 			position,
@@ -771,10 +766,20 @@ impl NoteOn {
     pub fn set_channel(&mut self, channel: u16) {
         self.channel = channel;
     }
+
+    pub fn note_id(&self) -> i32 {
+        self.note_id
+    }
+
+    pub fn set_note_id(&mut self, note_id: i32) {
+        self.note_id = note_id;
+    }
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct NoteOff {
+    #[serde(default)]
+    note_id: i32,
     #[serde(default)]
     port: u16,
     #[serde(default)]
@@ -785,17 +790,9 @@ pub struct NoteOff {
 }
 
 impl NoteOff {
-	pub fn new() -> NoteOff {
+	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOff {
 		NoteOff {
-            port: 0,
-            channel: 0,
-			position: 0.0,
-			note: 60,
-			velocity: 0,
-		}
-	}
-	pub fn new_with_params(position: f64, note: i32, velocity: i32) -> NoteOff {
-		NoteOff {
+            note_id,
             port: 0,
             channel: 0,
 			position,
@@ -832,6 +829,14 @@ impl NoteOff {
 
     pub fn set_channel(&mut self, channel: u16) {
         self.channel = channel;
+    }
+
+    pub fn note_id(&self) -> i32 {
+        self.note_id
+    }
+
+    pub fn set_note_id(&mut self, note_id: i32) {
+        self.note_id = note_id;
     }
 }
 
@@ -2585,12 +2590,13 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 
     fn shutdown(&mut self) {
         self.plugin.deactivate();
-        unsafe {
-            if let Some(plugin_destroy) = self.plugin.destroy {
-                plugin_destroy((&self.plugin).as_ptr());
-                debug!("Successfully destroyed the plugin.");
-            }
-        }
+        // FIXME the below commented out code causes a crash
+        // unsafe {
+        //     if let Some(plugin_destroy) = self.plugin.destroy {
+        //         plugin_destroy((&self.plugin).as_ptr());
+        //         debug!("Successfully destroyed the plugin.");
+        //     }
+        // }
     }
 
     fn set_tempo(&mut self, tempo: f64) {
@@ -2893,6 +2899,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
     fn shutdown(&mut self) {
         ffi::setProcessing(self.daw_plugin_uuid.to_string(), false);
         ffi::setActive(self.daw_plugin_uuid.to_string(), false);
+        ffi::vst3_plugin_remove(self.daw_plugin_uuid.to_string());
     }
 
     fn preset_data(&mut self) -> String {
@@ -2963,20 +2970,23 @@ impl BackgroundProcessorVst3AudioPlugin {
                 TrackEvent::Note(_) => {}
                 TrackEvent::NoteOn(note) => {
                     debug!("Note on: note={}, velocity={}", note.note, note.velocity);
-                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOn, 0, note.note as u32, note.velocity as u32, 0);
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOn, event.position() as i32, note.note as u32, note.velocity as u32, note.note_id(), 0.0);
                 }
                 TrackEvent::NoteOff(note) => {
                     debug!("Note off: note={}, velocity={}", note.note, note.velocity);
-                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOff, 0, note.note as u32, note.velocity as u32, 0);
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteOff, event.position() as i32, note.note as u32, note.velocity as u32, note.note_id(), 0.0);
                 }
-                TrackEvent::NoteExpression(_) => {}
+                TrackEvent::NoteExpression(note_expression) => {
+                    debug!("NoteExpression: type={}, note_id={}, value={}", note_expression.expression_type().clone() as i32, note_expression.note_id(), note_expression.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::NoteExpression, event.position() as i32, note_expression.expression_type().clone() as u32, 0, note_expression.note_id(), note_expression.value());
+                }
                 TrackEvent::Controller(controller) => {
                     debug!("Controller: type={}, value={}", controller.controller(), controller.value());
-                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Controller, 0, controller.controller() as u32, controller.value() as u32, 0);
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Controller, event.position() as i32, controller.controller() as u32, controller.value() as u32, 0, 0.0);
                 }
                 TrackEvent::PitchBend(pitch_bend) => {
                     debug!("Pitch Bend: value={}", pitch_bend.value());
-                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::PitchBend, 0, 0, 0, pitch_bend.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::PitchBend, event.position() as i32, 0, 0, pitch_bend.value(), 0.0);
                 }
                 TrackEvent::KeyPressure => {}
                 TrackEvent::AudioPluginParameter(_) => {}
@@ -2989,7 +2999,7 @@ impl BackgroundProcessorVst3AudioPlugin {
     pub fn process_param_events(&self, events: &Vec<&PluginParameter>) {
         for event in events {
             debug!("Parameter: id={}, value={}", event.index, event.value);
-            ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Parameter, 0, event.index as u32, (event.value * 127.0) as u32, 0);
+            ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::Parameter, event.position() as i32, event.index as u32, (event.value * 127.0) as u32, 0, 0.0);
         }
     }
 
@@ -3472,7 +3482,23 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, uuid, plugin_details) => {
                     let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(plugin_details);
 
-                    let plugin_instance: BackgroundProcessorAudioPluginType = if plugin_type == VST24 {
+                    if let Some(mut plugin_instance_to_delete) = self.instrument_plugin_instances.pop() {
+                        match plugin_instance_to_delete {
+                            BackgroundProcessorAudioPluginType::Vst24(mut vst24_plugin) => {
+                                vst24_plugin.stop_processing();
+                                vst24_plugin.shutdown();
+                            }
+                            BackgroundProcessorAudioPluginType::Vst3(mut vst3_plugin) => {
+                                vst3_plugin.shutdown();
+                            }
+                            BackgroundProcessorAudioPluginType::Clap(mut clap_plugin) => {
+                                clap_plugin.stop_processing();
+                                clap_plugin.shutdown();
+                            }
+                        }
+                    }
+
+                    let plugin_instance_to_add: BackgroundProcessorAudioPluginType = if plugin_type == VST24 {
                         let vst_plugin_instance = BackgroundProcessorVst24AudioPlugin::new_with_uuid(
                             vst24_plugin_loaders,
                             self.track_uuid.clone(),
@@ -3521,8 +3547,9 @@ impl TrackBackgroundProcessorHelper {
                         BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
                     };
 
-                    self.instrument_plugin_instances.clear();
-                    self.instrument_plugin_instances.push(plugin_instance);
+                    // FIXME the following commented out line causes a crash - or kills the track thread
+                    // self.instrument_plugin_instances.clear();
+                    self.instrument_plugin_instances.push(plugin_instance_to_add);
                     self.handle_request_instrument_plugin_parameters();
                 }
                 TrackBackgroundProcessorInwardEvent::SetPresetData(instrument_preset_data, effect_presets) => {
@@ -3568,7 +3595,7 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel) => {
                     debug!("Track background processor: Received play note immediate.");
 
-                    let note_on = NoteOn::new_with_params(0.0, note, 127);
+                    let note_on = NoteOn::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, 127);
                     self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::NoteOn(note_on));
 
                     let note_on = MidiEvent {
@@ -3585,7 +3612,7 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::StopNoteImmediate(note, midi_channel) => {
                     debug!("Track background processor layer received stop note immediate.");
 
-                    let note_off = NoteOff::new_with_params(0.0, note, 127);
+                    let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, 127);
                     self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::NoteOff(note_off));
 
                     let note_off = MidiEvent {
@@ -3823,7 +3850,7 @@ impl TrackBackgroundProcessorHelper {
                         let mut all_note_offs: Vec<TrackEvent> = Vec::new();
 
                         for note in self.event_processor.playing_notes().iter() {
-                            let note_off = NoteOff::new_with_params(0.0, *note, 0);
+                            let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, *note, 0);
                             all_note_offs.push(TrackEvent::NoteOff(note_off));
                         }
                         debug!("Sending note off events to the VST3 instrument: {}", all_note_offs.len());
@@ -3833,7 +3860,7 @@ impl TrackBackgroundProcessorHelper {
                         let mut all_note_offs: Vec<TrackEvent> = Vec::new();
             
                         for note in self.event_processor.playing_notes().iter() {
-                            let note_off = NoteOff::new_with_params(0.0, *note, 0);
+                            let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, *note, 0);
                             all_note_offs.push(TrackEvent::NoteOff(note_off));
                         }
                         debug!("Sending note off events to the CLAP instrument: {}", all_note_offs.len());
@@ -6920,7 +6947,7 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
                                                         // stop playing notes from pre-transition
                                                         for note in &self.playing_notes { // FIXME playing notes may need to hold a struct with note and midi channel data
                                                             events.push(TrackEvent::NoteOff(
-                                                                NoteOff::new_with_params(measure.position(), *note, 0)
+                                                                NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, measure.position(), *note, 0)
                                                             ))
                                                         }
                                                         self.playing_notes.clear();
@@ -7127,7 +7154,7 @@ impl RiffBufferTrackEventProcessor {
             for note in &self.playing_notes { // FIXME playing notes may need to hold a struct with note and midi channel data
                 debug!("{} - Transitioning - Stopping note from previous riff: block={}, start_sample={}, end_sample={}, frame={}, note={}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index, start_sample, end_sample, 0, note);
                 events.push(TrackEvent::NoteOff(
-                    NoteOff::new_with_params(0.0, *note, 0)
+                    NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, *note, 0)
                 ))
             }
             self.playing_notes.clear();
@@ -7384,6 +7411,7 @@ mod tests {
     use flexi_logger::Logger;
 
     use crate::domain::*;
+    use crate::state::MidiPolyphonicExpressionNoteId;
 
     #[test]
     fn can_serialise() {
@@ -7488,7 +7516,7 @@ mod tests {
 
         // create a 1 bar riff with a long note
         let mut riff_one_bar_with_long_note = Riff::new_with_name_and_length(Uuid::new_v4(), "dark under current".to_string(), 4.0);
-        let note = Note::new_with_params(0.0, 69, 127, 3.4285714285714284);
+        let note = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 69, 127, 3.4285714285714284);
         riff_one_bar_with_long_note.events_mut().push(TrackEvent::Note(note));
         riffs.push(riff_one_bar_with_long_note.clone());
 
@@ -7580,9 +7608,9 @@ mod tests {
 
         // create a 4 bar riff with two long notes
         let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(0.0, 60, 127, 7.99);
+        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(8.0, 67, 127, 7.99);
+        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
         riffs.push(riff_four_bar_with_two_long_notes.clone());
 
@@ -7679,9 +7707,9 @@ mod tests {
 
         // create a 4 bar riff with two long notes
         let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(0.0, 60, 127, 7.99);
+        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(8.0, 67, 127, 7.99);
+        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
         riffs.push(riff_four_bar_with_two_long_notes.clone());
 
@@ -7773,9 +7801,9 @@ mod tests {
 
         // create a 4 bar riff with two long notes
         let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(0.0, 60, 127, 7.99);
+        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(8.0, 67, 127, 7.99);
+        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
         riffs.push(riff_four_bar_with_two_long_notes.clone());
 

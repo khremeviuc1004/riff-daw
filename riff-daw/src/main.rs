@@ -1,4 +1,5 @@
 use std::{collections::HashMap, default::Default, sync::{Arc, Mutex}, time::Duration};
+use std::cell::RefCell;
 use std::thread;
 
 use apres::MIDI;
@@ -51,6 +52,13 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 extern {
     fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
 }
+
+thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(8)
+        .thread_name(|index: usize| format!("daw_evt_thrd-{}", index))
+        .build()
+        .unwrap()));
 
 
 fn main() {
@@ -449,7 +457,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 let tx_to_audio = tx_to_audio;
                 let vst24_plugin_loaders = vst24_plugin_loaders;
                 let tx_from_ui = tx_from_ui;
-                let _ = thread::Builder::new().name("Open file".into()).spawn(move || {
+                THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                     if let Ok(mut coast) = track_audio_coast.lock() {
                         *coast = TrackBackgroundProcessorMode::Coast;
                     }
@@ -528,7 +536,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                     let _ = tx_from_ui.send(DAWEvents::UpdateUI);
                     let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                });
+                }));
             },
             DAWEvents::Save => {
                 gui.ui.dialogue_progress_bar.set_text(Some("Saving..."));
@@ -539,7 +547,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    let _ = thread::Builder::new().name("Save".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -557,7 +565,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
 
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             },
             DAWEvents::SaveAs(path) => {
@@ -569,7 +577,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    let _ = thread::Builder::new().name("Save as".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -585,7 +593,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
 
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             },
             DAWEvents::ImportMidiFile(path) => {
@@ -598,7 +606,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let track_audio_coast = track_audio_coast;
                     let tx_from_ui = tx_from_ui;
-                    let _ = thread::Builder::new().name("Import midi file".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
@@ -655,7 +663,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::NoteOn(_, note, velocity) => {
                                                                     if let Some((_, ticks)) = position {
                                                                         let position_in_beats = *ticks as f64 / ppq as f64;
-                                                                        let new_note = Note::new_with_params(position_in_beats, note as i32, velocity as i32, 0.0);
+                                                                        let new_note = Note::new_with_params(
+                                                                            MidiPolyphonicExpressionNoteId::ALL as i32, position_in_beats, note as i32, velocity as i32, 0.0);
                                                                         current_notes.insert(note, new_note);
                                                                     }
                                                                 },
@@ -803,7 +812,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         let _ = tx_from_ui.send(DAWEvents::UpdateUI);
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             }
             DAWEvents::ExportMidiFile(path) => {
@@ -818,7 +827,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let track_audio_coast = track_audio_coast;
-                    let _ = thread::Builder::new().name("Export midi file".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         match state.lock() {
                             Ok(state) => {
                                 debug!("Main - rx_ui processing loop - Export Midi File - attempting to export.");
@@ -833,7 +842,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             }
             DAWEvents::ExportRiffsToMidiFile(path) => {
@@ -848,7 +857,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let track_audio_coast = track_audio_coast;
-                    let _ = thread::Builder::new().name("Export riffs to midi file".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         match state.lock() {
                             Ok(state) => {
                                 debug!("Main - rx_ui processing loop - Export riffs to midi file - attempting to export.");
@@ -863,7 +872,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             }
             DAWEvents::ExportRiffsToSeparateMidiFiles(path) => {
@@ -878,7 +887,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let track_audio_coast = track_audio_coast;
-                    let _ = thread::Builder::new().name("Export riffs to separate midi files".into()).spawn(move || {
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         match state.lock() {
                             Ok(state) => {
                                 debug!("Main - rx_ui processing loop - Export riffs to separate midi files - attempting to export.");
@@ -893,7 +902,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::AudioOut;
                         }
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-                    });
+                    }));
                 }
             }
             DAWEvents::ExportWaveFile(path) => {
@@ -1154,6 +1163,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.set_piano_roll_selected_riff_name_label(name.as_str());
                 gui.ui.piano_roll_drawing_area.queue_draw();
             }
+            DAWEvents::PianoRollMPENoteIdChange(mpe_note_id_change) => {
+                match state.lock() {
+                    Ok(mut state) => {
+                        state.set_piano_roll_mpe_note_id(mpe_note_id_change);
+                        gui.ui.piano_roll_drawing_area.queue_draw();
+                    }
+                    Err(_) => debug!("Main - rx_ui processing loop - PianoRollMPENoteIdChange - could not get lock on state"),
+                }
+            }
             DAWEvents::SampleRollSetTrackName(name) => {
                 gui.set_sample_roll_selected_track_name_label(name.as_str());
                 gui.ui.sample_roll_drawing_area.queue_draw();
@@ -1258,7 +1276,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             state.update_track_senders_and_receivers(instrument_track_senders_local, instrument_track_receivers_local);
                             gui.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
-                        },
+                        }
                         Err(_) => debug!("Main - rx_ui processing loop - Track Added - could not get lock on state"),
                     }
                 }
@@ -1918,10 +1936,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 },
                 TrackChangeType::RiffAddNote(note, position, duration) => {
                     {
+                        let note_id = if let Ok(state) = state.lock() {
+                            state.piano_roll_mpe_note_id().clone() as i32
+                        }
+                        else {
+                            MidiPolyphonicExpressionNoteId::ALL as i32
+                        };
                         let mut state = state.clone();
                         match history_manager.lock() {
                             Ok(mut history) => {
-                                let action = RiffAddNoteAction::new(position, note, 127, duration, &mut state.clone());
+                                let action = RiffAddNoteAction::new(note_id, position, note, 127, duration, &mut state.clone());
                                 if let Err(error) = history.apply(&mut state, Box::new(action)) {
                                     error!("Main - rx_ui processing loop - riff add note - error: {}", error);
                                 } else {
@@ -1963,7 +1987,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     };
                     {
                         let state_arc = state.clone();
-                        let _ = thread::Builder::new().name("Riff add note".into()).spawn(move || {
+                        let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                             thread::sleep(Duration::from_millis((duration * 60.0 / tempo * 1000.0) as u64));
                             match state_arc.lock() {
                                 Ok(state) => {
@@ -1976,7 +2000,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                                 Err(_) => {}
                             }
-                        });
+                        }));
                     }
                 }
                 TrackChangeType::RiffDeleteNote(note_number, position) => {
@@ -2934,6 +2958,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 TrackChangeType::AutomationSelected(time_lower, value_lower, time_higher, value_higher, add_to_select) => {
                     match state.lock() {
                         Ok(state) => {
+                            let note_expression_type = state.note_expression_type().clone();
+                            let note_expression_note_id = state.note_expression_id();
                             let automation_view_mode = {
                                 match state.automation_view_mode() {
                                     AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
@@ -3103,7 +3129,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 })
                                                             }
                                                         }
-                                                        AutomationViewMode::NoteExpression => {}
+                                                        AutomationViewMode::NoteExpression => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::NoteExpression(note_expression) => {
+                                                                        let position = note_expression.position();
+                                                                        if time_lower <= position &&
+                                                                            position <= time_higher &&
+                                                                            note_expression_type as i32 == *(note_expression.expression_type()) as i32 &&
+                                                                            note_expression_note_id == note_expression.note_id() {
+                                                                            selected.push(note_expression.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
                                                     }
                                                 }
                                             },
@@ -5868,6 +5909,8 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
 }
 
 fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
+    let note_expression_type = state.note_expression_type_mut().clone();
+    let note_expression_note_id = state.note_expression_id();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
@@ -5924,7 +5967,12 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
                 events.retain(|event| {
                     match event {
                         TrackEvent::NoteExpression(note_expression) => {
-                            !((time - EVENT_DELETION_BEAT_TOLERANCE) <= note_expression.position() && note_expression.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE))
+                            !(
+                                (time - EVENT_DELETION_BEAT_TOLERANCE) <= note_expression.position() &&
+                                note_expression.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE) &&
+                                (note_expression_note_id == -1 || note_expression_note_id == note_expression.note_id()) &&
+                                note_expression_type as i32 == *(note_expression.expression_type()) as i32
+                            )
                         },
                         _ => true,
                     }
@@ -7483,7 +7531,7 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                                     jack_midi_event.data[1] as i32,
                                                                                                     jack_midi_event.data[2] as i32);
                                                                                                 let note = Note::new_with_params(
-                                                                                                    adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
+                                                                                                    MidiPolyphonicExpressionNoteId::ALL as i32, adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
                                                                                                 recorded_playing_notes.insert(note.note(), note.position());
                                                                                                 riff.events_mut().push(TrackEvent::Note(note));
                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());

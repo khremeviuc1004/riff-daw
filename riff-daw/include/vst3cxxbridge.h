@@ -37,7 +37,7 @@ bool vst3_plugin_process(
     rust::Slice<float> channel2OutputBuffer
 );
 
-bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3);
+bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3, double data4);
 rust::String getVstPluginName(rust::String riff_daw_plugin_uuid);
 bool setProcessing(rust::String riff_daw_plugin_uuid, bool processing);
 bool setActive(rust::String riff_daw_plugin_uuid, bool active);
@@ -57,6 +57,8 @@ void vst3_plugin_get_parameter_info(
     int32_t& unit_id,
     int32_t& flags
 );
+
+void vst3_plugin_remove(rust::String riff_daw_plugin_uuid);
 
 } // namespace hremeviuc
 } // namespace org

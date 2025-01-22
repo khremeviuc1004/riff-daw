@@ -13,6 +13,7 @@ use itertools::Itertools;
 use jack::{AsyncClient, Client, ClientOptions, PortFlags};
 use log::*;
 use rb::{RB, RbConsumer, SpscRb};
+use serde::{Deserialize, Serialize};
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
 use uuid::Uuid;
 use vst::api::TimeInfo;
@@ -33,6 +34,22 @@ pub enum AutomationViewMode {
     Instrument,
     Effect,
     NoteExpression,
+}
+
+#[derive(Clone)]
+pub enum MidiPolyphonicExpressionNoteId {
+    ALL = -1,
+    NoteId0,
+    NoteId1,
+    NoteId2,
+    NoteId3,
+    NoteId4,
+    NoteId5,
+    NoteId6,
+    NoteId7,
+    NoteId8,
+    NoteId9,
+    NoteId10,
 }
 
 pub struct DAWState {
@@ -88,6 +105,7 @@ pub struct DAWState {
     riff_set_selected_uuid: Option<String>,
     riff_sequence_riff_set_reference_selected_uuid: Option<(String, String)>,
     riff_arrangement_riff_item_selected_uuid: Option<(String, String)>,
+    piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId,
 }
 
 impl DAWState {
@@ -143,6 +161,7 @@ impl DAWState {
             riff_set_selected_uuid: None,
             riff_sequence_riff_set_reference_selected_uuid: None,
             riff_arrangement_riff_item_selected_uuid: None,
+            piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId::ALL,
         }
     }
 
@@ -463,7 +482,8 @@ impl DAWState {
                 TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
                     let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(instrument_details.clone());
                     let instrument = track.instrument_mut();
-                    let instrument_uuid = instrument.uuid();
+                    let instrument_uuid = Uuid::new_v4();
+                    instrument.set_uuid(instrument_uuid.clone());
 
                     instrument.set_file(library_path);
                     instrument.set_sub_plugin_id(sub_plugin_id);
@@ -2146,8 +2166,8 @@ impl DAWState {
                                 TrackEvent::Note(note) => {
                                     let end_position_in_beats = start_position_in_beats + note.length();
 
-                                    single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(start_position_in_beats, note.note(), note.velocity())));
-                                    single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(end_position_in_beats, note.note(), 0)));
+                                    single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(note.note_id(), start_position_in_beats, note.note(), note.velocity())));
+                                    single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(note.note_id(), end_position_in_beats, note.note(), 0)));
                                 }
                                 _ => (),
                             }
@@ -2234,8 +2254,8 @@ impl DAWState {
                             TrackEvent::Note(note) => {
                                 let end_position_in_beats = start_position_in_beats + note.length();
 
-                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(start_position_in_beats, note.note(), note.velocity())));
-                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(end_position_in_beats, note.note(), 0)));
+                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(note.note_id(), start_position_in_beats, note.note(), note.velocity())));
+                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(note.note_id(), end_position_in_beats, note.note(), 0)));
                             }
                             _ => (),
                         }
@@ -2339,8 +2359,8 @@ impl DAWState {
                             TrackEvent::Note(note) => {
                                 let end_position_in_beats = start_position_in_beats + note.length();
 
-                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(start_position_in_beats, note.note(), note.velocity())));
-                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(end_position_in_beats, note.note(), 0)));
+                                single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(note.note_id(), start_position_in_beats, note.note(), note.velocity())));
+                                single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(note.note_id(), end_position_in_beats, note.note(), 0)));
                             }
                             _ => (),
                         }
@@ -2757,6 +2777,14 @@ impl DAWState {
 
     pub fn set_playing_riff_arrangement_summary_data(&mut self, playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>) {
         self.playing_riff_arrangement_summary_data = playing_riff_arrangement_summary_data;
+    }
+
+    pub fn piano_roll_mpe_note_id(&self) -> &MidiPolyphonicExpressionNoteId {
+        &self.piano_roll_mpe_note_id
+    }
+
+    pub fn set_piano_roll_mpe_note_id(&mut self, piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId) {
+        self.piano_roll_mpe_note_id = piano_roll_mpe_note_id;
     }
 }
 

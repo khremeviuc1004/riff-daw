@@ -9,6 +9,7 @@ use log::*;
 
 use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength};
 use crate::DAWState;
+use crate::state::MidiPolyphonicExpressionNoteId;
 
 pub struct DAWUtils;
 
@@ -466,10 +467,10 @@ impl DAWUtils {
 
         for event in vst_events.iter() {
             if 128 <= event.data[0] && event.data[0] <= 143 { // note off
-                track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
+                track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
             } 
             else if 144 <= event.data[0] && event.data[0] <= 159  { // note on
-                track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
+                track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
             } 
             else if 176 <= event.data[0] && event.data[0] <= 191 { // controller
                 track_events.push(TrackEvent::Controller(Controller::new(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
@@ -590,7 +591,7 @@ impl DAWUtils {
                             type_: CLAP_EVENT_NOTE_ON,
                             flags: 0,
                         },
-                        note_id: -1,
+                        note_id: note_on.note_id(),
                         port_index: note_on.port() as i16,
                         channel: note_on.channel() as i16,
                         key: note_on.note() as i16,
@@ -607,7 +608,7 @@ impl DAWUtils {
                             type_: CLAP_EVENT_NOTE_OFF,
                             flags: 0,
                         },
-                        note_id: -1,
+                        note_id: note_off.note_id(),
                         port_index: note_off.port() as i16,
                         channel: note_off.channel() as i16,
                         key: note_off.note() as i16,
@@ -624,7 +625,7 @@ impl DAWUtils {
                             type_: CLAP_EVENT_NOTE_EXPRESSION,
                             flags: 0,
                         },
-                        note_id: -1,
+                        note_id: note_expression.note_id(),
                         port_index: note_expression.port(),
                         channel: note_expression.channel(),
                         key: note_expression.key() as i16,
@@ -749,11 +750,13 @@ impl DAWUtils {
                         if let TrackEvent::Note(note) = event {
                             // create a note on and a note off event
                             let note_on = NoteOn::new_with_params(
+                                note.note_id(),
                                 (riff_ref.position() + note.position()) / bpm * 60.0 * sample_rate, 
                                 note.note(), 
                                 note.velocity());
                             events_all.push(TrackEvent::NoteOn(note_on));
                             let note_off = NoteOff::new_with_params(
+                                note.note_id(),
                                 (riff_ref.position() + note.position() + note.length()) / bpm * 60.0 * sample_rate, 
                                 note.note(), 
                                 note.velocity());
@@ -1015,6 +1018,7 @@ mod tests {
     use crate::DAWUtils;
     // use {DAWEventPosition, Riff, RiffReference, Track, TrackEvent, VstPluginParameter};
     use crate::domain::{DAWItemPosition, Note, Riff, RiffReference, TrackEvent};
+    use crate::state::MidiPolyphonicExpressionNoteId;
 
     #[test]
     fn riff_sequence_convert_to_vst_events_one_measure_gap_before_first_note() {
@@ -1029,7 +1033,7 @@ mod tests {
         // create a riff
         let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_string(), 4.0);
         for position in 0..4 {
-            let note = Note::new_with_params(position as f64, 60, 127, 0.05357142857142857);
+            let note = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, position as f64, 60, 127, 0.05357142857142857);
             riff.events_mut().push(TrackEvent::Note(note));
         }
 
@@ -1093,7 +1097,7 @@ mod tests {
         // create a riff
         let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_string(), 4.0);
         for position in 0..4 {
-            let note = Note::new_with_params(position as f64, 60, 127, 0.05357142857142857);
+            let note = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, position as f64, 60, 127, 0.05357142857142857);
             riff.events_mut().push(TrackEvent::Note(note));
         }
 
@@ -1127,17 +1131,17 @@ mod tests {
         // create a riff
         let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "Bass line 1 - 1".to_string(), 4.0);
         let riff_uuid = riff.uuid().to_string();
-        let note1 = Note::new_with_params(0.0, 44, 71, 0.45535714285714285);
+        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 44, 71, 0.45535714285714285);
         riff.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(0.5, 46, 27, 0.24107142857142855);
+        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.5, 46, 27, 0.24107142857142855);
         riff.events_mut().push(TrackEvent::Note(note2));
-        let note3 = Note::new_with_params(1.0, 46, 68, 0.42857142857142855);
+        let note3 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 1.0, 46, 68, 0.42857142857142855);
         riff.events_mut().push(TrackEvent::Note(note3));
-        let note4 = Note::new_with_params(1.5, 36, 41, 0.45535714285714285);
+        let note4 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 1.5, 36, 41, 0.45535714285714285);
         riff.events_mut().push(TrackEvent::Note(note4));
-        let note5 = Note::new_with_params(2.5, 46, 36, 0.45535714285714285);
+        let note5 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 2.5, 46, 36, 0.45535714285714285);
         riff.events_mut().push(TrackEvent::Note(note5));
-        let note6 = Note::new_with_params(3.0, 36, 45, 0.45535714285714285);
+        let note6 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 3.0, 36, 45, 0.45535714285714285);
         riff.events_mut().push(TrackEvent::Note(note6));
         riffs.push(riff);
 

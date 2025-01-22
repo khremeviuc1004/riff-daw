@@ -130,6 +130,7 @@ impl HistoryManager {
 
 #[derive(Clone)]
 pub struct RiffAddNoteAction {
+    note_id: i32,
     position: f64,
     note: i32,
     velocity: i32,
@@ -141,6 +142,7 @@ pub struct RiffAddNoteAction {
 
 impl RiffAddNoteAction {
     pub fn new(
+        note_id: i32,
         position: f64,
         note: i32,
         velocity: i32,
@@ -149,6 +151,7 @@ impl RiffAddNoteAction {
     ) -> Self {
         let (riff_id, track_id) = get_selected_track_riff_uuid(state);
         Self {
+            note_id,
             position,
             note,
             velocity,
@@ -184,6 +187,9 @@ impl RiffAddNoteAction {
     }
     pub fn set_riff_id(&mut self, riff_id: Option<String>) {
         self.riff_id = riff_id;
+    }
+    pub fn note_id(&self) -> i32 {
+        self.note_id
     }
 }
 
@@ -230,7 +236,7 @@ impl HistoryAction for RiffAddNoteAction {
                                                     }
                                                 });
                                                 if !overlap_found {
-                                                    let new_note = Note::new_with_params(self.position(), self.note(), 127, self.duration());
+                                                    let new_note = Note::new_with_params(self.note_id(), self.position(), self.note(), 127, self.duration());
                                                     self.id = Some(new_note.id());
                                                     riff.events_mut().push(TrackEvent::Note(new_note));
                                                     riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());

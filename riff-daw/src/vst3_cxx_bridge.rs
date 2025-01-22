@@ -10,6 +10,7 @@ pub mod ffi {
     enum EventType {
         NoteOn,
         NoteOff,
+        NoteExpression,
         Controller,
         KeyPressureAfterTouch,
         PitchBend,
@@ -47,7 +48,7 @@ pub mod ffi {
             channel2InputBuffer: &[f32],
             channel1OutputBuffer: &mut [f32],
             channel2OutputBuffer: &mut [f32]) -> bool;
-        fn addEvent(riff_daw_plugin_uuid: String, eventType: EventType, blockPosition: i32, data1: u32, data2: u32, data3: i32) -> bool;
+        fn addEvent(riff_daw_plugin_uuid: String, eventType: EventType, blockPosition: i32, data1: u32, data2: u32, data3: i32, data4: f64) -> bool;
         fn getVstPluginName(riff_daw_plugin_uuid: String) -> String;
 
         fn setProcessing(riff_daw_plugin_uuid: String, processing: bool) -> bool;
@@ -68,6 +69,7 @@ pub mod ffi {
             unit_id: &mut i32,
             flags: &mut i32,
         );
+        fn vst3_plugin_remove(riff_daw_plugin_uuid: String);
     }
 }
 

@@ -2107,6 +2107,7 @@ impl CustomPainter for PianoRollCustomPainter {
 
         match self.state.lock() {
             Ok(state) => {
+                let note_expression_note_id = state.piano_roll_mpe_note_id().clone() as i32;
                 let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 // let mut edit_mode = EditMode::Inactive;
 
@@ -2131,47 +2132,53 @@ impl CustomPainter for PianoRollCustomPainter {
 
                                                 match track_event {
                                                     TrackEvent::Note(note) => {
-                                                        let note_number = note.note();
-                                                        let note_y_pos_inverted = note_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
-                                                        let x = note.position() * adjusted_beat_width_in_pixels;
-                                                        // let x_original = x;
-                                                        let y = canvas_height - note_y_pos_inverted;
-                                                        // let y_original = y;
-                                                        let width = note.length() * adjusted_beat_width_in_pixels;
-    
-                                                        let is_selected = state.selected_riff_events().iter().any(|id| id.as_str() == note.id().as_str());
-                                                        if is_selected {
-                                                            event_colour = (0.0, 0.0, 1.0, 1.0);
+                                                        if note_expression_note_id == -1 || note_expression_note_id == note.note_id()  {
+                                                            let note_number = note.note();
+                                                            let note_y_pos_inverted = note_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                            let x = note.position() * adjusted_beat_width_in_pixels;
+                                                            // let x_original = x;
+                                                            let y = canvas_height - note_y_pos_inverted;
+                                                            // let y_original = y;
+                                                            let width = note.length() * adjusted_beat_width_in_pixels;
+
+                                                            let is_selected = state.selected_riff_events().iter().any(|id| id.as_str() == note.id().as_str());
+                                                            if is_selected {
+                                                                event_colour = (0.0, 0.0, 1.0, 1.0);
+                                                            }
+                                                            context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
+
+                                                            self.edit_item_handler.handle_item_edit(
+                                                                context,
+                                                                note,
+                                                                operation_mode,
+                                                                mouse_pointer_x,
+                                                                mouse_pointer_y,
+                                                                mouse_pointer_previous_x,
+                                                                mouse_pointer_previous_y,
+                                                                adjusted_entity_height_in_pixels,
+                                                                adjusted_beat_width_in_pixels,
+                                                                x,
+                                                                y,
+                                                                width,
+                                                                canvas_height,
+                                                                drawing_area,
+                                                                edit_drag_cycle,
+                                                                tx_from_ui.clone(),
+                                                                true,
+                                                                track_uuid.clone(),
+                                                                note,
+                                                                true,
+                                                                track_index as f64,
+                                                            );
+
+                                                            context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
+                                                            if note.note_id() > -1 {
+                                                                context.set_font_size(9.0);
+                                                                let _ = context.show_text(format!("{}", note.note_id()).as_str());
+                                                            }
+                                                            let _ = context.fill();
                                                         }
-                                                        context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
-    
-                                                        self.edit_item_handler.handle_item_edit(
-                                                            context, 
-                                                            note, 
-                                                            operation_mode, 
-                                                            mouse_pointer_x, 
-                                                            mouse_pointer_y, 
-                                                            mouse_pointer_previous_x, 
-                                                            mouse_pointer_previous_y, 
-                                                            adjusted_entity_height_in_pixels, 
-                                                            adjusted_beat_width_in_pixels, 
-                                                            x, 
-                                                            y, 
-                                                            width, 
-                                                            canvas_height, 
-                                                            drawing_area, 
-                                                            edit_drag_cycle, 
-                                                            tx_from_ui.clone(), 
-                                                            true,
-                                                            track_uuid.clone(),
-                                                            note,
-                                                            true,
-                                                            track_index as f64,
-                                                        );
-    
-                                                        context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
-                                                        let _ = context.fill();
-                                            },
+                                                    }
                                                     _ => (),
                                                 }
                                             }
@@ -3266,6 +3273,8 @@ impl CustomPainter for AutomationCustomPainter {
         match self.state.lock() {
             Ok(mut state) => {
                 let automation_type = *state.automation_type_mut();
+                let note_expression_type = state.note_expression_type_mut().clone();
+                let note_expression_note_id = state.note_expression_id();
                 let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
                 let type_to_show = state.automation_view_mode();
@@ -3513,24 +3522,26 @@ impl CustomPainter for AutomationCustomPainter {
                                         }
                                         crate::state::AutomationViewMode::NoteExpression => {
                                             if let TrackEvent::NoteExpression(note_expression) = track_event {
-                                                let note_expression_value = note_expression.value();
-                                                let note_y_pos_inverted = note_expression_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
-                                                let x = note_expression.position() * adjusted_beat_width_in_pixels;
-                                                let y = height - note_y_pos_inverted;
-                                                let width = 1.0;
+                                                if note_expression_type as i32 == *(note_expression.expression_type()) as i32 && (note_expression_note_id == -1 || note_expression_note_id == note_expression.note_id())  {
+                                                    let note_expression_value = note_expression.value();
+                                                    let note_y_pos_inverted = note_expression_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                    let x = note_expression.position() * adjusted_beat_width_in_pixels;
+                                                    let y = height - note_y_pos_inverted;
+                                                    let width = 1.0;
 
-                                                let is_selected = state.selected_automation().iter().any(|id| id.as_str() == note_expression.id().as_str());
-                                                if is_selected {
-                                                    event_colour = (0.0, 0.0, 1.0, 1.0);
-                                                }
-                                                context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
+                                                    let is_selected = state.selected_automation().iter().any(|id| id.as_str() == note_expression.id().as_str());
+                                                    if is_selected {
+                                                        event_colour = (0.0, 0.0, 1.0, 1.0);
+                                                    }
+                                                    context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
 
-                                                context.move_to(x, height);
-                                                context.line_to(x, y);
+                                                    context.move_to(x, height);
+                                                    context.line_to(x, y);
 
-                                                match context.stroke() {
-                                                    Ok(_) => (),
-                                                    Err(error) => debug!("Problem drawing note expression vallue in the automation view: {:?}", error),
+                                                    match context.stroke() {
+                                                        Ok(_) => (),
+                                                        Err(error) => debug!("Problem drawing note expression value in the automation view: {:?}", error),
+                                                    }
                                                 }
                                             }
                                         }

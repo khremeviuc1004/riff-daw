@@ -5,11 +5,24 @@
 #include <map>
 #include <chrono>
 #include <thread>
+#include <vector>
+#include <algorithm>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <unordered_map>
 #include "riff-daw/include/vst3headers.h"
 
 
 namespace org {
 namespace hremeviuc {
+
+void dumpTUID(const Steinberg::TUID tuid)
+{
+    for(auto i = 0; i < 16; i++)
+    {
+        std::cout << static_cast<int>(tuid[i]) << " ";
+    }
+}
 
 class PresetStream : public Steinberg::IBStream
 {
@@ -83,33 +96,66 @@ IMPLEMENT_FUNKNOWN_METHODS (org::hremeviuc::PresetStream, Steinberg::IBStream, S
 class RunLoop : public Steinberg::Linux::IRunLoop
 {
 public:
+    bool keepAlive = true;
+    std::mutex timerMutex;
+    std::vector<Steinberg::Linux::ITimerHandler*> timerHandlers;
+    std::mutex eventHandlerMutex;
+    std::unordered_multimap<Steinberg::Linux::IEventHandler*, int> eventHandlers;
+
+    RunLoop() {}
+    ~RunLoop()
+    {
+        stop();
+    }
+
 	Steinberg::tresult PLUGIN_API registerEventHandler (Steinberg::Linux::IEventHandler *handler, Steinberg::Linux::FileDescriptor fd) override
     {
-        std::cout << "RunLoop registerEventHandler called." << std::endl;
+        std::cout << "RunLoop registerEventHandler called: fd=" << int(fd) << std::endl;
+        std::lock_guard<std::mutex> guard(eventHandlerMutex);
+        eventHandlers.emplace(handler, int(fd));
         return Steinberg::kResultOk;
     }
 
 	Steinberg::tresult PLUGIN_API unregisterEventHandler (Steinberg::Linux::IEventHandler *handler) override
     {
         std::cout << "RunLoop unregisterEventHandler called." << std::endl;
+        std::lock_guard<std::mutex> guard(eventHandlerMutex);
+        eventHandlers.erase(handler);
         return Steinberg::kResultOk;
     }
 
 	Steinberg::tresult PLUGIN_API registerTimer (Steinberg::Linux::ITimerHandler *handler, Steinberg::Linux::TimerInterval msecs) override
     {
         std::cout << "RunLoop registerTimer called." << std::endl;
+        std::lock_guard<std::mutex> guard(timerMutex);
+        timerHandlers.push_back(handler);
         return Steinberg::kResultOk;
     }
 
 	Steinberg::tresult PLUGIN_API unregisterTimer (Steinberg::Linux::ITimerHandler *handler) override
     {
         std::cout << "RunLoop unregisterTimer called." << std::endl;
-        return Steinberg::kResultOk;
+        std::lock_guard<std::mutex> guard(timerMutex);
+        std::vector<Steinberg::Linux::ITimerHandler*>::iterator findIterator = std::find(timerHandlers.begin(), timerHandlers.end(), handler);
+        if (findIterator != timerHandlers.end())
+        {
+            timerHandlers.erase(findIterator);
+            return Steinberg::kResultOk;
+        }
+        return Steinberg::kResultFalse;
     }
 
 	Steinberg::tresult PLUGIN_API queryInterface (const Steinberg::TUID _iid, void **obj) override
 	{
-        std::cout << "RunLoop queryInterface called." << std::endl;
+        std::cout << "RunLoop queryInterface called: _iid=";
+        dumpTUID(_iid);
+        std::cout << ", Steinberg::Vst::IHostApplication::iid=";
+        dumpTUID(Steinberg::Vst::IHostApplication::iid);
+        std::cout << ", Steinberg::FUnknown::iid=";
+        dumpTUID(Steinberg::FUnknown::iid);
+        std::cout << ", Steinberg::Linux::IRunLoop::iid=";
+        dumpTUID(Steinberg::Linux::IRunLoop::iid);
+        std::cout << ", Funknown=" << Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::FUnknown::iid) << ", IRunLoop=" << Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Linux::IRunLoop::iid) << std::endl;
 		if (Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::FUnknown::iid) || Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Linux::IRunLoop::iid)) {
             std::cout << "RunLoop queryInterface - FUnknown or IRunLoop requested." << std::endl;
 			addRef();
@@ -123,7 +169,98 @@ public:
 
 	Steinberg::uint32 PLUGIN_API addRef  () override { return 1001; }
 	Steinberg::uint32 PLUGIN_API release () override { return 1001; }
+
+	void stop()
+	{
+        std::cout << "RunLoop stop called." << std::endl;
+        std::cout << "RunLoop stop - set keepAlive to false." << std::endl;
+	    keepAlive = false;
+        std::cout << "RunLoop stop - waiting for run loop thread to finish..." << std::endl;
+	    timer.join();
+        std::cout << "RunLoop stop - waiting for run loop thread should have finished." << std::endl;
+        std::lock_guard<std::mutex> timerGuard(timerMutex);
+        std::lock_guard<std::mutex> eventHandlerGuard(eventHandlerMutex);
+        std::cout << "RunLoop stop - clearing timerHandlers." << std::endl;
+	    timerHandlers.clear();
+        std::cout << "RunLoop stop - clearing event handlers." << std::endl;
+	    eventHandlers.clear();
+        std::cout << "RunLoop stop - Done." << std::endl;
+	}
+
+private:
+    void run()
+    {
+        while(keepAlive)
+        {
+//            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+//            std::cout << "RunLoop: still alive." << std::endl;
+            {
+                int numberOfFileDescriptors = 0;
+
+                fd_set readFileDescriptors;
+                fd_set writeFileDescriptors;
+                fd_set exceptFileDescriptors;
+
+                FD_ZERO(&readFileDescriptors);
+                FD_ZERO(&writeFileDescriptors);
+                FD_ZERO(&exceptFileDescriptors);
+
+                // add all the event handler file descriptors
+                {
+                    std::lock_guard<std::mutex> guard(eventHandlerMutex);
+                    for(auto const& [key, value] : eventHandlers)
+                    {
+                        int fd = value;
+                        FD_SET(fd, &readFileDescriptors);
+                        FD_SET(fd, &writeFileDescriptors);
+                        FD_SET(fd, &exceptFileDescriptors);
+
+                        numberOfFileDescriptors = fd > numberOfFileDescriptors ? fd : numberOfFileDescriptors;
+//                        std::cout << "RunLoop: FD_SET event handler file descriptors=" << fd << ", number of file descriptors=" << numberOfFileDescriptors << std::endl;
+                    }
+                }
+
+                timeval timeOut;
+                timeOut.tv_sec = 0;
+                timeOut.tv_usec = 300000;
+
+                const int result = select(numberOfFileDescriptors, &readFileDescriptors, &writeFileDescriptors, nullptr /*&exceptFileDescriptors*/, &timeOut);
+
+                if (result == EBADF)
+                {
+                    std::cout << "RunLoop: select reports one of the event handler file descriptors as bad." << std::endl;
+                }
+
+                if (result > 0)
+                {
+                    for(auto const& [key, value] : eventHandlers)
+                    {
+                        int fd = value;
+                        if (FD_ISSET(fd, &readFileDescriptors) || FD_ISSET(fd, &writeFileDescriptors) || FD_ISSET(fd, &exceptFileDescriptors))
+                        {
+//                            std::cout << "RunLoop: file descriptor event fired." << std::endl;
+                                Steinberg::Linux::IEventHandler* eventHandler = key;
+                                eventHandler->onFDIsSet(fd);
+                        }
+                    }
+                }
+            }
+            {
+                std::lock_guard<std::mutex> guard(timerMutex);
+                for(auto & element : timerHandlers)
+                {
+                    element->onTimer();
+                }
+            }
+        }
+
+        std::cout << "RunLoop thread loop exited." << std::endl;
+    }
+
+    std::thread timer = std::thread{&RunLoop::run, this};
 };
+
+//static Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop = Steinberg::owned(new RunLoop());
 
 class SimplePlugFrame : public Steinberg::IPlugFrame
 {
@@ -152,7 +289,7 @@ public:
 
 	Steinberg::tresult PLUGIN_API queryInterface (const Steinberg::TUID _iid, void **obj) override
 	{
-            std::cout << "SimplePlugFrame queryInterface called." << std::endl;
+        std::cout << "SimplePlugFrame queryInterface called." << std::endl;
 		if (Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::FUnknown::iid) || Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::IPlugFrame::iid)) {
 			addRef();
 			*obj = this;
@@ -167,11 +304,105 @@ public:
 	Steinberg::uint32 PLUGIN_API addRef  () override { return 1002; }
 	Steinberg::uint32 PLUGIN_API release () override { return 1002; }
 
+	void shutdownRunLoop()
+	{
+        std::cout << "SimplePlugFrame shutdownRunLoop called." << std::endl;
+	    static_cast<RunLoop*>(runLoop.get())->stop();
+	}
+
 private:
     rust::Box<Vst3Host> vst3Host;
     rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t new_window_width, int32_t new_window_height)> sendPluginWindowResize;
-    Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop = Steinberg::owned(new RunLoop());;
+    Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop = Steinberg::owned(new RunLoop());
 };
+
+class Vst3HostApplication : public Steinberg::Vst::IHostApplication
+{
+public:
+	Vst3HostApplication();
+	virtual ~Vst3HostApplication() noexcept {FUNKNOWN_DTOR}
+
+	Steinberg::tresult PLUGIN_API getName (Steinberg::Vst::String128 name) override;
+	Steinberg::tresult PLUGIN_API createInstance (Steinberg::TUID cid, Steinberg::TUID _iid, void** obj) override;
+
+	DECLARE_FUNKNOWN_METHODS
+
+	Steinberg::Vst::PlugInterfaceSupport* getPlugInterfaceSupport () const { return plugInterfaceSupport; }
+
+private:
+	Steinberg::IPtr<Steinberg::Vst::PlugInterfaceSupport> plugInterfaceSupport;
+    Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop = Steinberg::owned(new RunLoop());
+};
+
+Vst3HostApplication::Vst3HostApplication()
+{
+	FUNKNOWN_CTOR
+
+	plugInterfaceSupport = owned(new Steinberg::Vst::PlugInterfaceSupport);
+}
+
+Steinberg::tresult PLUGIN_API Vst3HostApplication::getName(Steinberg::Vst::String128 name)
+{
+//	return VSTGUI::StringConvert::convert("Riff DAW VST3 HostApplication", name) ? Steinberg::kResultTrue : Steinberg::kInternalError;
+	return Steinberg::kInternalError;
+}
+
+Steinberg::tresult PLUGIN_API Vst3HostApplication::createInstance (Steinberg::TUID cid, Steinberg::TUID _iid, void** obj)
+{
+	if (Steinberg::FUnknownPrivate::iidEqual(cid, Steinberg::Vst::IMessage::iid) && Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Vst::IMessage::iid))
+	{
+		*obj = new Steinberg::Vst::HostMessage;
+		return Steinberg::kResultTrue;
+	}
+	if (Steinberg::FUnknownPrivate::iidEqual(cid, Steinberg::Vst::IAttributeList::iid) && Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Vst::IAttributeList::iid))
+	{
+		if (auto al = Steinberg::Vst::HostAttributeList::make())
+		{
+			*obj = al.take ();
+			return Steinberg::kResultTrue;
+		}
+		return Steinberg::kOutOfMemory;
+	}
+	*obj = nullptr;
+	return Steinberg::kResultFalse;
+}
+
+Steinberg::tresult PLUGIN_API Vst3HostApplication::queryInterface (const char* _iid, void** obj)
+{
+    std::cout << "Vst3HostApplication queryInterface called." << std::endl;
+    std::cout << "Vst3HostApplication queryInterface checking for Funknown." << std::endl;
+	QUERY_INTERFACE (_iid, obj, Steinberg::FUnknown::iid, Steinberg::Vst::IHostApplication)
+    std::cout << "Vst3HostApplication queryInterface checking for IHostApplication." << std::endl;
+	QUERY_INTERFACE (_iid, obj, Steinberg::Vst::IHostApplication::iid, Steinberg::Vst::IHostApplication)
+
+    std::cout << "Vst3HostApplication queryInterface checking IRunLoop." << std::endl;
+    if (runLoop.get()->queryInterface(_iid, obj) == Steinberg::kResultTrue)
+    {
+        std::cout << "Vst3HostApplication queryInterface returning IRunLoop." << std::endl;
+        return runLoop.get()->queryInterface(_iid, obj);
+    }
+
+    std::cout << "Vst3HostApplication queryInterface checking PlugInterfaceSupport." << std::endl;
+	if (plugInterfaceSupport && plugInterfaceSupport->queryInterface(_iid, obj) == Steinberg::kResultTrue)
+	{
+       return Steinberg::kResultOk;
+	}
+
+    std::cout << "Vst3HostApplication queryInterface no matches." << std::endl;
+    *obj = nullptr;
+    return Steinberg::kNoInterface;
+}
+
+Steinberg::uint32 PLUGIN_API Vst3HostApplication::addRef ()
+{
+	return 1;
+}
+
+Steinberg::uint32 PLUGIN_API Vst3HostApplication::release ()
+{
+	return 1;
+}
+
 
 class ComponentHandler : public Steinberg::Vst::IComponentHandler
 {
@@ -251,21 +482,37 @@ public:
     );
     Steinberg::ViewRect* getViewSize();
 
-    bool addEvent(EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3);
+    bool addEvent(EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3, double data4);
     bool addParameterChange();
 
     void getPresetData();
 
     std::string& getName();
 
-    Steinberg::Vst::HostApplication* getHostApplication() {return hostApplication.get();}
+    Vst3HostApplication* getHostApplication() {return hostApplication.get();}
     Steinberg::Vst::IComponent* getComponentPtr() {return component.get();}
     Steinberg::Vst::IEditController* getEditControllerPtr() {return editController.get();}
+    Steinberg::IPlugView* getPlugViewPtr()
+    {
+        if (plugView == nullptr)
+        {
+            return nullptr;
+        }
+        return plugView.get();
+    }
+    SimplePlugFrame* getPlugFramePtr()
+    {
+        if (simplePlugFrame == nullptr)
+        {
+            return nullptr;
+        }
+        return simplePlugFrame.get();
+    }
 
 private:
     VST3::Hosting::Module::Ptr module = nullptr;
 
-    Steinberg::IPtr<Steinberg::Vst::HostApplication> hostApplication = nullptr;
+    Steinberg::IPtr<Vst3HostApplication> hostApplication = nullptr;
 
     Steinberg::IPtr<Steinberg::Vst::PlugProvider> plugProvider = nullptr;
 
@@ -288,7 +535,6 @@ private:
 
     std::string daw_plugin_uuid;
     std::string name;
-    Steinberg::IPtr<Steinberg::Linux::IRunLoop> runLoop = Steinberg::owned(new RunLoop());;
 };
 
 Vst3PluginHandler::Vst3PluginHandler() {}
@@ -313,7 +559,7 @@ bool Vst3PluginHandler::initialise(
     std::string plugin_uid(vst3_plugin_uid);
     std::cout << "Plugin UID: " << plugin_uid << std::endl;
     std::string error;
-    hostApplication = Steinberg::owned(new Steinberg::Vst::HostApplication());
+    hostApplication = Steinberg::owned(new Vst3HostApplication());
 
     this->daw_plugin_uuid.append(daw_plugin_uuid);
 
@@ -326,12 +572,12 @@ bool Vst3PluginHandler::initialise(
         if (classInfo.category() == kVstAudioEffectClass && classInfo.ID().toString().compare(plugin_uid) == 0)
         {
             const VST3::Hosting::PluginFactory& factory = module->getFactory();
-            factory.setHostContext(runLoop.get());
+            factory.setHostContext(static_cast<Steinberg::FUnknown*>(hostApplication.get()));
 
             plugProvider = Steinberg::owned(new Steinberg::Vst::PlugProvider(factory, classInfo, true));
             std::cout << "Created PlugProvider." << std::endl;
 
-            Steinberg::Vst::PluginContextFactory::instance().setPluginContext(hostApplication.get());
+            Steinberg::Vst::PluginContextFactory::instance().setPluginContext(static_cast<Steinberg::FUnknown*>(hostApplication.get()));
 
             if (plugProvider.get()->initialize() )
             {
@@ -568,14 +814,17 @@ bool Vst3PluginHandler::createView(
     {
         plugView = editController.get()->createView(Steinberg::Vst::ViewType::kEditor);
 
-        if (plugView && plugView->attached((void *)xid, Steinberg::kPlatformTypeX11EmbedWindowID) != Steinberg::kResultOk)
+        if (plugView)
         {
-            std::cout << "Failed to open window." << std::endl;
-            return false;
-        }
+            simplePlugFrame = Steinberg::owned(new SimplePlugFrame(std::move(vst3Host), std::move(sendPluginWindowResize)));
+            plugView.get()->setFrame(simplePlugFrame.get());
 
-        simplePlugFrame = Steinberg::owned(new SimplePlugFrame(std::move(vst3Host), std::move(sendPluginWindowResize)));
-        plugView.get()->setFrame(simplePlugFrame.get());
+            if (plugView->attached((void *)xid, Steinberg::kPlatformTypeX11EmbedWindowID) != Steinberg::kResultOk)
+            {
+                std::cout << "Failed to open window." << std::endl;
+                return false;
+            }
+        }
     }
 
     return true;
@@ -592,7 +841,7 @@ Steinberg::ViewRect* Vst3PluginHandler::getViewSize()
     return viewRect;
 }
 
-bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3)
+bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3, double data4)
 {
     if (component && component.get()->getBusCount(Steinberg::Vst::MediaTypes::kEvent, Steinberg::Vst::BusDirections::kInput) > 0)
     {
@@ -605,28 +854,31 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
         switch(eventType) {
             case EventType::NoteOn:
             {
-                std::cout << "Vst3PluginHandler::addEvent - note on" << std::endl;
+                std::cout << "Vst3PluginHandler::addEvent - note on: noteId=" << data3 << std::endl;
                 event.type = Steinberg::Vst::Event::kNoteOnEvent;
-                event.noteOn.noteId = -1;
+                event.noteOn.noteId = data3;
                 event.noteOn.channel = 0;
                 event.noteOn.pitch = static_cast<Steinberg::int16>(data1);
                 event.noteOn.velocity = static_cast<float>(data2) / 127.0;
+                event.noteOn.tuning = 0.0;
                 processData.inputEvents[0].addEvent(event);
                 break;
             }
             case EventType::NoteOff:
             {
-                std::cout << "Vst3PluginHandler::addEvent - note off" << std::endl;
+                std::cout << "Vst3PluginHandler::addEvent - note off: noteId=" << data3 << std::endl;
                 event.type = Steinberg::Vst::Event::kNoteOffEvent;
-                event.noteOff.noteId = -1;
+                event.noteOff.noteId = data3;
                 event.noteOff.channel = 0;
                 event.noteOff.pitch = static_cast<Steinberg::int16>(data1);
                 event.noteOff.velocity = static_cast<float>(data2) / 127.0;
+                event.noteOff.tuning = 0.0;
                 processData.inputEvents[0].addEvent(event);
                 break;
             }
             case EventType::KeyPressureAfterTouch:
             {
+                std::cout << "Vst3PluginHandler::addEvent - key poly pressure after touch" << std::endl;
                 event.type = Steinberg::Vst::Event::kPolyPressureEvent;
                 event.polyPressure.channel = 0;
                 event.polyPressure.pitch = data1;
@@ -636,6 +888,7 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
             }
             case EventType::Controller:
             {
+                std::cout << "Vst3PluginHandler::addEvent - controller" << std::endl;
                 // need to get the controller mapping
                 Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
                 if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
@@ -654,6 +907,7 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
             }
             case EventType::PitchBend:
             {
+                std::cout << "Vst3PluginHandler::addEvent - pitch bend" << std::endl;
                 // need to get the pitch bend mapping
                 Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
                 if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
@@ -679,6 +933,16 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
                 {
                     std::cout << "Problem adding parameter to the queue." << std::endl;
                 }
+                break;
+            }
+            case EventType::NoteExpression:
+            {
+                std::cout << "Vst3PluginHandler::addEvent - note expression: type=" << data1 << ", noteId=" << data3 << ", value=" << data4 << std::endl;
+                event.type = Steinberg::Vst::Event::kNoteExpressionValueEvent;
+                event.noteExpressionValue.typeId = data1;
+                event.noteExpressionValue.noteId = data3;
+                event.noteExpressionValue.value = data4;
+                processData.inputEvents[0].addEvent(event);
                 break;
             }
         }
@@ -722,6 +986,7 @@ bool createPlugin(
 {
     Vst3PluginHandler vst3Plugin;
     std::string daw_plugin_uuid(riff_daw_plugin_uuid);
+    std::cout << "createPlugin called for plugin uuid: " << daw_plugin_uuid << std::endl;
 
     if (!vst3Plugin.initialise(daw_plugin_uuid, std::string(vst3_plugin_path), std::string(vst3_plugin_uid), sampleRate, blockSize, std::move(vst3Host), std::move(sendParameterChange)))
     {
@@ -830,13 +1095,13 @@ bool vst3_plugin_process(
     return false;
 }
 
-bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3)
+bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t blockPosition, uint32_t data1, uint32_t data2, int32_t data3, double data4)
 {
     try
     {
         Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
 
-        return vst3PluginHandler.addEvent(eventType, blockPosition, data1, data2, data3);
+        return vst3PluginHandler.addEvent(eventType, blockPosition, data1, data2, data3, data4);
     }
     catch(const std::out_of_range& ex)
     {
@@ -936,7 +1201,7 @@ int32_t vst3_plugin_get_parameter_count(rust::String riff_daw_plugin_uuid)
         Steinberg::Vst::IEditController* editController = vst3PluginHandler.getEditControllerPtr();
 
         int parameterCount = editController->getParameterCount();
-        std::cout << "Vst3 plugin parameter count=" << parameterCount << std::endl;
+//        std::cout << "Vst3 plugin parameter count=" << parameterCount << std::endl;
 
         return parameterCount;
     }
@@ -967,7 +1232,7 @@ void vst3_plugin_get_parameter_info(
         Steinberg::Vst::IEditController* editController = vst3PluginHandler.getEditControllerPtr();
 
         int parameterCount = editController->getParameterCount();
-        std::cout << "Vst3 plugin parameter count=" << parameterCount << std::endl;
+//        std::cout << "Vst3 plugin parameter count=" << parameterCount << std::endl;
 
         if (index < parameterCount)
         {
@@ -994,6 +1259,39 @@ void vst3_plugin_get_parameter_info(
     catch(const std::out_of_range& ex)
     {
         std::cout << "vst3_plugin_get_parameter_info: Can't find plugin." << std::endl;
+    }
+}
+
+void vst3_plugin_remove(rust::String riff_daw_plugin_uuid)
+{
+    try
+    {
+        std::string daw_plugin_uuid(riff_daw_plugin_uuid);
+        std::cout << "vst3_plugin_remove called for plugin uuid: " << daw_plugin_uuid << std::endl;
+        Vst3PluginHandler& vst3PluginHandler = vst3Plugins[daw_plugin_uuid];
+        std::cout << "vst3_plugin_remove found vst3 plugin." << std::endl;
+
+        Steinberg::IPlugView* plugView = vst3PluginHandler.getPlugViewPtr();
+        if (plugView)
+        {
+            std::cout << "vst3_plugin_remove retrieved IPlugView." << std::endl;
+            Steinberg::IPlugFrame* plugFrame = vst3PluginHandler.getPlugFramePtr();
+            if (plugFrame != nullptr)
+            {
+                std::cout << "vst3_plugin_remove retrieved IPlugFrame." << std::endl;
+                static_cast<SimplePlugFrame*>(plugFrame)->shutdownRunLoop();
+    //            plugView->setFrame(nullptr);
+            }
+    //        std::cout << "vst3_plugin_remove calling IPlugView->removed()." << std::endl;
+    //        plugView->removed();
+        }
+
+//        std::cout << "vst3_plugin_remove calling vst3Plugins.erase(daw_plugin_uuid)." << std::endl;
+//        vst3Plugins.erase(daw_plugin_uuid);
+    }
+    catch(const std::exception& e)
+    {
+        std::cout << "Exception: " << e.what() << std::endl;
     }
 }
 

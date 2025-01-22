@@ -15022,6 +15022,7 @@
                             <property name="height-request">30</property>
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
+                            <property name="halign">start</property>
                             <property name="icon_size">2</property>
                             <child>
                               <object class="GtkRadioToolButton" id="piano_roll_select_mode_btn">
@@ -15511,9 +15512,225 @@
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
                                 <property name="tooltip-text" translatable="yes">Dock/Undock the piano roll from the main window</property>
-                                <property name="label" translatable="yes">__glade_unnamed_254</property>
                                 <property name="use-underline">True</property>
                                 <property name="stock-id">gtk-disconnect</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkSeparatorToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">MPE Voice</property>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_all_voices_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">All</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_0_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">0</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_1_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">1</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_2_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">2</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_3_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">3</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_4_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">4</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_5_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">5</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_6_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">6</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_7_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">7</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_8_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">8</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_9_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">9</property>
+                                <property name="use-underline">True</property>
+                                <property name="active">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_mpe_voice_10_btn">
+                                <property name="width-request">50</property>
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">10</property>
+                                <property name="use-underline">True</property>
+                                <property name="group">piano_roll_mpe_all_voices_btn</property>
                               </object>
                               <packing>
                                 <property name="expand">False</property>
@@ -16863,6 +17080,9 @@
                                 <property name="fill">False</property>
                                 <property name="position">9</property>
                               </packing>
+                            </child>
+                            <child>
+                              <placeholder/>
                             </child>
                           </object>
                           <packing>

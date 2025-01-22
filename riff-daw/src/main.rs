@@ -2256,9 +2256,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                                 state.selected_riff_events_mut().append(&mut selected);
                             }
+                            else {
+                                state.selected_riff_events_mut().clear();
+                            }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
-                    };
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
                 }
                 TrackChangeType::RiffCutSelected(x, y, x2, y2) => {
                     let mut selected_riff_uuid = None;

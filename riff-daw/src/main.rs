@@ -1289,7 +1289,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             match track_uuid {
                                 Some(track_uuid) => {
                                     // gui.delete_track_from_ui(track_uuid.clone());
-                                    state.get_project().song_mut().delete_track(track_uuid);
+                                    state.get_project().song_mut().delete_track(track_uuid.clone());
+                                    if let Err(error) = tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(track_uuid.clone())) {
+                                        debug!("Main - rx_ui processing loop - Track Deleted - could send delete track to audio layer: {}", error);
+                                    }
                                     gui.clear_ui();
                                     gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
                                 },

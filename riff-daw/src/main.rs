@@ -4762,7 +4762,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 debug!("Main - rx_ui processing loop - riff set track incr riff: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
-                        state.riff_set_increment_riff_for_track(riff_set_uuid.clone(), track_uuid.clone());
+                        let new_riff_set_name = state.riff_set_increment_riff_for_track(riff_set_uuid.clone(), track_uuid.clone());
+                        gui.update_available_riff_sets(&state);
+                        gui.update_riff_set_name_in_riff_views(riff_set_uuid.clone(), new_riff_set_name);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff set track incr riff - could not get lock on state"),
                 };

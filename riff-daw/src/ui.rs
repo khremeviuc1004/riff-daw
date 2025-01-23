@@ -6153,6 +6153,7 @@ impl MainWindow {
                     }
 
                     riff_set_blade_head.riff_set_name_entry.set_text(new_riff_set_name_entry.text().as_str());
+                    riff_set_blade_head.riff_set_name_entry.set_tooltip_text(Some(new_riff_set_name_entry.text().as_str()));
                     new_riff_set_name_entry.set_text("");
                 }
                 else {
@@ -6473,9 +6474,12 @@ impl MainWindow {
             let blade_head = riff_set_blade_head.riff_set_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
             riff_set_blade_head.riff_set_name_entry.set_text(riff_set_name.as_str());
+            riff_set_blade_head.riff_set_name_entry.set_tooltip_text(Some(riff_set_name.as_str()));
             riff_set_blade_head.riff_set_name_entry.connect_key_release_event(move |entry, event_key| {
                 let name = entry.text().to_string();
                 let uuid = blade_head.widget_name().to_string();
+
+                entry.set_tooltip_text(Some(name.as_str()));
 
                 if event_key.keyval() == gdk::keys::constants::Return {
                     match tx_from_ui.send(DAWEvents::RiffSetNameChange(uuid, name)) {
@@ -8375,6 +8379,7 @@ impl MainWindow {
                                         if let Some(name_entry) = widget.dynamic_cast_ref::<Entry>() {
                                             if name_entry.text().to_string() != riff_set_name {
                                                 name_entry.set_text(riff_set_name.as_str());
+                                                name_entry.set_tooltip_text(Some(riff_set_name.as_str()));
                                             }
                                             break;
                                         }
@@ -8528,17 +8533,17 @@ impl MainWindow {
         for item in riff_arrangement.items().iter() {
             match item.item_type() {
                 RiffItemType::RiffSet => {
-                    let riff_set_uuid = item.item_uuid().to_string();
+                    let item_riff_set_uuid = item.item_uuid().to_string();
                     let riff_set_box = riff_arrangement_blade.riff_set_box.clone();
 
                     let (riff_set_blade_head, riff_set_blade_drawing_areas, _) = MainWindow::add_riff_set_blade(
                         tx_from_ui.clone(),
                         riff_set_box.clone(),
                         riff_set_box.clone(),
-                        riff_set_uuid.to_string(),
+                        item_riff_set_uuid.to_string(),
                         track_uuids.clone(),
                         state_arc.clone(),
-                        riff_sets.iter().find(|(riff_set_uuid, _)| riff_set_uuid == riff_set_uuid).unwrap().1.clone(),
+                        riff_sets.iter().find(|(riff_set_uuid, _)| riff_set_uuid == &item_riff_set_uuid).unwrap().1.clone(),
                         RiffSetType::RiffArrangement(riff_arrangement.uuid()),
                         selected_track_style_provider.clone(),
                         Some(riff_item_riff_set_blades_beat_grids.clone()),

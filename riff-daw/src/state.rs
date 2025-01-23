@@ -1898,7 +1898,7 @@ impl DAWState {
 
 
 
-    pub fn riff_set_increment_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String) {
+    pub fn riff_set_increment_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String) -> String {
         debug!("state.riff_set_increment_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
         // get the track
         let riff_uuids: Vec<String> = match self.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
@@ -1907,7 +1907,7 @@ impl DAWState {
             },
             None => vec![],
         };
-        if let Some(riff_set) = self.get_project().song_mut().riff_set_mut(riff_set_uuid) {
+        if let Some(riff_set) = self.get_project().song_mut().riff_set_mut(riff_set_uuid.clone()) {
 
             if !riff_uuids.is_empty() {
                 // get the current riff_ref for the track
@@ -1937,6 +1937,44 @@ impl DAWState {
                 }
             }
         }
+
+        // setup to update the riff set name
+
+        // declare a riff set name string for appending
+        let mut new_riff_set_name = "".to_string();
+
+        // loop through all the tracks in order
+        if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid.clone()) {
+            for (track_number, track_type) in self.project().song().tracks().iter().enumerate() {
+                // find the riff ref in the riff set for the track and get its linked to value
+                if let Some(linked_to_riff_uuid) = riff_set.riff_refs().iter().find(|(track_uuid, riff_ref)| track_type.uuid().to_string() == track_uuid.to_string()).map(|(track_uuid, riff_ref)| riff_ref.linked_to()) {
+                    // find the matching riff in the track and get its name
+                    if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == linked_to_riff_uuid) {
+                        // handle the empty riff
+                        let riff_name = if riff.name() == "empty" {
+                            "-"
+                        }
+                        else {
+                            riff.name()
+                        };
+                        // concatenate the name to the riff set name
+                        if track_number == 0 {
+                            new_riff_set_name = format!("{}: {}", track_number + 1, riff_name);
+                        }
+                        else {
+                            new_riff_set_name = format!("{}, {}: {}", new_riff_set_name.as_str(), track_number + 1, riff_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // update the riff set name
+        if let Some(riff_set) = self.get_project().song_mut().riff_set_mut(riff_set_uuid.clone()) {
+            riff_set.set_name(new_riff_set_name.clone());
+        }
+
+        new_riff_set_name
     }
 
     pub fn riff_set_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String, riff_uuid: String) {

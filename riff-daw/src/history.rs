@@ -32,6 +32,7 @@ pub trait HistoryAction {
                 }
             }
             PlayMode::RiffSequence => {}
+            PlayMode::RiffGrid => {}
             PlayMode::RiffArrangement => {}
         }
     }

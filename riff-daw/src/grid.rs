@@ -10,7 +10,7 @@ use uuid::Uuid;
 use geo::{coord, Intersects, Rect};
 
 use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
-use crate::event::CurrentView;
+use crate::event::{CurrentView, RiffGridChangeType};
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -38,6 +38,7 @@ pub enum DrawingAreaType {
     TrackGrid,
     Automation,
     Riff,
+    RiffGrid,
 }
 
 pub trait Grid : MouseHandler {
@@ -319,6 +320,63 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
+    }
+}
+
+pub struct RiffGridMouseCoordHelper;
+
+impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
+        y / entity_height_in_pixels * zoom_vertical
+    }
+
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceAdd(y_index, time), None));
+    }
+
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDelete(y_index, time), None));
+    }
+
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCutSelected(x, y2, x2, y), None));
+    }
+
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCopySelected(x, y2, x2, y), None));
+    }
+
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencePaste, None));
+    }
+
+    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+
+    }
+
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    }
+
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    }
+
+    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
     }
 }
 
@@ -1365,10 +1423,11 @@ impl Grid for BeatGrid {
     fn paint_play_cursor(&mut self, context: &Context, height: f64, _width: f64) {
         let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
         let x = self.track_cursor_time_in_beats * adjusted_beat_width_in_pixels;
+        let (_, clip_y1, _, clip_y2) = context.clip_extents().unwrap();
 
         context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
         context.move_to(x, 0.0);
-        context.line_to(x, height);
+        context.line_to(x, clip_y2 - clip_y1);
         let _ = context.stroke();
     }
 
@@ -1648,6 +1707,7 @@ impl Grid for BeatGrid {
     }
 
     fn set_horizontal_zoom(&mut self, zoom: f64) {
+        // debug!("Horiz. zoom: {}", zoom);
         self.zoom_horizontal = zoom;
     }
 
@@ -1676,6 +1736,18 @@ impl BeatGridRuler {
             beat_width_in_pixels,
             zoom_horizontal: zoom,
             zoom_vertical: zoom,
+            zoom_factor: 0.01,
+            beats_per_bar,
+            tx_from_ui,
+            custom_painter: None,
+        }
+    }
+
+    pub fn new_with_individual_zoom_level(zoom_horizontal: f64, zoom_vertical: f64, beat_width_in_pixels: f64, beats_per_bar: i32, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> Self {
+        Self {
+            beat_width_in_pixels,
+            zoom_horizontal,
+            zoom_vertical,
             zoom_factor: 0.01,
             beats_per_bar,
             tx_from_ui,
@@ -3134,6 +3206,276 @@ impl CustomPainter for TrackGridCustomPainter {
     }
 
     fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+pub struct RiffGridCustomPainter {
+    state: Arc<Mutex<DAWState>>,
+    show_automation: bool,
+    show_note: bool,
+    show_note_velocity: bool,
+    show_pan: bool,
+    pub original_riff: Option<Riff>,
+    pub dragged_riff: Option<Riff>,
+    pub edit_item_handler: EditItemHandler<Riff, RiffReference>,
+    use_globally_selected_riff_grid: bool,
+    riff_grid_uuid: Option<String>,
+    track_cursor_time_in_beats: f64,
+}
+
+impl RiffGridCustomPainter {
+    pub fn new_with_edit_item_handler(
+        state: Arc<Mutex<DAWState>>,
+        edit_item_handler: EditItemHandler<Riff, RiffReference>,
+        use_globally_selected_riff_grid: bool,
+        riff_grid_uuid: Option<String>,
+    ) -> RiffGridCustomPainter {
+        RiffGridCustomPainter {
+            state,
+            show_automation: false,
+            show_note: true,
+            show_note_velocity: false,
+            show_pan: false,
+            original_riff: None,
+            dragged_riff: None,
+            edit_item_handler,
+            use_globally_selected_riff_grid,
+            riff_grid_uuid,
+            track_cursor_time_in_beats: 0.0,
+        }
+    }
+    pub fn set_show_automation(&mut self, show_automation: bool) {
+        self.show_automation = show_automation;
+    }
+    pub fn set_show_note(&mut self, show_note: bool) {
+        self.show_note = show_note;
+    }
+    pub fn set_show_note_velocity(&mut self, show_note_velocity: bool) {
+        self.show_note_velocity = show_note_velocity;
+    }
+    pub fn set_show_pan(&mut self, show_pan: bool) {
+        self.show_pan = show_pan;
+    }
+}
+
+impl CustomPainter for RiffGridCustomPainter {
+    fn paint_custom(&mut self,
+                    context: &Context,
+                    canvas_height: f64,
+                    _canvas_width: f64,
+                    entity_height_in_pixels: f64,
+                    beat_width_in_pixels: f64,
+                    zoom_horizontal: f64,
+                    zoom_vertical: f64,
+                    select_window_top_left_x: f64,
+                    select_window_top_left_y: f64,
+                    select_window_bottom_right_x: f64,
+                    select_window_bottom_right_y: f64,
+                    _drawing_area_widget_name: Option<String>,
+                    mouse_pointer_x: f64,
+                    mouse_pointer_y: f64,
+                    mouse_pointer_previous_x: f64,
+                    mouse_pointer_previous_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
+                    drawing_area: &DrawingArea,
+                    operation_mode: &OperationModeType,
+                    _drag_started: bool,
+                    edit_drag_cycle: &DragCycle,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    ) {
+        let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
+        // debug!("RiffGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
+        let clip_rectangle = Rect::new(
+            coord!{x: clip_x1, y: clip_y1},
+            coord!{x: clip_x2, y: clip_y2}
+        );
+
+        match self.state.lock() {
+            Ok(mut state) => {
+                let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
+                let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
+                let riff_grid_uuid_to_paint = if !self.use_globally_selected_riff_grid {
+                    if let Some(riff_grid_uuid) = &self.riff_grid_uuid {
+                        riff_grid_uuid.to_string()
+                    }
+                    else {
+                        "".to_string()
+                    }
+                }
+                else if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
+                    selected_riff_grid_uuid.to_string()
+                }
+                else {
+                    "".to_string()
+                };
+                let mut track_number = 0.0;
+
+                if let Some(riff_grid) = state.project().song().riff_grid(riff_grid_uuid_to_paint) {
+                    for track in state.project().song().tracks() {
+                        let (red, green, blue, alpha) = track.colour();
+
+                        if let Some(riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
+                            for riff_ref in riff_refs.iter() {
+                                let linked_to_riff_uuid = riff_ref.linked_to();
+
+                                context.set_source_rgba(red, green, blue, alpha);
+
+                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == linked_to_riff_uuid) {
+                                    if let Some((red, green, blue, alpha)) = riff.colour() {
+                                        context.set_source_rgba(*red, *green, *blue, *alpha);
+                                    }
+
+                                    let x = riff_ref.position() * adjusted_beat_width_in_pixels;
+                                    let y = track_number * adjusted_entity_height_in_pixels;
+                                    let duration_in_beats = riff.length();
+                                    let width = duration_in_beats * beat_width_in_pixels * zoom_horizontal;
+
+                                    let riff_rect = Rect::new(
+                                        coord! {x: x, y: y},
+                                        coord! {x: x + width, y: y + adjusted_entity_height_in_pixels}
+                                    );
+
+                                    // debug!("Part: uuid={}, x1={}, y1={}, x2={}, y2={},", riff_ref.uuid().to_string(), x, y, x + width, y + adjusted_entity_height_in_pixels);
+
+                                    // if x >= clip_x1 && x <= clip_x2 && y >= clip_y1 && y <= clip_y2 {
+                                    if riff_rect.intersects(&clip_rectangle) {
+                                        // debug!("Part in clip region");
+
+                                        if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
+                                            select_window_top_left_y <= y && (y + adjusted_entity_height_in_pixels) <= select_window_bottom_right_y {
+                                            context.set_source_rgb(0.0, 0.0, 1.0);
+                                        }
+
+                                        self.edit_item_handler.handle_item_edit(
+                                            context,
+                                            riff,
+                                            operation_mode,
+                                            mouse_pointer_x,
+                                            mouse_pointer_y,
+                                            mouse_pointer_previous_x,
+                                            mouse_pointer_previous_y,
+                                            adjusted_entity_height_in_pixels,
+                                            adjusted_beat_width_in_pixels,
+                                            x,
+                                            y,
+                                            width,
+                                            canvas_height,
+                                            drawing_area,
+                                            edit_drag_cycle,
+                                            tx_from_ui.clone(),
+                                            false,
+                                            track.uuid().to_string(),
+                                            riff_ref,
+                                            false,
+                                            track_number,
+                                        );
+
+                                        context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);
+                                        let _ = context.fill();
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);
+                                        context.move_to(x + 5.0, y + 15.0);
+                                        context.set_font_size(9.0);
+                                        let mut name = riff.name().to_string();
+                                        let mut name_fits = false;
+                                        while !name_fits {
+                                            if let Ok(text_extents) = context.text_extents(name.as_str()) {
+                                                if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                                                    if !name.is_empty() {
+                                                        name = name.as_str()[0..name.len() - 1].to_string();
+                                                    } else {
+                                                        name_fits = true;
+                                                        break;
+                                                    }
+                                                } else {
+                                                    name_fits = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        let _ = context.show_text(name.as_str());
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        let _ = context.stroke();
+
+                                        // draw notes
+                                        for track_event in riff.events() {
+                                            match track_event {
+                                                TrackEvent::ActiveSense => (),
+                                                TrackEvent::AfterTouch => (),
+                                                TrackEvent::ProgramChange => (),
+                                                TrackEvent::Note(note) => {
+                                                    let note_x = (riff_ref.position() + note.position()) * adjusted_beat_width_in_pixels;
+
+                                                    // draw note
+                                                    if self.show_note {
+                                                        let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
+                                                        // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
+                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                        context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
+                                                        let _ = context.fill();
+                                                    }
+
+                                                    // draw velocity
+                                                    if self.show_note_velocity {
+                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                        let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                        // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                        context.move_to(note_x, velocity_y_start);
+                                                        context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                        let _ = context.stroke();
+                                                    }
+                                                },
+                                                TrackEvent::NoteOn(_) => (),
+                                                TrackEvent::NoteOff(_) => (),
+                                                TrackEvent::Controller(controller) => {
+                                                    let x_position = (riff_ref.position() + controller.position()) * adjusted_beat_width_in_pixels;
+                                                    let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                    context.move_to(x_position, y_start);
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64) as f64));
+                                                    let _ = context.stroke();
+                                                },
+                                                TrackEvent::PitchBend(_pitch_bend) => (),
+                                                TrackEvent::KeyPressure => (),
+                                                TrackEvent::AudioPluginParameter(_parameter) => (),
+                                                TrackEvent::Sample(_sample) => (),
+                                                TrackEvent::Measure(_) => {}
+                                                TrackEvent::NoteExpression(_) => {}
+                                            }
+                                        }
+                                    }
+                                    else {
+                                        debug!("Part not in clip region");
+                                    }
+                                }
+                            }
+                        }
+
+                        track_number += 1.0;
+                    }
+                }
+            },
+            Err(_) => debug!("Riff grid custom painter could not get state lock."),
+        }
+        // debug!("RiffGridCustomPainter::paint_custom - exited.");
+    }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        self.track_cursor_time_in_beats
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
     }
 
     fn as_any(&mut self) -> &mut dyn Any {

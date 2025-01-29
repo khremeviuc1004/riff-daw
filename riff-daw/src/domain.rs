@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
+use std::collections::hash_map::Keys;
 use std::default::Default;
 use std::io::prelude::*;
 use std::ops::Index;
@@ -52,6 +53,7 @@ pub enum PlayMode {
     Song,
     RiffSet,
     RiffSequence,
+    RiffGrid,
     RiffArrangement,
 }
 
@@ -1490,10 +1492,78 @@ impl RiffSequence {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RiffGrid {
+    uuid: Uuid,
+    name: String,
+    tracks: HashMap<String, Vec<RiffReference>>,
+}
+
+impl RiffGrid {
+    pub fn new() -> Self {
+        RiffGrid {
+            uuid: Uuid::new_v4(),
+            name: "Unknown".to_owned(),
+            tracks: HashMap::new(),
+        }
+    }
+
+    pub fn new_with_uuid(uuid: Uuid) -> Self {
+        RiffGrid {
+            uuid,
+            name: "Unknown".to_owned(),
+            tracks: HashMap::new(),
+        }
+    }
+
+    pub fn uuid(&self) -> String {
+        self.uuid.to_string()
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    pub fn track_riff_references(&self, track_uuid: String) -> Option<&Vec<RiffReference>> {
+        self.tracks.get(track_uuid.as_str())
+    }
+
+    pub fn tracks(&self) -> Keys<'_, String, Vec<RiffReference>> {
+        self.tracks.keys()
+    }
+
+
+    pub fn add_riff_reference_to_track(&mut self, track_uuid: String, riff_uuid: String, position: f64) {
+        let track = if let Some(track) = self.tracks.get_mut(&track_uuid) {
+            track
+        }
+        else {
+            let mut new_track = vec![];
+            self.tracks.insert(track_uuid.clone(), new_track);
+            self.tracks.get_mut(&track_uuid).unwrap()
+        };
+        track.push(RiffReference::new(riff_uuid, position));
+        track.sort_by(|riff_ref1, riff_ref2| DAWUtils::sort_by_daw_position(riff_ref1, riff_ref2));
+    }
+
+    pub fn remove_riff_reference_from_track(&mut self, track_uuid: String, reference_uuid: String) {
+        if let Some(track) = self.tracks.get_mut(&track_uuid) {
+            track.retain(|riff_reference| riff_reference.uuid().to_string() != reference_uuid);
+        }
+    }
+}
+
+
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum RiffItemType {
     RiffSet,
-    RiffSequence
+    RiffSequence,
+    RiffGrid,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -6088,6 +6158,8 @@ pub struct Song {
 	loops: Vec<Loop>,
     riff_sets: Vec<RiffSet>,
     riff_sequences: Vec<RiffSequence>,
+    #[serde(default)]
+    riff_grids: Vec<RiffGrid>,
     riff_arrangements: Vec<RiffArrangement>,
     samples: HashMap<String, Sample>,
 }
@@ -6095,7 +6167,7 @@ pub struct Song {
 impl Song {
 	pub fn new() -> Song {
 		Song {
-			name: String::from("unkown"),
+			name: String::from("unknown"),
             sample_rate: 44100.0,
             block_size: 1024.0,
 			tempo: 140.0,
@@ -6106,6 +6178,7 @@ impl Song {
 			loops: vec![],
             riff_sets: vec![],
             riff_sequences: vec![],
+            riff_grids: vec![],
             riff_arrangements: vec![],
             samples: HashMap::new(),
 		}
@@ -6358,6 +6431,30 @@ impl Song {
 
     pub fn riff_sequences(&self) -> &Vec<RiffSequence> {
         &self.riff_sequences
+    }
+
+    pub fn add_riff_grid(&mut self, riff_grid: RiffGrid) {
+        self.riff_grids.push(riff_grid);
+    }
+
+    pub fn riff_grid(&self, uuid: String) -> Option<&RiffGrid> {
+        self.riff_grids.iter().find(|riff_grid| riff_grid.uuid() == uuid)
+    }
+
+    pub fn riff_grid_mut(&mut self, uuid: String) -> Option<&mut RiffGrid> {
+        self.riff_grids.iter_mut().find(|riff_grid| riff_grid.uuid() == uuid)
+    }
+
+    pub fn remove_riff_grid(&mut self, uuid: String) {
+        self.riff_grids.retain(|riff_grid| riff_grid.uuid() != uuid);
+    }
+
+    pub fn riff_grids(&self) -> &Vec<RiffGrid> {
+        &self.riff_grids
+    }
+
+    pub fn riff_grids_mut(&mut self) -> &mut Vec<RiffGrid> {
+        &mut self.riff_grids
     }
 
     pub fn riff_sequences_mut(&mut self) -> &mut Vec<RiffSequence> {

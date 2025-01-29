@@ -15,6 +15,17 @@ pub struct DAWUtils;
 
 impl DAWUtils {
 
+    pub fn sort_by_daw_position(a: &dyn DAWItemPosition, b: &dyn DAWItemPosition) -> Ordering {
+        if (a.position() - b.position()) > f64::EPSILON {
+            return Ordering::Greater
+        }
+        else if (b.position() - a.position()) > f64::EPSILON {
+            return Ordering::Less
+        };
+
+        Ordering::Equal
+    }
+
     pub fn sort_track_events(a: &TrackEvent, b: &TrackEvent) -> Ordering {
         // match a {
         //     TrackEvent::NoteOn(note_on) => debug!("Note on: position={}", note_on.position()),
@@ -302,7 +313,7 @@ impl DAWUtils {
                 _ => {}
             }
         }
-        plugin_parameter_events.sort_by_key(|a| a.position() as i32);
+        plugin_parameter_events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         plugin_parameter_events
     }
 
@@ -337,8 +348,8 @@ impl DAWUtils {
                 _ => {}
             }
         }
-        events_all.sort_by_key(|track_event| track_event.position() as i32);
-        plugin_parameter_events.sort_by_key(|parameter| parameter.position() as i32);
+        events_all.sort_by(|event1, event2| DAWUtils::sort_by_daw_position(event1, event2));
+        plugin_parameter_events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         plugin_parameter_events
     }
 
@@ -871,6 +882,28 @@ impl DAWUtils {
         running_position_in_beats
     }
 
+    pub fn copy_riff_grid_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
+        // TODO this needs to be reimplemented for a riff grid
+        // let mut riff_set_references = vec![];
+        match state.lock() {
+            Ok(state) => {
+                // if let Some(riff_grid) = state.project().song().riff_grid(uuid) {
+                //     for riff_set_uuid in riff_grid.riff_sets() {
+                //         riff_set_references.push(riff_set_uuid.clone());
+                //     }
+                // }
+            }
+            Err(_) => {}
+        }
+
+        let mut running_position_in_beats = position_in_beats;
+        // for riff_set_reference in riff_set_references.iter() {
+        //     running_position_in_beats = DAWUtils::copy_riff_set_to_position(riff_set_reference.item_uuid().to_string(), running_position_in_beats, state.clone());
+        // }
+
+        running_position_in_beats
+    }
+
     pub fn copy_riff_arrangement_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) {
         struct ArrangementElement {
             uuid: String,
@@ -899,6 +932,9 @@ impl DAWUtils {
                 }
                 RiffItemType::RiffSequence => {
                     running_position_in_beats = DAWUtils::copy_riff_sequence_to_position(element.uuid.clone(), running_position_in_beats, state.clone());
+                }
+                RiffItemType::RiffGrid => {
+                    // TODO add riff grid implementation
                 }
             }
         }

@@ -19,6 +19,7 @@ pub enum CurrentView {
     Track,
     RiffSet,
     RiffSequence,
+    RiffGrid,
     RiffArrangement,
 }
 
@@ -133,6 +134,15 @@ pub enum NoteExpressionData {
 pub enum AutomationChangeData {
     ParameterType(i32),
     NoteExpression(NoteExpressionData), 
+}
+
+#[derive(Clone)]
+pub enum RiffGridChangeType {
+    RiffReferenceAdd(i32, f64),                    // track index, position
+    RiffReferenceDelete(i32, f64),                 // track index, position
+    RiffReferenceCutSelected(f64, i32, f64, i32),  // window - x1, y1, x2, y2
+    RiffReferenceCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
+    RiffReferencePaste,
 }
 
 #[derive(Clone)]
@@ -254,6 +264,29 @@ pub enum TransportChangeType {
     SampleRate,
 }
 
+pub enum AudioLayerInwardEvent {
+    NewAudioConsumer(AudioConsumerDetails<AudioBlock>),
+    NewMidiConsumer(MidiConsumerDetails<(u32, u8, u8, u8, bool)>), // frame, midi byte 1, midi byte 2, midi byte 3
+    Play(bool, i32, i32), // play - true/false, number of blocks, start at block
+    ExtentsChange(i32),
+    Stop,
+    Tempo(f64),
+    SampleRate(f64),
+    BlockSize(f64),
+    Volume(f32), // volume
+    Pan(f32),    // pan
+    Shutdown,
+    RemoveTrack(String),                           // track uuid
+    NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
+
+    PreviewSample(String), // absolute path sample file name
+}
+
+pub enum EventProcessorType {
+    RiffBufferEventProcessor,
+    BlockEventProcessor,
+}
+
 #[derive(Clone)]
 pub enum DAWEvents {
     NewFile,
@@ -344,6 +377,14 @@ pub enum DAWEvents {
     RiffSequenceCopySelectedToTrackViewCursorPosition(String), // riff sequence uuid
     RiffSequenceRiffSetSelect(String, String, bool), // riff sequence uuid, riff set reference uuid, bool selected
 
+    RiffGridPlay(String),                     // riff grid uuid
+    RiffGridAdd(String, String),               // riff grid uuid, name
+    RiffGridDelete(String),                   // riff grid uuid
+    RiffGridSelected(String),                                  // riff grid uuid
+    RiffGridChange(RiffGridChangeType, Option<String>), // change type, track uuid
+    RiffGridNameChange(String, String),       // riff grid uuid, new name
+    RiffGridCopySelectedToTrackViewCursorPosition(String), // riff grid uuid
+
     RiffArrangementPlay(String),               // riff arrangement uuid
     RiffArrangementAdd(Uuid),                  // new riff arrangement uuid
     RiffArrangementDelete(String),             // riff arrangement uuid
@@ -382,29 +423,6 @@ pub enum DAWEvents {
     RepaintRiffArrangementBox,
     RepaintRiffSetsBox,
     RepaintRiffSequencesBox,
-}
-
-pub enum AudioLayerInwardEvent {
-    NewAudioConsumer(AudioConsumerDetails<AudioBlock>),
-    NewMidiConsumer(MidiConsumerDetails<(u32, u8, u8, u8, bool)>), // frame, midi byte 1, midi byte 2, midi byte 3
-    Play(bool, i32, i32), // play - true/false, number of blocks, start at block
-    ExtentsChange(i32),
-    Stop,
-    Tempo(f64),
-    SampleRate(f64),
-    BlockSize(f64),
-    Volume(f32), // volume
-    Pan(f32),    // pan
-    Shutdown,
-    RemoveTrack(String),                           // track uuid
-    NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
-
-    PreviewSample(String), // absolute path sample file name
-}
-
-pub enum EventProcessorType {
-    RiffBufferEventProcessor,
-    BlockEventProcessor,
 }
 
 pub enum TrackBackgroundProcessorInwardEvent {

@@ -12,6 +12,11 @@
     <property name="can-focus">False</property>
     <property name="stock">gtk-add</property>
   </object>
+  <object class="GtkImage" id="add_symbol2">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="stock">gtk-add</property>
+  </object>
   <object class="GtkImage" id="copy_symbol">
     <property name="visible">True</property>
     <property name="can-focus">False</property>
@@ -52,7 +57,7 @@
         <property name="margin-bottom">3</property>
         <property name="orientation">vertical</property>
         <child>
-          <!-- n-columns=13 n-rows=1 -->
+          <!-- n-columns=16 n-rows=1 -->
           <object class="GtkGrid">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
@@ -132,10 +137,12 @@
             <child>
               <object class="GtkComboBoxText" id="riff_set_combobox">
                 <property name="name">riff_arr_riff_set_combo</property>
+                <property name="width-request">100</property>
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <property name="popup-fixed-width">False</property>
               </object>
               <packing>
                 <property name="left-attach">8</property>
@@ -173,6 +180,7 @@
             <child>
               <object class="GtkComboBoxText" id="riff_sequence_combobox">
                 <property name="name">riff_arr_riff_seq_combo</property>
+                <property name="width-request">100</property>
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="halign">start</property>
@@ -211,10 +219,52 @@
                 <property name="top-attach">0</property>
               </packing>
             </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="xpad">4</property>
+                <property name="label" translatable="yes">Grid</property>
+              </object>
+              <packing>
+                <property name="left-attach">13</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="riff_grid_combobox">
+                <property name="name">riff_arr_riff_grid_combo</property>
+                <property name="width-request">100</property>
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+              </object>
+              <packing>
+                <property name="left-attach">14</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="add_riff_grid_btn">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="receives-default">True</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="image">add_symbol2</property>
+              </object>
+              <packing>
+                <property name="left-attach">15</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
           </object>
           <packing>
             <property name="expand">False</property>
-            <property name="fill">True</property>
+            <property name="fill">False</property>
             <property name="position">0</property>
           </packing>
         </child>

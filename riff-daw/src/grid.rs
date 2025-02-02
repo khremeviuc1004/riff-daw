@@ -2302,13 +2302,13 @@ pub struct EditItemHandler<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWI
 }
 
 impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone, U: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone> EditItemHandler<T, U> {
-    pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self { 
+    pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self {
         Self { 
-            original_item: None, 
+            original_item: None,
             dragged_item: None,
-            referenced_item: None, 
+            referenced_item: None,
             event_sender,
-        } 
+        }
     }    
 }
 
@@ -2354,14 +2354,23 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     x = referencing_item.position() * adjusted_beat_width_in_pixels;
                 }
 
+                if let DragCycle::NotStarted = edit_drag_cycle {
+                    self.original_item = None;
+                    self.dragged_item = None;
+                }
+
                 // make sure original item matches the iterated item
                 if let Some(original_item) = self.original_item.as_ref() {
-                        if (original_item.position() - item.position()).abs() < 1e-10 && 
-                            original_item.id() == item.id() &&
-                            original_item.vertical_index() == item.vertical_index() &&
-                            (original_item.length() - item.length()).abs() < 1e-10 {
-                            found_item_being_changed = true;
-                        } 
+                    if (original_item.position() - item.position()).abs() < 1e-10 &&
+                        original_item.id() == item.id() &&
+                        original_item.vertical_index() == item.vertical_index() &&
+                        (original_item.length() - item.length()).abs() < 1e-10 {
+                        if let Some(dragged_item) = self.dragged_item.as_ref() {
+                            if dragged_item.id() == referencing_item.id() {
+                                found_item_being_changed = true;
+                            }
+                        }
+                    }
                 }
 
                 if found_item_being_changed {
@@ -2387,10 +2396,10 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                 }
 
                 // draw left length adjust handle if required
-                if mouse_pointer_x as f64 >= x && 
-                    mouse_pointer_x <= (x + 5.0) && 
+                if mouse_pointer_x as f64 >= x &&
+                    mouse_pointer_x <= (x + 5.0) &&
                     width >= 10.0 &&
-                    mouse_pointer_y >= y && 
+                    mouse_pointer_y >= y &&
                     mouse_pointer_y <= (y + adjusted_entity_height_in_pixels) {
                     //change the mode
                     edit_mode = EditMode::ChangeStart;
@@ -2403,10 +2412,10 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     }
                 }
                 // draw drag position adjust handle if required
-                else if mouse_pointer_x as f64 >= (x + 5.0) && 
-                    mouse_pointer_x <= (x + width - 5.0) && 
-                    width > 10.0 &&
-                    mouse_pointer_y >= y && 
+                else if mouse_pointer_x as f64 >= (x + 5.0) &&
+                    mouse_pointer_x <= (x + width - 5.0) &&
+                    width >= 10.0 &&
+                    mouse_pointer_y >= y &&
                     mouse_pointer_y <= (y + adjusted_entity_height_in_pixels) {
                     //change the mode
                     edit_mode = EditMode::Move;
@@ -2419,10 +2428,10 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     }
                 }
                 // draw right length adjust handle if required
-                else if mouse_pointer_x as f64 <= (x + width) && 
-                    mouse_pointer_x >= (x + width - 5.0) && 
+                else if mouse_pointer_x as f64 <= (x + width) &&
+                    mouse_pointer_x >= (x + width - 5.0) &&
                     width >= 10.0 &&
-                    mouse_pointer_y >= y && 
+                    mouse_pointer_y >= y &&
                     mouse_pointer_y <= (y + adjusted_entity_height_in_pixels) {
                     //change the mode
                     edit_mode = EditMode::ChangeEnd;
@@ -2470,7 +2479,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                                 // draw the dragged item
                                                 context.rectangle(x, y_original, new_width, adjusted_entity_height_in_pixels);
-                                                let _ = context.fill();                        
+                                                let _ = context.fill();
                                             }
                                         }
                                         EditMode::Move => {
@@ -2482,7 +2491,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                 else {
                                                     context.rectangle(x, y_original, width, adjusted_entity_height_in_pixels);
                                                 }
-                                                let _ = context.fill();                        
+                                                let _ = context.fill();
                                             }
                                         }
                                         EditMode::ChangeEnd => {
@@ -2492,7 +2501,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                                 // draw the dragged item
                                                 context.rectangle(x_original, y_original, new_width, adjusted_entity_height_in_pixels);
-                                                let _ = context.fill();                        
+                                                let _ = context.fill();
                                             }
                                         }
                                         _ => {}
@@ -2514,7 +2523,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     // calculate and set the width
                                                     let new_width = width - delta_x;
                                                     let duration = new_width / adjusted_beat_width_in_pixels;
-                                                    
+
                                                     dragged_item.set_position(position_in_beats);
                                                     dragged_item.set_length(duration);
 
@@ -2534,7 +2543,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                         else {
                                                             y as i32
                                                         };
-                                                        
+
                                                         debug!("Setting dragged item vertical index to: {}", vertical_index);
                                                         dragged_item.set_vertical_index(vertical_index + 1);
                                                     }
@@ -2545,7 +2554,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     // calculate and set the width
                                                     let new_width = width + delta_x;
                                                     let duration = new_width / adjusted_beat_width_in_pixels;
-                                                    
+
                                                     dragged_item.set_length(duration);
 
                                                     (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
@@ -2559,7 +2568,9 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                     self.dragged_item = None;
                                 }
                             }
-                            _ => {}
+                            DragCycle::NotStarted => {
+                                debug!("handle_item_edit EditDragCycle::NotStarted");
+                            }
                         }
                     }
                 }
@@ -3455,7 +3466,7 @@ impl CustomPainter for RiffGridCustomPainter {
                                         }
                                     }
                                     else {
-                                        debug!("Part not in clip region");
+                                        // debug!("Part not in clip region");
                                     }
                                 }
                             }

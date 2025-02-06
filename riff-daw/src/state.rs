@@ -112,6 +112,7 @@ pub struct DAWState {
     riff_arrangement_riff_item_selected_uuid: Option<(String, String)>,
     piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId,
     selected_riff_grid_uuid: Option<String>,
+    selected_riff_sequence_uuid: Option<String>,
 }
 
 impl DAWState {
@@ -172,6 +173,7 @@ impl DAWState {
             riff_arrangement_riff_item_selected_uuid: None,
             piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId::ALL,
             selected_riff_grid_uuid: None,
+            selected_riff_sequence_uuid: None,
         }
     }
 
@@ -1625,6 +1627,7 @@ impl DAWState {
         let mut song_length_in_beats = 400.0;
         let mut start_block = 0;
         let mut end_block = 0;
+        let already_playing = self.playing();
 
         song_length_in_beats = *self.get_project().song_mut().length_in_beats_mut() as f64;
         self.set_playing(true);
@@ -1649,13 +1652,17 @@ impl DAWState {
                     DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
                 }
                 else {
-                    (vec![], vec![])
+                    DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
                 }
             }
             else {
                 DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
             };
-            self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
+
+            if !already_playing {
+                self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
+            }
+
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
         }
 
@@ -1996,7 +2003,9 @@ impl DAWState {
                         }
                     }
                     RiffItemType::RiffGrid => {
-                        // TODO add riff grid implementation
+                        if let Some(riff_grid) = self.project().song().riff_grid(item.item_uuid().to_string()) {
+                            riff_arrangement_length += DAWUtils::get_riff_grid_length(&riff_grid, self);
+                        }
                     }
                 }
             }
@@ -2968,6 +2977,14 @@ impl DAWState {
 
     pub fn set_selected_riff_grid_uuid(&mut self, selected_riff_grid_uuid: Option<String>) {
         self.selected_riff_grid_uuid = selected_riff_grid_uuid;
+    }
+
+    pub fn selected_riff_sequence_uuid(&self) -> &Option<String> {
+        &self.selected_riff_sequence_uuid
+    }
+
+    pub fn set_selected_riff_sequence_uuid(&mut self, selected_riff_sequence_uuid: Option<String>) {
+        self.selected_riff_sequence_uuid = selected_riff_sequence_uuid;
     }
 }
 

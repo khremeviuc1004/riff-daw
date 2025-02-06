@@ -55,14 +55,15 @@
         <property name="vexpand">True</property>
         <property name="orientation">vertical</property>
         <child>
-          <!-- n-columns=12 n-rows=1 -->
+          <!-- n-columns=11 n-rows=1 -->
           <object class="GtkGrid">
+            <property name="height-request">31</property>
             <property name="visible">True</property>
             <property name="can-focus">False</property>
             <property name="halign">start</property>
-            <property name="valign">center</property>
-            <property name="margin-top">18</property>
-            <property name="margin-bottom">56</property>
+            <property name="valign">start</property>
+            <property name="margin-top">3</property>
+            <property name="margin-bottom">63</property>
             <child>
               <object class="GtkEntry" id="riff_grid_name_entry">
                 <property name="visible">True</property>
@@ -167,9 +168,6 @@
             <child>
               <placeholder/>
             </child>
-            <child>
-              <placeholder/>
-            </child>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -180,12 +178,14 @@
         <child>
           <object class="GtkScrolledWindow" id="riff_grid_scrolled_window">
             <property name="name">riff_grid_riff_set_heads_scrolled_window</property>
+            <property name="width-request">300</property>
             <property name="visible">True</property>
             <property name="can-focus">True</property>
             <property name="margin-top">1</property>
             <property name="hexpand">True</property>
             <property name="vexpand">True</property>
             <property name="hadjustment">riff_grid_horizontal_adjustment</property>
+            <property name="vscrollbar-policy">external</property>
             <property name="shadow-type">in</property>
             <property name="propagate-natural-height">True</property>
             <child>

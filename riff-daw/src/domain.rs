@@ -1490,6 +1490,10 @@ impl RiffSequence {
     pub fn riff_sets_mut(&mut self) -> &mut Vec<RiffItem> {
         &mut self.riff_sets
     }
+
+    pub fn set_uuid(&mut self, uuid: Uuid) {
+        self.uuid = uuid;
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1532,7 +1536,15 @@ impl RiffGrid {
         self.tracks.get(track_uuid.as_str())
     }
 
+    pub fn track_riff_references_mut(&mut self, track_uuid: String) -> Option<&mut Vec<RiffReference>> {
+        self.tracks.get_mut(track_uuid.as_str())
+    }
+
     pub fn tracks(&self) -> Keys<'_, String, Vec<RiffReference>> {
+        self.tracks.keys()
+    }
+
+    pub fn tracks_mut(&mut self) -> Keys<'_, String, Vec<RiffReference>> {
         self.tracks.keys()
     }
 
@@ -4391,7 +4403,7 @@ impl TrackBackgroundProcessorHelper {
                         vst3_plugin.process_events(&events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
-                        debug!("{} - process_plugin_events: sending events to clap instrument plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
+                        // debug!("{} - process_plugin_events: sending events to clap instrument plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
                         instrument_plugin.process_events(&events);
                     }
                 }
@@ -7277,7 +7289,7 @@ impl RiffBufferTrackEventProcessor {
                 // are we transitioning: do we have anything to transition to, have we hit an appropriate boundary event
                 match riff_track_event {
                     TrackEvent::NoteOn(note_on) => {
-                        debug!("{} - **************** Note on detected at: block={}, start_sample={}, end_sample={}, original position={}, frame={}, note={}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index, start_sample, end_sample, position, adjusted_position, note_on.note());
+                        // debug!("{} - **************** Note on detected at: block={}, start_sample={}, end_sample={}, original position={}, frame={}, note={}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index, start_sample, end_sample, position, adjusted_position, note_on.note());
                         self.playing_notes.push(note_on.note());
                         let mut track_event = riff_track_event.clone();
                         track_event.set_position(adjusted_position);

@@ -19,8 +19,8 @@ use uuid::Uuid;
 
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem};
-use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent};
+use crate::domain::{NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference};
+use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
 use crate::utils::DAWUtils;
@@ -126,8 +126,6 @@ pub struct Ui {
 
     pub track_grid_quantise_start_choice: ComboBoxText,
     pub track_grid_quantise_length_choice: ComboBoxText,
-    pub track_grid_quantise_start_btn: ToggleToolButton,
-    pub track_grid_quantise_end_btn: ToggleToolButton,
 
     pub track_grid_show_automation_btn: ToggleToolButton,
     pub track_grid_show_note_velocities_btn: ToggleToolButton,
@@ -167,8 +165,6 @@ pub struct Ui {
 
     pub riff_grid_quantise_start_choice: ComboBoxText,
     pub riff_grid_quantise_length_choice: ComboBoxText,
-    pub riff_grid_quantise_start_btn: ToggleToolButton,
-    pub riff_grid_quantise_end_btn: ToggleToolButton,
 
     pub riff_grid_show_automation_btn: ToggleToolButton,
     pub riff_grid_show_note_velocities_btn: ToggleToolButton,
@@ -176,7 +172,12 @@ pub struct Ui {
     pub riff_grid_show_pan_events_btn: ToggleToolButton,
     pub riff_grid_cursor_follow: ToggleToolButton,
 
+    pub selected_riff_grid_name_entry: Entry,
+    pub riff_grid_save_name_btn: Button,
     pub riff_grid_play: Button,
+    pub riff_grid_copy: Button,
+    pub riff_grid_delete: Button,
+    pub riff_grid_copy_to_track_view_btn: Button,
 
     // pub riff_grid_tracks_panel_scrolled_window: ScrolledWindow,
 
@@ -554,6 +555,9 @@ pub struct RiffSequenceBlade {
     pub riff_seq_horizontal_adjustment: Adjustment,
     pub riff_sets_view_port: Viewport,
     pub riff_sequence_select_btn: Button,
+    pub riff_sequence_save_name_btn: Button,
+    pub riff_sequence_controls_scrolled_window: ScrolledWindow,
+    pub riff_sequence_blade_top_box: Box,
 }
 
 #[derive(Gladis, Clone)]
@@ -588,6 +592,8 @@ pub struct RiffArrangementBlade {
     pub add_riff_grid_btn: Button,
     pub riff_arr_horizontal_adjustment: Adjustment,
     pub riff_items_view_port: Viewport,
+    pub riff_arrangement_save_name_btn: Button,
+    pub riff_arrangement_scrolled_window: ScrolledWindow,
 }
 
 #[derive(Gladis, Clone)]
@@ -4111,22 +4117,6 @@ impl MainWindow {
         }
 
         {
-            // let tx_from_ui = tx_from_ui.clone();
-            // let track_grid = track_grid.clone();
-            self.ui.track_grid_quantise_start_btn.connect_clicked(move |_toggle_btn| {
-
-            });
-        }
-
-        {
-            // let tx_from_ui = tx_from_ui.clone();
-            // let track_grid = track_grid.clone();
-            self.ui.track_grid_quantise_end_btn.connect_clicked(move |_toggle_btn| {
-
-            });
-        }
-
-        {
             let track_grid = track_grid_arc.clone();
             let track_grid_drawing_area = self.ui.track_drawing_area.clone();
             self.ui.track_grid_show_automation_btn.connect_clicked(move |toggle_btn| {
@@ -4201,9 +4191,8 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>,
     ) {
-        // TODO  should this be available in a riff grid???
         let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
         });
         let riff_grid_custom_painter = RiffGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(event_sender), true, None);
         let riff_grid = BeatGrid::new_with_custom(
@@ -4683,22 +4672,6 @@ impl MainWindow {
         }
 
         {
-            // let tx_from_ui = tx_from_ui.clone();
-            // let riff_grid = riff_grid.clone();
-            self.ui.riff_grid_quantise_start_btn.connect_clicked(move |_toggle_btn| {
-
-            });
-        }
-
-        {
-            // let tx_from_ui = tx_from_ui.clone();
-            // let riff_grid = riff_grid.clone();
-            self.ui.riff_grid_quantise_end_btn.connect_clicked(move |_toggle_btn| {
-
-            });
-        }
-
-        {
             let riff_grid = riff_grid_arc.clone();
             let riff_grid_drawing_area = self.ui.track_drawing_area.clone();
             self.ui.riff_grid_show_automation_btn.connect_clicked(move |toggle_btn| {
@@ -4769,12 +4742,67 @@ impl MainWindow {
 
 
         {
+            let tx_from_ui = tx_from_ui.clone();
+            let entry = self.ui.selected_riff_grid_name_entry.clone();
+            self.ui.riff_grid_save_name_btn.connect_clicked(move |_| {
+                let name = entry.text().to_string();
+
+                if let Ok(name) = name.to_value().get() {
+                    match tx_from_ui.send(DAWEvents::RiffGridNameChange(name)) {
+                        Ok(_) => (),
+                        Err(error) => debug!("Failed to send riff grid name change: {}", error),
+                    }
+                }
+            });
+        }
+
+
+        {
             let state = state.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_play.connect_clicked(move |_| {
                 if let Ok(mut state) = state.lock() {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridPlay(selected_riff_grid_uuid.clone()));
+                    }
+                }
+            });
+        }
+
+
+        {
+            let state = state.clone();
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_grid_copy.connect_clicked(move |_| {
+                if let Ok(mut state) = state.lock() {
+                    if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
+                        let _ = tx_from_ui.send(DAWEvents::RiffGridCopy(selected_riff_grid_uuid.clone()));
+                    }
+                }
+            });
+        }
+
+
+        {
+            let state = state.clone();
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_grid_delete.connect_clicked(move |_| {
+                if let Ok(mut state) = state.lock() {
+                    if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
+                        let _ = tx_from_ui.send(DAWEvents::RiffGridDelete(selected_riff_grid_uuid.clone()));
+                    }
+                }
+            });
+        }
+
+
+        {
+            let state = state.clone();
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_grid_copy_to_track_view_btn.connect_clicked(move |_| {
+                if let Ok(mut state) = state.lock() {
+                    if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
+                        let _ = tx_from_ui.send(DAWEvents::RiffGridCopySelectedToTrackViewCursorPosition(selected_riff_grid_uuid.clone()));
                     }
                 }
             });
@@ -7392,7 +7420,7 @@ impl MainWindow {
             let riff_sequences_box = self.ui.riff_sequences_box.clone();
             let riff_sequence_name_entry = self.ui.riff_sequence_name_entry.clone();
             let sequence_combobox = self.ui.sequence_combobox.clone();
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             let state_arc = state_arc;
             let selected_track_style_provider = self.selected_style_provider.clone();
             let riff_sequence_vertical_adjustment = self.ui.riff_sequence_vertical_adjustment.clone();
@@ -7445,6 +7473,7 @@ impl MainWindow {
                             child.show();
                         }
                     });
+                    let _ = tx_from_ui.send(DAWEvents::RiffSequenceSelected(uuid.to_string()));
                 }
             });
         }
@@ -7500,7 +7529,7 @@ impl MainWindow {
         state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
         riff_sequence_uuid: Option<String>,
-        reference_item_uuid: Option<String>,
+        item_uuid: Option<String>,
         send_riff_sequence_add_message: bool,
         riff_sequence_type: RiffSequenceType,
         selected_style_provider: CssProvider,
@@ -7520,7 +7549,7 @@ impl MainWindow {
         let riff_sequence_blade = RiffSequenceBlade::from_string(riff_sequence_blade_glade_src).unwrap();
         riff_sequences_box.pack_start(&riff_sequence_blade.riff_sequence_blade, true, true, 0);
 
-        if let Some(riff_item_uuid) = reference_item_uuid.clone() {
+        if let Some(riff_item_uuid) = item_uuid.clone() {
             riff_sequence_blade.riff_sequence_blade.set_widget_name(riff_item_uuid.as_str());
         }
         else {
@@ -7545,11 +7574,14 @@ impl MainWindow {
                 RiffSetType::RiffSequence(uuid.to_string())
             },
             RiffSequenceType::RiffArrangement(riff_sequence_uuid) => {
+                riff_sequence_blade.riff_sequence_blade_top_box.set_margin_bottom(5);
                 riff_sequence_blade.riff_sequence_blade_copy.hide();
                 riff_sequence_blade.riff_sequence_riff_set_combobox_label.hide();
                 riff_sequence_blade.riff_sequence_copy_to_track_view_btn.hide();
                 riff_sequence_blade.riff_set_combobox.hide();
                 riff_sequence_blade.add_riff_set_btn.hide();
+                riff_sequence_blade.riff_sequence_controls_scrolled_window.set_hscrollbar_policy(PolicyType::Never);
+                riff_sequence_blade.riff_sequence_controls_scrolled_window.set_height_request(20);
                 RiffSetType::RiffArrangement(riff_sequence_uuid)
             },
         };
@@ -7563,7 +7595,7 @@ impl MainWindow {
     
         {
             let riff_sequence_uuid = uuid.to_string();
-            let reference_item_uuid = reference_item_uuid.clone();
+            let reference_item_uuid = item_uuid.clone();
             riff_sequence_blade.riff_sequence_drag_btn.connect_drag_data_get(move |_, _, selection_data, _, _| {
                 debug!("Riff sequence drag data get called.");
                 if let Some(uuid) = reference_item_uuid.clone() {
@@ -7588,7 +7620,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let riff_sequence_blade_frame = riff_sequence_blade.riff_sequence_blade.clone();
             let riff_sequences_box = riff_sequences_box.clone();
-            let reference_item_uuid = reference_item_uuid.clone();
+            let reference_item_uuid = item_uuid.clone();
             riff_sequence_blade.riff_sequence_select_btn.connect_button_press_event(move |_, _| {
                 unsafe  {
                     for child in riff_sequences_box.children() {
@@ -7643,7 +7675,8 @@ impl MainWindow {
             let blade = riff_sequence_blade.riff_sequence_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
             riff_sequence_blade.riff_sequence_name_entry.set_text("");
-            riff_sequence_blade.riff_sequence_name_entry.connect_changed(move |entry| {
+            let entry = riff_sequence_blade.riff_sequence_name_entry.clone();
+            riff_sequence_blade.riff_sequence_save_name_btn.connect_clicked(move |_| {
                 let name = entry.text().to_string();
                 let uuid = blade.widget_name().to_string();
 
@@ -7699,7 +7732,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let riff_sequences_box = riff_sequences_box.clone();
             let riff_sequence_type = riff_sequence_type.clone();
-            let reference_item_uuid = reference_item_uuid.clone();
+            let reference_item_uuid = item_uuid.clone();
             riff_sequence_blade.riff_sequence_blade_delete.connect_clicked(move |_| {
                 let riff_sequence_uuid = blade.widget_name().to_string();
 
@@ -7727,21 +7760,25 @@ impl MainWindow {
         {
             let blade = riff_sequence_blade.riff_sequence_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_sequences_box = riff_sequences_box.clone();
-            // let selected_track_style_provider = selected_track_style_provider.clone();
             riff_sequence_blade.riff_sequence_blade_play.connect_clicked(move |_| {
                 let riff_sequence_uuid = blade.widget_name().to_string();
-
-                // for child in riff_sequences_box.children() {
-                //     child.style_context().remove_provider(&selected_track_style_provider);
-                //     if child.widget_name() == riff_sequence_uuid {
-                //         child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
-                //     }
-                // }
 
                 match tx_from_ui.send(DAWEvents::RiffSequencePlay(riff_sequence_uuid)) {
                     Ok(_) => (),
                     Err(error) => debug!("Failed to send riff sequence play: {}", error),
+                }
+            });
+        }
+
+        {
+            let blade = riff_sequence_blade.riff_sequence_blade.clone();
+            let tx_from_ui = tx_from_ui.clone();
+            riff_sequence_blade.riff_sequence_blade_copy.connect_clicked(move |_| {
+                let riff_sequence_uuid = blade.widget_name().to_string();
+
+                match tx_from_ui.send(DAWEvents::RiffSequenceCopy(riff_sequence_uuid)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Failed to send riff sequence copy: {}", error),
                 }
             });
         }
@@ -7772,7 +7809,7 @@ impl MainWindow {
     }
 
     fn add_riff_grid_blade(
-        riff_sequences_box: Box,
+        riff_grid_box: Box,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state_arc: Arc<Mutex<DAWState>>,
         riff_grid_uuid: Option<String>,
@@ -7793,7 +7830,7 @@ impl MainWindow {
         let riff_grid_blade_glade_src = include_str!("riff_grid_blade.glade");
 
         let riff_grid_blade = RiffGridBlade::from_string(riff_grid_blade_glade_src).unwrap();
-        riff_sequences_box.pack_start(&riff_grid_blade.riff_grid_blade, true, true, 0);
+        riff_grid_box.pack_start(&riff_grid_blade.riff_grid_blade, true, true, 0);
 
         if let Some(riff_item_uuid) = reference_item_uuid.clone() {
             riff_grid_blade.riff_grid_blade.set_widget_name(riff_item_uuid.as_str());
@@ -7843,7 +7880,7 @@ impl MainWindow {
             let riff_grid_type = riff_grid_type.clone();
             let tx_from_ui = tx_from_ui.clone();
             let riff_grid_blade_frame = riff_grid_blade.riff_grid_blade.clone();
-            let riff_sequences_box = riff_sequences_box.clone();
+            let riff_sequences_box = riff_grid_box.clone();
             let reference_item_uuid = reference_item_uuid.clone();
             riff_grid_blade.riff_grid_select_btn.connect_button_press_event(move |_, _| {
                 unsafe  {
@@ -7898,31 +7935,16 @@ impl MainWindow {
         {
             let blade = riff_grid_blade.riff_grid_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            riff_grid_blade.riff_grid_name_entry.set_text("");
-            riff_grid_blade.riff_grid_name_entry.connect_changed(move |entry| {
-                let name = entry.text().to_string();
-                let uuid = blade.widget_name().to_string();
-
-                if let Ok(name) = name.to_value().get() {
-                    match tx_from_ui.send(DAWEvents::RiffGridNameChange(uuid, name)) {
-                        Ok(_) => (),
-                        Err(error) => debug!("Failed to send riff grid name change: {}", error),
-                    }
-                }
-            });
-        }
-
-        {
-            let blade = riff_grid_blade.riff_grid_blade.clone();
-            let tx_from_ui = tx_from_ui.clone();
             let riff_grid_type = riff_grid_type.clone();
             let reference_item_uuid = reference_item_uuid.clone();
+            let riff_grid_box = riff_grid_box.clone();
             riff_grid_blade.riff_grid_blade_delete.connect_clicked(move |_| {
                 let riff_grid_uuid = blade.widget_name().to_string();
 
                 let event_to_send = match riff_grid_type.clone() {
                     RiffGridType::RiffGrid => DAWEvents::RiffGridDelete(riff_grid_uuid),
                     RiffGridType::RiffArrangement(riff_arrangement_uuid) => {
+                        riff_grid_box.remove(&blade);
                         let reference_item_uuid = if let Some(uuid) = reference_item_uuid.clone() {
                             uuid
                         }
@@ -7954,12 +7976,12 @@ impl MainWindow {
         {
             let blade = riff_grid_blade.riff_grid_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_sequences_box = riff_sequences_box;
+            let riff_grid_box = riff_grid_box.clone();
             let selected_track_style_provider = selected_style_provider;
             riff_grid_blade.riff_grid_copy_to_track_view_btn.connect_clicked(move |_| {
                 let riff_grid_uuid = blade.widget_name().to_string();
 
-                for child in riff_sequences_box.children() {
+                for child in riff_grid_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == riff_grid_uuid {
                         child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
@@ -7973,9 +7995,8 @@ impl MainWindow {
             });
         }
 
-        // TODO this shouldn't be available in a riff grid??? - doesn't get used because you can't switch to edit mode in this blade
         let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
         });
         let use_globally_selected_riff_grid_uuid = if let RiffGridType::RiffGrid = &riff_grid_type {
             true
@@ -8023,7 +8044,10 @@ impl MainWindow {
     pub fn update_riff_sequences_combobox_in_riff_sequence_view(
         &mut self,
         state: &DAWState,
+        restore_selected: bool
     ) {
+        let selected_index = self.ui.sequence_combobox.active();
+
         // get the available riff sequences
         let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
 
@@ -8032,8 +8056,12 @@ impl MainWindow {
         for riff_sequence_details in riff_sequences.iter() {
             self.ui.sequence_combobox.append(Some(riff_sequence_details.0.as_str()), riff_sequence_details.1.as_str());
         }
-        if self.ui.sequence_combobox.children().len() > 0 {
+        if !restore_selected && self.ui.sequence_combobox.children().len() > 0 {
             self.ui.sequence_combobox.set_active(Some(0));
+        }
+
+        if restore_selected {
+            self.ui.sequence_combobox.set_active(selected_index);
         }
     }
 
@@ -8041,7 +8069,10 @@ impl MainWindow {
     pub fn update_riff_grids_combobox_in_riff_grid_view(
         &mut self,
         state: &DAWState,
+        restore_selected: bool
     ) {
+        let selected_index = self.ui.grid_combobox.active();
+
         // get the available riff grids
         let riff_grids: Vec<(String, String)> = state.project().song().riff_grids().iter().map(|riff_grid| (riff_grid.uuid(), riff_grid.name().to_string())).collect();
 
@@ -8050,8 +8081,12 @@ impl MainWindow {
         for riff_grid_details in riff_grids.iter() {
             self.ui.grid_combobox.append(Some(riff_grid_details.0.as_str()), riff_grid_details.1.as_str());
         }
-        if self.ui.grid_combobox.children().len() > 0 {
+        if !restore_selected && self.ui.grid_combobox.children().len() > 0 {
             self.ui.grid_combobox.set_active(Some(0));
+        }
+
+        if restore_selected {
+            self.ui.grid_combobox.set_active(selected_index);
         }
     }
 
@@ -8119,7 +8154,6 @@ impl MainWindow {
 
         {
             let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
-            let state = state_arc.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.arrangements_combobox.connect_changed(move |arrangements_combobox| {
                 if let Some(uuid) = arrangements_combobox.active_id() {
@@ -8132,17 +8166,8 @@ impl MainWindow {
                         }
                     });
 
-                    {
-                        let state = state.clone();
-                        let tx_from_ui = tx_from_ui.clone();
-                        let _ = std::thread::Builder::new().name("Set sel riffarr".into()).spawn(move || {
-                            // update the state
-                            if let Ok(mut state) = state.lock() {
-                                state.set_selected_riff_arrangement_uuid(Some(uuid.to_string()));
-                                let _ = tx_from_ui.send(DAWEvents::RepaintAutomationView);
-                            }
-                        });
-                    }
+                    let _ = tx_from_ui.send(DAWEvents::RiffArrangementSelected(uuid.to_string()));
+                    let _ = tx_from_ui.send(DAWEvents::RepaintAutomationView);
                 }
             });
         }
@@ -8178,6 +8203,7 @@ impl MainWindow {
         riff_arrangements_box.pack_start(&riff_arrangement_blade.riff_arrangement_blade, true, true, 0);
         riff_arrangement_blade.riff_arrangement_blade.set_widget_name(uuid.to_string().as_str());
         riff_arrangement_blade.riff_arrangement_blade_play.set_widget_name(uuid.to_string().as_str());
+        // riff_arrangement_blade.riff_arrangement_scrolled_window.set_vadjustment(Some(&riff_arrangement_vertical_adjustment));
 
         MainWindow::setup_riff_arrangement_riff_item_drag_and_drop(
             riff_arrangement_blade.riff_set_box.clone(),
@@ -8200,7 +8226,8 @@ impl MainWindow {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
             riff_arrangement_blade.riff_arrangement_name_entry.set_text("");
-            riff_arrangement_blade.riff_arrangement_name_entry.connect_changed(move |entry| {
+            let entry = riff_arrangement_blade.riff_arrangement_name_entry.clone();
+            riff_arrangement_blade.riff_arrangement_save_name_btn.connect_clicked(move |_| {
                 let name = entry.text().to_string();
                 let uuid = blade.widget_name().to_string();
 
@@ -8518,7 +8545,7 @@ impl MainWindow {
         &self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         riff_arrangement_uuid: String,
-        item_instance_uuid: String,
+        item_uuid: String,
         riff_set_uuid: String,
         track_uuids: Vec<String>,
         selected_track_style_provider: CssProvider,
@@ -8543,7 +8570,7 @@ impl MainWindow {
                 RiffSetType::RiffArrangement(riff_arrangement_uuid.clone()),
                 selected_track_style_provider.clone(),
                 Some(riff_item_beat_grids.clone()),
-                item_instance_uuid.to_string(),
+                item_uuid.to_string(),
                 Some(&riff_arrangement_vertical_adjustment),
             );
 
@@ -8564,7 +8591,7 @@ impl MainWindow {
         &self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         riff_arrangement_uuid: String,
-        item_instance_uuid: String,
+        riff_sequence_uuid: String,
         item_uuid: String,
         track_uuids: Vec<String>,
         selected_track_style_provider: CssProvider,
@@ -8588,7 +8615,7 @@ impl MainWindow {
                 tx_from_ui.clone(),
                 state_arc.clone(),
                 Some(riff_sets),
-                Some(item_instance_uuid.to_string()),
+                Some(riff_sequence_uuid.to_string()),
                 Some(item_uuid.to_string()),
                 false,
                 RiffSequenceType::RiffArrangement(riff_arrangement_uuid.clone()),
@@ -8604,7 +8631,7 @@ impl MainWindow {
 
             let mut riff_sequence_blade_width = 0;
             let mut riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
-            if let Some(riff_sequence) = state.project().song().riff_sequences().iter().find(|current_riff_sequence| current_riff_sequence.uuid() == item_uuid.to_string()) {
+            if let Some(riff_sequence) = state.project().song().riff_sequences().iter().find(|current_riff_sequence| current_riff_sequence.uuid() == riff_sequence_uuid.to_string()) {
                 riff_sequence_blade.riff_sequence_name_entry.set_text(riff_sequence.name());
 
                 for riff_set_reference in riff_sequence.riff_sets().iter() {
@@ -8621,7 +8648,7 @@ impl MainWindow {
                             selected_track_style_provider.clone(),
                             Some(riff_item_beat_grids.clone()),
                             riff_set_reference.uuid(),
-                            None,
+                            Some(&riff_arrangement_vertical_adjustment),
                         );
 
                         Self::style_riff_arrangement_riff_seq_riff_set(&riff_set_blade_head);
@@ -8640,7 +8667,7 @@ impl MainWindow {
         &self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         riff_arrangement_uuid: String,
-        item_instance_uuid: String,
+        riff_grid_uuid: String,
         item_uuid: String,
         track_uuids: Vec<String>,
         selected_track_style_provider: CssProvider,
@@ -8664,7 +8691,7 @@ impl MainWindow {
                 riff_item_box.clone(),
                 tx_from_ui.clone(),
                 state_arc.clone(),
-                Some(item_instance_uuid.to_string()),
+                Some(riff_grid_uuid.to_string()),
                 Some(item_uuid.to_string()),
                 RiffGridType::RiffArrangement(riff_arrangement_uuid.clone()),
                 selected_track_style_provider.clone(),
@@ -8690,15 +8717,16 @@ impl MainWindow {
     }
 
     pub fn style_riff_arrangement_riff_set(riff_set_blade_head: &RiffSetBladeHead, riff_set_blade_drawing_areas: &RiffSetBlade) {
-        riff_set_blade_head.riff_set_blade.set_margin_top(15);
-        riff_set_blade_head.riff_set_blade.set_margin_bottom(13);
-        riff_set_blade_head.riff_set_blade.set_height_request(riff_set_blade_head.riff_set_blade.height_request() - 20);
+        riff_set_blade_head.riff_set_blade.set_margin_bottom(33);
+        riff_set_blade_head.riff_set_blade.set_height_request(riff_set_blade_head.riff_set_blade.height_request() - 40);
         riff_set_blade_head.riff_set_blade.set_width_request(69);
         riff_set_blade_drawing_areas.riff_set_box.set_width_request(69);
     }
 
     pub fn style_riff_arrangement_riff_seq_riff_set(riff_set_blade_head: &RiffSetBladeHead) {
-        riff_set_blade_head.riff_set_blade.set_margin_bottom(50);
+        riff_set_blade_head.riff_set_blade.set_margin_bottom(0);
+        riff_set_blade_head.riff_set_blade.set_margin_bottom(0);
+        riff_set_blade_head.riff_set_blade.set_height_request(20);
         riff_set_blade_head.riff_set_blade_play.hide();
         riff_set_blade_head.riff_set_select_btn.hide();
         riff_set_blade_head.riff_set_blade_delete.hide();
@@ -9287,13 +9315,40 @@ impl MainWindow {
                 riff_item_beat_grids.clone()
             );
 
-            if first {
+            if first && !restore_selected {
                 self.ui.arrangements_combobox.set_active_id(Some(riff_arrangement.uuid().as_str()));
                 first = false;
             }
 
             if let Ok(mut riff_arrangement_view_riff_set_ref_beat_grids) = self.riff_arrangement_view_riff_set_ref_beat_grids.lock() {
                 riff_arrangement_view_riff_set_ref_beat_grids.insert(riff_arrangement.uuid(), riff_item_beat_grids);
+            }
+        }
+
+        if restore_selected {
+            self.ui.arrangements_combobox.set_active(selected_index);
+        }
+    }
+
+
+    pub fn update_riff_arrangements_combobox_in_riff_arrangement_view(
+        &mut self,
+        state: &DAWState,
+        restore_selected: bool
+    ) {
+        let selected_index = self.ui.arrangements_combobox.active();
+
+        // clear the arrangements combo
+        self.ui.arrangements_combobox.remove_all();
+
+        // populate the arrangements combobox
+        let mut first = true;
+        for riff_arrangement in state.project().song().riff_arrangements().iter() {
+            self.ui.arrangements_combobox.append(Some(riff_arrangement.uuid().as_str()), riff_arrangement.name());
+
+            if first && !restore_selected {
+                self.ui.arrangements_combobox.set_active_id(Some(riff_arrangement.uuid().as_str()));
+                first = false;
             }
         }
 
@@ -9398,12 +9453,16 @@ impl MainWindow {
 
             if !restore_selected && first {
                 self.ui.grid_combobox.set_active_id(Some(riff_grid.uuid().as_str()));
+                self.ui.selected_riff_grid_name_entry.set_text(riff_grid.name());
                 first = false;
             }
         }
 
         if restore_selected {
             self.ui.grid_combobox.set_active(selected_index);
+            if let Some(riff_grid_name) = self.ui.grid_combobox.active_text() {
+                self.ui.selected_riff_grid_name_entry.set_text(riff_grid_name.as_str());
+            }
         }
     }
 
@@ -10020,6 +10079,11 @@ impl MainWindow {
         self.track_grid.as_ref()
     }
 
+    /// Get a reference to the main window's riff grid.
+    pub fn riff_grid(&self) -> Option<&Arc<Mutex<BeatGrid>>> {
+        self.riff_grid.as_ref()
+    }
+
     /// Get a reference to the main window's controller grid.
     #[must_use]
     pub fn automation_grid(&self) -> Option<&Arc<Mutex<BeatGrid>>> {
@@ -10257,54 +10321,51 @@ impl MainWindow {
             // let mut playing_before_riff_sequence = None;
             let mut playing_riff_item = None;
             let mut playing_before_riff_item = None;
-            for riff_item_details in riff_items_actual_playing_lengths.iter() {
-                let riff_item_actual_playing_length = riff_item_details.0;
+            for (riff_item_actual_playing_length, riff_item, riff_set_data) in riff_items_actual_playing_lengths.iter() {
                 let riff_item_end_position = running_playing_position + riff_item_actual_playing_length;
                 if running_playing_position <= play_position_in_beats && play_position_in_beats <= riff_item_end_position {
-                    if let RiffItemType::RiffSequence = riff_item_details.1.item_type() {
-                        for riff_set_data in riff_item_details.2.iter() {
-                            let riff_set_actual_playing_length = riff_set_data.0;
+                    if let RiffItemType::RiffSequence = riff_item.item_type() {
+                        for (riff_set_actual_playing_length, riff_set_riff_item) in riff_set_data.iter() {
                             let riff_set_end_position = running_playing_position + riff_set_actual_playing_length;
                             if running_playing_position <= play_position_in_beats && play_position_in_beats <= riff_set_end_position {
-                                playing_riff_item = Some(riff_set_data.1.clone());
-                                playing_riff_sequence = Some(riff_item_details.1.uuid());
+                                playing_riff_item = Some(riff_set_riff_item.clone());
+                                playing_riff_sequence = Some(riff_item.uuid());
                                 playing_riff_grid = None;
                                 adjusted_play_position_in_beats = play_position_in_beats - running_playing_position;
                                 break;
                             }
                             else {
                                 playing_riff_set_pixel_position += 69.0;
-                                playing_before_riff_item = Some(riff_set_data.1.clone());
+                                playing_before_riff_item = Some(riff_set_riff_item.clone());
                             }
                             running_playing_position += riff_set_actual_playing_length;
                         }
                     }
-                    else if let RiffItemType::RiffGrid = riff_item_details.1.item_type() {
-                        playing_riff_item = Some(riff_item_details.1.clone());
-                        playing_riff_grid = Some(riff_item_details.1.uuid());
+                    else if let RiffItemType::RiffGrid = riff_item.item_type() {
+                        playing_riff_item = Some(riff_item.clone());
+                        playing_riff_grid = Some(riff_item.uuid());
                         playing_riff_sequence = None;
                         adjusted_play_position_in_beats = play_position_in_beats - running_playing_position;
                     }
                     else {
-                        playing_riff_item = Some(riff_item_details.1.clone());
+                        playing_riff_item = Some(riff_item.clone());
                         playing_riff_sequence = None;
                         playing_riff_grid = None;
                         adjusted_play_position_in_beats = play_position_in_beats - running_playing_position;
                     }
                     break;
                 }
-                else {
-                    if let RiffItemType::RiffSequence = riff_item_details.1.item_type() {
-                        playing_riff_set_pixel_position += (69.0 * (riff_item_details.2.len() as f64));
+                else { // advance the riff arrangement scroll window cursor by the width of the just passed riff item
+                    if let RiffItemType::RiffSequence = riff_item.item_type() {
+                        playing_riff_set_pixel_position += (69.0 * (riff_set_data.len() as f64));
                     }
-                    if let RiffItemType::RiffGrid = riff_item_details.1.item_type() {
-                        // TODO need to update for the riff arrangement scroll position
-                        // playing_riff_set_pixel_position += 69.0;
+                    if let RiffItemType::RiffGrid = riff_item.item_type() {
+                        playing_riff_set_pixel_position += 300.0;
                     }
                     else {
                         playing_riff_set_pixel_position += 69.0;
                     }
-                    playing_before_riff_item = Some(riff_item_details.1.clone());
+                    playing_before_riff_item = Some(riff_item.clone());
                 }
                 running_playing_position += riff_item_actual_playing_length;
             }
@@ -10414,6 +10475,23 @@ impl MainWindow {
                                                                             if riff_sequence_or_grid_blade.widget_name().to_string().contains(playing_riff_grid_uuid.as_str()) {
                                                                                 // walk the tree to the
                                                                                 self.repaint_riff_grid_drawing_area(riff_sequence_or_grid_blade);
+                                                                            }
+                                                                        }
+                                                                        if let Some(riff_item_ref) = &playing_before_riff_item {
+                                                                            match riff_item_ref.item_type() {
+                                                                                RiffItemType::RiffSet => {
+                                                                                    // if riff_sequence_or_grid_blade.widget_name().to_string().contains(riff_item_ref.uuid().as_str()) {
+                                                                                    //     self.repaint_riff_sequence_riff_set_drawing_areas(riff_sequence_or_grid_blade, playing_riff_item.uuid(), before_riff_item.uuid());
+                                                                                    // }
+                                                                                }
+                                                                                RiffItemType::RiffSequence => {
+
+                                                                                }
+                                                                                RiffItemType::RiffGrid => {
+                                                                                    if riff_sequence_or_grid_blade.widget_name().to_string().contains(riff_item_ref.uuid().as_str()) {
+                                                                                        self.repaint_riff_grid_drawing_area(riff_sequence_or_grid_blade);
+                                                                                    }
+                                                                                }
                                                                             }
                                                                         }
                                                                     }

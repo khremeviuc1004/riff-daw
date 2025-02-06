@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, RiffReference, TrackEvent, TrackEventRouting, VstHost};
 use crate::state::{MidiPolyphonicExpressionNoteId};
 
 #[derive(Clone)]
@@ -143,6 +143,7 @@ pub enum RiffGridChangeType {
     RiffReferenceCutSelected(f64, i32, f64, i32),  // window - x1, y1, x2, y2
     RiffReferenceCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
     RiffReferencePaste,
+    RiffReferenceChange(Riff, Riff), // original riff copy, changed riff ref
 }
 
 #[derive(Clone)]
@@ -367,8 +368,10 @@ pub enum DAWEvents {
 
     RiffSequencePlay(String),                     // riff sequence uuid
     RiffSequenceAdd(Uuid),                        // new riff sequence uuid
+    RiffSequenceCopy(String),                        // riff sequence uuid to copy
     RiffSequenceDelete(String),                   // riff sequence uuid
     RiffSequenceNameChange(String, String),       // riff sequence uuid, new name
+    RiffSequenceSelected(String),                 // riff sequence uuid
     RiffSequenceRiffSetAdd(String, String, Uuid), // riff sequence uuid, riff set uuid, riff set reference uuid
     RiffSequenceRiffSetDelete(String, String),    // riff sequence uuid, riff set uuid
     RiffSequenceRiffSetMoveToPosition(String, String, usize), // riff sequence uuid, riff set uuid, position
@@ -378,17 +381,19 @@ pub enum DAWEvents {
     RiffSequenceRiffSetSelect(String, String, bool), // riff sequence uuid, riff set reference uuid, bool selected
 
     RiffGridPlay(String),                     // riff grid uuid
-    RiffGridAdd(String, String),               // riff grid uuid, name
+    RiffGridAdd(String, String),               // riff grid uuid
+    RiffGridCopy(String),               // riff grid uuid to copy
     RiffGridDelete(String),                   // riff grid uuid
     RiffGridSelected(String),                                  // riff grid uuid
     RiffGridChange(RiffGridChangeType, Option<String>), // change type, track uuid
-    RiffGridNameChange(String, String),       // riff grid uuid, new name
+    RiffGridNameChange(String),       // new name
     RiffGridCopySelectedToTrackViewCursorPosition(String), // riff grid uuid
 
     RiffArrangementPlay(String),               // riff arrangement uuid
     RiffArrangementAdd(Uuid),                  // new riff arrangement uuid
     RiffArrangementDelete(String),             // riff arrangement uuid
-    RiffArrangementCopy(String),               // riff arrangement uuid
+    RiffArrangementSelected(String),                 // riff arrangement uuid
+    RiffArrangementCopy(String),               // riff arrangement uuid to copy
     RiffArrangementNameChange(String, String), // riff arrangement uuid, new name
     RiffArrangementMoveRiffItemToPosition(String, String, usize), // riff arrangement uuid, riff item compound uuid, position
     RiffArrangementRiffItemAdd(String, String, RiffItemType), // riff arrangement uuid, riff seq/set uuid, riff item tpe - riff set or riff sequence
@@ -413,6 +418,7 @@ pub enum DAWEvents {
     RunLuaScript(String), // Lua script text
 
     TrackGridVerticalScaleChanged(f64), // scale
+    RiffGridVerticalScaleChanged(f64), // scale
 
     Shutdown,
 

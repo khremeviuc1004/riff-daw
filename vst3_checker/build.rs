@@ -3,10 +3,10 @@ fn main() {
 
     cxx_build::bridge("src/main.rs")
         .file("src/vst3pluginchecker.cc")
-        .file("/home/kevin/Compile/Audio/vst3sdk/public.sdk/source/vst/hosting/module.cpp")
-        .file("/home/kevin/Compile/Audio/vst3sdk/public.sdk/source/vst/hosting/module_linux.cpp")
-        .file("/home/kevin/Compile/Audio/vst3sdk/public.sdk/source/vst/hosting/plugprovider.cpp")
-        .include("/home/kevin/Compile/Audio/vst3sdk")
+        .file("../lib/vst3sdk/public.sdk/source/vst/hosting/module.cpp")
+        .file("../lib/vst3sdk/public.sdk/source/vst/hosting/module_linux.cpp")
+        .file("../lib/vst3sdk/public.sdk/source/vst/hosting/plugprovider.cpp")
+        .include("../lib/vst3sdk")
         .std("c++23")
         .compile("vst3-checker");
 

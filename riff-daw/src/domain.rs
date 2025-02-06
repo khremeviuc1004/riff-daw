@@ -7973,23 +7973,23 @@ mod tests {
     #[test]
     fn test_track_event_sort() -> Result<(), String> {
         let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1_on = NoteOn::new_with_params(0.0, 60, 127);
+        let note1_on = NoteOn::new_with_params(-1, 0.0, 60, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note1_on));
-        let note1_off = NoteOff::new_with_params(7.99, 60, 127);
+        let note1_off = NoteOff::new_with_params(-1, 7.99, 60, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note1_off));
-        let note2_on = NoteOn::new_with_params(8.0, 67, 127);
+        let note2_on = NoteOn::new_with_params(-1, 8.0, 67, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note2_on));
-        let note2_off = NoteOff::new_with_params(15.99, 67, 127);
+        let note2_off = NoteOff::new_with_params(-1, 15.99, 67, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note2_off));
-        let note3_on = NoteOn::new_with_params(16.0, 60, 127);
+        let note3_on = NoteOn::new_with_params(-1, 16.0, 60, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note3_on));
         let measure = Measure::new(16.0);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Measure(measure));
-        let note3_off = NoteOff::new_with_params(23.99, 60, 127);
+        let note3_off = NoteOff::new_with_params(-1, 23.99, 60, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note3_off));
-        let note4_on = NoteOn::new_with_params(24.0, 67, 127);
+        let note4_on = NoteOn::new_with_params(-1, 24.0, 67, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note4_on));
-        let note4_off = NoteOff::new_with_params(31.99, 67, 127);
+        let note4_off = NoteOff::new_with_params(-1, 31.99, 67, 127);
         riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note4_off));
 
         riff_four_bar_with_two_long_notes.events_mut().sort_by(&DAWUtils::sort_track_events);

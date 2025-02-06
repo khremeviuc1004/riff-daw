@@ -45,5 +45,10 @@ jobs:
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v4
       with:
+        name: vst3_checker
+        path: ./target/release/vst3_checker
+    - name: 'Upload Artifact'
+      uses: actions/upload-artifact@v4
+      with:
         name: clap_checker
         path: ./target/release/clap_checker

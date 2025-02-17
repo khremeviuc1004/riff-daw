@@ -8,7 +8,7 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid};
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -758,21 +758,42 @@ impl DAWUtils {
             for riff in riffs.iter() {
                 if riff.uuid().to_string() == riff_ref.linked_to() {
                     debug!("util-extract_riff_ref_events: riff name={}", riff.name());
+                    let mut use_notes = match riff_ref.mode() {
+                        RiffReferenceMode::Normal => true,
+                        RiffReferenceMode::Start => false,
+                        RiffReferenceMode::End => true,
+                    };
                     for event in riff.events().iter() {
                         if let TrackEvent::Note(note) = event {
-                            // create a note on and a note off event
-                            let note_on = NoteOn::new_with_params(
-                                note.note_id(),
-                                (riff_ref.position() + note.position()) / bpm * 60.0 * sample_rate, 
-                                note.note(), 
-                                note.velocity());
-                            events_all.push(TrackEvent::NoteOn(note_on));
-                            let note_off = NoteOff::new_with_params(
-                                note.note_id(),
-                                (riff_ref.position() + note.position() + note.length()) / bpm * 60.0 * sample_rate, 
-                                note.note(), 
-                                note.velocity());
-                            events_all.push(TrackEvent::NoteOff(note_off));
+                            use_notes = match &riff_ref.mode() {
+                                RiffReferenceMode::Start => {
+                                    if !use_notes && note.riff_start_note() { true }
+                                    else if use_notes { true }
+                                    else { false }
+                                }
+                                RiffReferenceMode::End => {
+                                    if use_notes && note.riff_start_note() { false }
+                                    else if !use_notes { false }
+                                    else { true }
+                                }
+                                RiffReferenceMode::Normal => true,
+                            };
+
+                            if use_notes {
+                                // create a note on and a note off event
+                                let note_on = NoteOn::new_with_params(
+                                    note.note_id(),
+                                    (riff_ref.position() + note.position()) / bpm * 60.0 * sample_rate,
+                                    note.note(),
+                                    note.velocity());
+                                events_all.push(TrackEvent::NoteOn(note_on));
+                                let note_off = NoteOff::new_with_params(
+                                    note.note_id(),
+                                    (riff_ref.position() + note.position() + note.length()) / bpm * 60.0 * sample_rate,
+                                    note.note(),
+                                    note.velocity());
+                                events_all.push(TrackEvent::NoteOff(note_off));
+                            }
                         }
                         else {
                             let mut cloned_track_event = event.clone();

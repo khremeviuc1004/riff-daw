@@ -61,7 +61,7 @@ fn get_selected_track_riff_uuid(state: &mut Arc<Mutex<DAWState>>) -> (Option<Str
             }
         },
         Err(_) => debug!("could not get lock on state"),
-    };
+    }
     (selected_riff_uuid, selected_riff_track_uuid)
 }
 

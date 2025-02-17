@@ -1599,6 +1599,21 @@
                           </packing>
                         </child>
                         <child>
+                          <object class="GtkRadioToolButton" id="track_grid_set_riff_reference_mode_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="tooltip-text" translatable="yes">Set the riff reference mode to play from start not, normal or play to end note mode by clicking inside a riff reference close to the start, middle or end respectively.</property>
+                            <property name="label" translatable="yes">r</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-goto-first</property>
+                            <property name="group">track_grid_select_mode_btn</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkSeparatorToolItem">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
@@ -1750,7 +1765,8 @@
                                   <object class="GtkComboBoxText" id="track_grid_quantise_start_choice">
                                     <property name="visible">True</property>
                                     <property name="can-focus">False</property>
-                                    <property name="active-id">1_4</property>
+                                    <property name="active">10</property>
+                                    <property name="active-id">1</property>
                                     <items>
                                       <item id="10" translatable="yes">10</item>
                                       <item id="9" translatable="yes">9</item>
@@ -13635,6 +13651,21 @@
                                       </packing>
                                     </child>
                                     <child>
+                                      <object class="GtkRadioToolButton" id="riff_grid_set_riff_reference_mode_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="tooltip-text" translatable="yes">Set the riff reference mode to play from start not, normal or play to end note mode by clicking inside a riff reference close to the start, middle or end respectively.</property>
+                                        <property name="label" translatable="yes">r</property>
+                                        <property name="use-underline">True</property>
+                                        <property name="stock-id">gtk-goto-first</property>
+                                        <property name="group">riff_grid_select_mode_btn</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="homogeneous">False</property>
+                                      </packing>
+                                    </child>
+                                    <child>
                                       <object class="GtkSeparatorToolItem">
                                         <property name="visible">True</property>
                                         <property name="can-focus">False</property>
@@ -14028,6 +14059,8 @@
                                         <property name="visible">True</property>
                                         <property name="can-focus">True</property>
                                         <property name="receives-default">True</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
                                         <child>
                                           <object class="GtkImage">
                                             <property name="visible">True</property>
@@ -14103,6 +14136,8 @@
                                       <object class="GtkComboBoxText">
                                         <property name="visible">True</property>
                                         <property name="can-focus">False</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
                                       </object>
                                       <packing>
                                         <property name="expand">False</property>
@@ -14147,6 +14182,8 @@
                                       <object class="GtkComboBoxText">
                                         <property name="visible">True</property>
                                         <property name="can-focus">False</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
                                       </object>
                                       <packing>
                                         <property name="expand">False</property>
@@ -17683,6 +17720,7 @@
                                 <property name="label" translatable="yes">piano_roll_select_mode</property>
                                 <property name="use-underline">True</property>
                                 <property name="icon-name">pointer</property>
+                                <property name="active">True</property>
                                 <property name="group">piano_roll_select_mode_btn</property>
                               </object>
                               <packing>
@@ -17728,6 +17766,21 @@
                                 <property name="label" translatable="yes">e</property>
                                 <property name="use-underline">True</property>
                                 <property name="stock-id">gtk-edit</property>
+                                <property name="group">piano_roll_select_mode_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_select_riff_start_note_mode_btn">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="tooltip-text" translatable="yes">Click on a note to set it as the start note for the riff.</property>
+                                <property name="label" translatable="yes">s</property>
+                                <property name="use-underline">True</property>
+                                <property name="stock-id">gtk-goto-first</property>
                                 <property name="group">piano_roll_select_mode_btn</property>
                               </object>
                               <packing>
@@ -19099,7 +19152,7 @@
                               <object class="GtkComboBoxText" id="automation_quantise_start_choice">
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
-                                <property name="active-id">1_4</property>
+                                <property name="active-id">1</property>
                                 <items>
                                   <item id="10" translatable="yes">10</item>
                                   <item id="9" translatable="yes">9</item>

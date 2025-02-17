@@ -589,6 +589,8 @@ pub struct Note {
 	note: i32,
 	velocity: i32,
     length: f64,
+    #[serde(default)]
+    riff_start_note: bool,
 }
 
 impl DAWItemID for Note {
@@ -648,6 +650,7 @@ impl Note {
 			velocity,
             length: duration,
             id: Uuid::new_v4(),
+            riff_start_note: false,
 		}
 	}
 
@@ -701,6 +704,14 @@ impl Note {
 
     pub fn set_note_id(&mut self, note_id: i32) {
         self.note_id = note_id;
+    }
+
+    pub fn riff_start_note(&self) -> bool {
+        self.riff_start_note
+    }
+
+    pub fn set_riff_start_note(&mut self, riff_start_note: bool) {
+        self.riff_start_note = riff_start_note;
     }
 }
 
@@ -1243,11 +1254,26 @@ impl Riff {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RiffReferenceMode {
+    Normal,
+    Start,
+    End,
+}
+
+impl RiffReferenceMode {
+    pub fn normal() -> RiffReferenceMode {
+        RiffReferenceMode::Normal
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffReference {
     uuid: Uuid,
 	position: f64,
 	linked_to: String,
+    #[serde(default = "RiffReferenceMode::normal")]
+    mode: RiffReferenceMode,
 }
 
 impl DAWItemID for RiffReference {
@@ -1301,6 +1327,7 @@ impl RiffReference {
             uuid: Uuid::new_v4(),
             position,
             linked_to: riff_uuid,
+            mode: RiffReferenceMode::Normal,
         }
     }
 
@@ -1326,6 +1353,14 @@ impl RiffReference {
 
     pub fn uuid(&self) -> Uuid {
         self.uuid
+    }
+
+    pub fn mode(&self) -> &RiffReferenceMode {
+        &self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: RiffReferenceMode) {
+        self.mode = mode;
     }
 }
 

@@ -104,6 +104,7 @@ pub struct Ui {
     pub track_grid_edit_mode_btn: RadioToolButton,
     pub track_grid_select_mode_btn: RadioToolButton,
     pub track_grid_add_loop_mode_btn: RadioToolButton,
+    pub track_grid_set_riff_reference_mode_btn: RadioToolButton,
 
     pub track_grid_cut_btn: ToolButton,
     pub track_grid_copy_btn: ToolButton,
@@ -144,6 +145,7 @@ pub struct Ui {
     pub riff_grid_edit_mode_btn: RadioToolButton,
     pub riff_grid_select_mode_btn: RadioToolButton,
     pub riff_grid_add_loop_mode_btn: RadioToolButton,
+    pub riff_grid_set_riff_reference_mode_btn: RadioToolButton,
 
     pub riff_grid_cut_btn: ToolButton,
     pub riff_grid_copy_btn: ToolButton,
@@ -202,6 +204,7 @@ pub struct Ui {
     pub piano_roll_delete_mode_btn: RadioToolButton,
     pub piano_roll_edit_mode_btn: RadioToolButton,
     pub piano_roll_select_mode_btn: RadioToolButton,
+    pub piano_roll_select_riff_start_note_mode_btn: RadioToolButton,
 
     pub piano_roll_cut_btn: ToolButton,
     pub piano_roll_copy_btn: ToolButton,
@@ -3640,7 +3643,7 @@ impl MainWindow {
             let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
         });
         let track_grid_custom_painter = TrackGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(event_sender));
-        let track_grid = BeatGrid::new_with_custom(
+        let mut track_grid = BeatGrid::new_with_custom(
             0.04,
             1.0,
             18.0,
@@ -3652,6 +3655,7 @@ impl MainWindow {
             true,
             Some(DrawingAreaType::TrackGrid),
         );
+        track_grid.set_snap_position_in_beats(4.0);
         let track_grid_arc = Arc::new( Mutex::new(track_grid));
 
         self.set_track_grid(Some(track_grid_arc.clone()));
@@ -3765,6 +3769,7 @@ impl MainWindow {
             let track_grid_add_mode_btn = self.ui.track_grid_add_mode_btn.clone();
             let track_grid_delete_mode_btn = self.ui.track_grid_delete_mode_btn.clone();
             let track_grid_edit_mode_btn = self.ui.track_grid_edit_mode_btn.clone();
+            let track_grid_set_riff_reference_mode_btn = self.ui.track_grid_set_riff_reference_mode_btn.clone();
             self.ui.track_drawing_area.connect_key_press_event(move |track_drawing_area, event_key| {
                 let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
@@ -3834,6 +3839,10 @@ impl MainWindow {
                     else if key_name == "e" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the track grid edit mode message
                         track_grid_edit_mode_btn.set_active(true);
+                    }
+                    else if key_name == "r" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        // send the track grid set riff reference play mode message
+                        track_grid_set_riff_reference_mode_btn.set_active(true);
                     }
                 }
                 
@@ -3931,6 +3940,16 @@ impl MainWindow {
             self.ui.track_grid_add_loop_mode_btn.connect_clicked(move |_| {
                 match grid.lock() {
                     Ok(mut grid) => grid.set_operation_mode(OperationModeType::LoopPointMode),
+                    Err(_) => (),
+                }
+            });
+        }
+
+        {
+            let grid = track_grid_arc.clone();
+            self.ui.track_grid_set_riff_reference_mode_btn.connect_clicked(move |_| {
+                match grid.lock() {
+                    Ok(mut grid) => grid.set_operation_mode(OperationModeType::SelectRiffReferenceMode),
                     Err(_) => (),
                 }
             });
@@ -4192,7 +4211,7 @@ impl MainWindow {
         state: Arc<Mutex<DAWState>>,
     ) {
         let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange{orginal_riff_copy: original_riff, changed_riff}, Some(track_uuid)));
         });
         let riff_grid_custom_painter = RiffGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(event_sender), true, None);
         let riff_grid = BeatGrid::new_with_custom(
@@ -4486,6 +4505,16 @@ impl MainWindow {
             self.ui.riff_grid_add_loop_mode_btn.connect_clicked(move |_| {
                 match grid.lock() {
                     Ok(mut grid) => grid.set_operation_mode(OperationModeType::LoopPointMode),
+                    Err(_) => (),
+                }
+            });
+        }
+
+        {
+            let grid = riff_grid_arc.clone();
+            self.ui.riff_grid_set_riff_reference_mode_btn.connect_clicked(move |_| {
+                match grid.lock() {
+                    Ok(mut grid) => grid.set_operation_mode(OperationModeType::SelectRiffReferenceMode),
                     Err(_) => (),
                 }
             });
@@ -4816,7 +4845,7 @@ impl MainWindow {
     ) {
         let state = state;
         let automation_custom_painter = AutomationCustomPainter::new(state);
-        let automation_grid = BeatGrid::new_with_custom(
+        let mut automation_grid = BeatGrid::new_with_custom(
             1.0,
             1.0,
             3.0,
@@ -4828,6 +4857,7 @@ impl MainWindow {
             true,
             Some(DrawingAreaType::Automation),
         );
+        automation_grid.set_snap_position_in_beats(4.0);
         let automation_grid_arc = Arc::new( Mutex::new(automation_grid));
         self.set_automation_grid(Some(automation_grid_arc.clone()));
 
@@ -5663,6 +5693,7 @@ impl MainWindow {
                 let piano_roll_add_mode_btn = self.ui.piano_roll_add_mode_btn.clone();
                 let piano_roll_delete_mode_btn = self.ui.piano_roll_delete_mode_btn.clone();
                 let piano_roll_edit_mode_btn = self.ui.piano_roll_edit_mode_btn.clone();
+                let piano_roll_set_riff_start_note_mode_btn = self.ui.piano_roll_select_riff_start_note_mode_btn.clone();
                 self.ui.piano_roll_drawing_area.connect_key_press_event(move |piano_roll_drawing_area, event_key| {
                     let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
@@ -5732,6 +5763,10 @@ impl MainWindow {
                         else if key_name == "e" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                             // send the piano roll edit mode message
                             piano_roll_edit_mode_btn.set_active(true);
+                        }
+                        else if key_name == "n" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                            // send the piano roll set riff start note mode message
+                            piano_roll_set_riff_start_note_mode_btn.set_active(true);
                         }
                     }
                     
@@ -5892,6 +5927,16 @@ impl MainWindow {
                 self.ui.piano_roll_select_mode_btn.connect_clicked(move |_| {
                     match piano_roll_grid.lock() {
                         Ok(mut grid) => grid.set_operation_mode(OperationModeType::PointMode),
+                        Err(_) => (),
+                    }
+                });
+            }
+
+            {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_select_riff_start_note_mode_btn.connect_clicked(move |_| {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_operation_mode(OperationModeType::SelectStartNote),
                         Err(_) => (),
                     }
                 });
@@ -7364,7 +7409,7 @@ impl MainWindow {
                                 selected_track_style_provider.clone(),
                                 riff_set_beat_grids.clone(),
                                 "".to_string(),
-                                None
+                                None,
                             );
 
                             let copy_position = riff_set_heads_box.children().len() - 1;
@@ -7692,16 +7737,16 @@ impl MainWindow {
         // populate the riff_set_combobox
         if let Some(combobox_riff_sets_data) = riff_sets_data {
             let riff_set_combobox: ComboBoxText = riff_sequence_blade.riff_set_combobox.clone();
-            for (riff_set_uuid, riff_set_name) in combobox_riff_sets_data {
-                riff_set_combobox.append(Some(riff_set_uuid.as_str()), riff_set_name.as_str());
+            for (index, (riff_set_uuid, riff_set_name)) in combobox_riff_sets_data.iter().enumerate() {
+                riff_set_combobox.append(Some(riff_set_uuid.as_str()), format!("{}. {}", index + 1, riff_set_name.as_str()).as_str());
             }
         }
         else {
             match state_arc.lock() {
                 Ok(state) => {
                     let riff_set_combobox: ComboBoxText = riff_sequence_blade.riff_set_combobox.clone();
-                    for riff_set in state.project().song().riff_sets().iter() {
-                        riff_set_combobox.append(Some(riff_set.uuid().as_str()), riff_set.name());
+                    for (index, riff_set) in state.project().song().riff_sets().iter().enumerate() {
+                        riff_set_combobox.append(Some(riff_set.uuid().as_str()), format!("{}. {}", index + 1, riff_set.name()).as_str());
                     }
                 }
                 Err(error) => {
@@ -7996,7 +8041,7 @@ impl MainWindow {
         }
 
         let event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange{orginal_riff_copy: original_riff, changed_riff}, Some(track_uuid)));
         });
         let use_globally_selected_riff_grid_uuid = if let RiffGridType::RiffGrid = &riff_grid_type {
             true
@@ -8243,16 +8288,16 @@ impl MainWindow {
         // populate the riff_set_combobox
         if let Some(combobox_riff_sets_data) = riff_sets_data {
             let riff_set_combobox: ComboBoxText = riff_arrangement_blade.riff_set_combobox.clone();
-            for (riff_set_uuid, riff_set_name) in combobox_riff_sets_data {
-                riff_set_combobox.append(Some(riff_set_uuid.as_str()), riff_set_name.as_str());
+            for (index, (riff_set_uuid, riff_set_name)) in combobox_riff_sets_data.iter().enumerate() {
+                riff_set_combobox.append(Some(riff_set_uuid.as_str()), format!("{}. {}", index + 1, riff_set_name.as_str()).as_str());
             }
         }
         else {
             match state_arc.lock() {
                 Ok(state) => {
                     let riff_set_combobox: ComboBoxText = riff_arrangement_blade.riff_set_combobox.clone();
-                    for riff_set in state.project().song().riff_sets().iter() {
-                        riff_set_combobox.append(Some(riff_set.uuid().as_str()), riff_set.name());
+                    for (index, riff_set) in state.project().song().riff_sets().iter().enumerate() {
+                        riff_set_combobox.append(Some(riff_set.uuid().as_str()), format!("{}. {}", index + 1, riff_set.name()).as_str());
                     }
                 }
                 Err(error) => {
@@ -9750,8 +9795,8 @@ impl MainWindow {
                                 if let Some(item_combobox) = child.dynamic_cast_ref::<ComboBoxText>() {
                                     let item_combobox: &ComboBoxText = item_combobox;
                                     item_combobox.remove_all();
-                                    for (uuid, name) in items.iter() {
-                                        item_combobox.append(Some(uuid), name);
+                                    for (index, (uuid, name)) in items.iter().enumerate() {
+                                        item_combobox.append(Some(uuid), format!("{} {}", index + 1, name).as_str());
                                     }
                                 }
                             }

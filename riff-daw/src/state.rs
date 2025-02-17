@@ -1066,6 +1066,13 @@ impl DAWState {
         let mut end_block = 0;
         let mut found_active_loop = false;
 
+        // make sure everything is sorted
+        self.get_project().song_mut().tracks_mut().iter_mut().for_each(|track| {
+           track.riffs_mut().iter_mut().for_each(|riff| {
+               riff.events_mut().sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+           })
+        });
+
         song_length_in_beats = *self.get_project().song_mut().length_in_beats_mut() as f64;
         self.set_playing(true);
         self.set_play_mode(PlayMode::Song);
@@ -2019,9 +2026,16 @@ impl DAWState {
     pub fn riff_set_increment_riff_for_track(&mut self, riff_set_uuid: String, track_uuid: String) -> String {
         debug!("state.riff_set_increment_riff_for_track: {}, {}", riff_set_uuid.as_str(), track_uuid.as_str());
         // get the track
-        let riff_uuids: Vec<String> = match self.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let riff_uuids: Vec<(String, bool)> = match self.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
             Some(track) => {
-                track.riffs_mut().iter().map(|riff| riff.uuid().to_string()).collect_vec()
+                track.riffs_mut().iter().map(|riff| (riff.uuid().to_string(), riff.events().iter().any(|event| {
+                    if let TrackEvent::Note(note) = event {
+                        note.riff_start_note()
+                    }
+                    else {
+                        false
+                    }
+                }))).collect_vec()
             },
             None => vec![],
         };
@@ -2031,24 +2045,45 @@ impl DAWState {
                 // get the current riff_ref for the track
                 if let Some(riff_ref) = riff_set.get_riff_ref_for_track_mut(track_uuid.clone()) {
                     let mut count = 0;
+                    let current_riff_ref_mode = riff_ref.mode().clone();
                     let mut index_to_get = 0;
-                    for riff_uuid in riff_uuids.iter() {
+                    let mut need_to_index = true;
+                    for (riff_uuid, has_start_note) in riff_uuids.iter() {
                         if riff_uuid.to_string() == *riff_ref.linked_to_mut() {
-                            index_to_get = count + 1;
+                            if *has_start_note {
+                                if let RiffReferenceMode::Normal = current_riff_ref_mode {
+                                    riff_ref.set_mode(RiffReferenceMode::Start);
+                                    need_to_index = false;
+                                }
+                                else if  let RiffReferenceMode::Start = current_riff_ref_mode {
+                                    riff_ref.set_mode(RiffReferenceMode::End);
+                                    need_to_index = false;
+                                }
+                                else {
+                                    riff_ref.set_mode(RiffReferenceMode::Normal);
+                                    index_to_get = count + 1;
+                                }
+                            }
+                            else {
+                                riff_ref.set_mode(RiffReferenceMode::Normal);
+                                index_to_get = count + 1;
+                            }
                             break;
                         }
                         count += 1;
                     }
-                    if index_to_get >= riff_uuids.len() {
-                        index_to_get = 0;
-                    }
-                    if let Some(riff_uuid) = riff_uuids.get(index_to_get) {
-                        riff_ref.set_linked_to(riff_uuid.to_owned());
+                    if need_to_index {
+                        if index_to_get >= riff_uuids.len() {
+                            index_to_get = 0;
+                        }
+                        if let Some((riff_uuid, _)) = riff_uuids.get(index_to_get) {
+                            riff_ref.set_linked_to(riff_uuid.to_owned());
+                        }
                     }
                 }
                 else {
                     // get the first riff uuid
-                    if let Some(riff_uuid) = riff_uuids.get(0) {
+                    if let Some((riff_uuid, _)) = riff_uuids.get(0) {
                         // create a new riff_ref and add to the riff set
                         riff_set.set_riff_ref_for_track(track_uuid, RiffReference::new(riff_uuid.to_owned(), 0.0));
                     }

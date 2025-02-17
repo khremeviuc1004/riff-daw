@@ -86,6 +86,8 @@ pub enum OperationModeType {
     DeselectAll,
     Undo,
     Redo,
+    SelectStartNote,
+    SelectRiffReferenceMode,
 }
 
 #[derive(Clone)]
@@ -138,12 +140,12 @@ pub enum AutomationChangeData {
 
 #[derive(Clone)]
 pub enum RiffGridChangeType {
-    RiffReferenceAdd(i32, f64),                    // track index, position
-    RiffReferenceDelete(i32, f64),                 // track index, position
-    RiffReferenceCutSelected(f64, i32, f64, i32),  // window - x1, y1, x2, y2
-    RiffReferenceCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
+    RiffReferenceAdd{ track_index: i32, position: f64 },
+    RiffReferenceDelete{ track_index: i32, position: f64 },
+    RiffReferenceCutSelected{ x1: f64, y1: i32, x2: f64, y2: i32 },
+    RiffReferenceCopySelected{ x1: f64, y1: i32, x2: f64, y2: i32 },
     RiffReferencePaste,
-    RiffReferenceChange(Riff, Riff), // original riff copy, changed riff ref
+    RiffReferenceChange{ orginal_riff_copy: Riff, changed_riff: Riff },
 }
 
 #[derive(Clone)]
@@ -221,6 +223,8 @@ pub enum TrackChangeType {
     RiffPasteSelected,
     RiffChangeLengthOfSelected(bool, f64, i32, f64, i32), // true to lengthen, false to shorten, window - x1, y1, x2, y2
     RiffEventsSelected(f64, i32, f64, i32, bool),
+    RiffSetStartNote(i32, f64),
+    RiffReferencePlayMode(i32, f64),
 
     AutomationAdd(f64, i32),
     AutomationDelete(f64),

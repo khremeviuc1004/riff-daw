@@ -2,6 +2,7 @@ use std::{sync::{Arc, Mutex}, vec::Vec};
 use std::any::Any;
 
 use cairo::{Context};
+use crossbeam_channel::Sender;
 use gtk::{DrawingArea, prelude::*};
 use itertools::Itertools;
 use log::*;
@@ -11,6 +12,7 @@ use geo::{coord, Intersects, Rect};
 
 use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
 use crate::event::{CurrentView, RiffGridChangeType};
+use crate::event::TrackChangeType::RiffReferencePlayMode;
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -142,6 +144,8 @@ pub trait BeatGridMouseCoordHelper {
     fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
     fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
     fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn set_start_note(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
+    fn set_riff_reference_play_mode(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
 
 }
 
@@ -203,6 +207,14 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelected(x, y2, x2, y, add_to_select), None));
     }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSetStartNote(y_index, time), None));
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
+    }
 }
 
 pub struct SampleRollMouseCoordHelper;
@@ -263,6 +275,12 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
     }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
 }
 
 pub struct TrackGridMouseCoordHelper;
@@ -321,6 +339,13 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
     }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
+    }
 }
 
 pub struct RiffGridMouseCoordHelper;
@@ -331,19 +356,19 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceAdd(y_index, time), None));
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceAdd{ track_index: y_index, position: time }, None));
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDelete(y_index, time), None));
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDelete{ track_index: y_index, position: time }, None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCutSelected{x1, y2, x2, y1}, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCopySelected{x1, y2, x2, y1}, None));
     }
 
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
@@ -377,6 +402,13 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
 }
 
@@ -1089,6 +1121,26 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::Redo => {
 
                     },
+                    OperationModeType::SelectStartNote => {
+                        match &self.mouse_coord_helper {
+                            Some(mouse_coord_helper) => {
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
+                                mouse_coord_helper.set_start_note(self.tx_from_ui.clone(), y_index as i32, position);
+                            },
+                            None => (),
+                        }
+                    }
+                    OperationModeType::SelectRiffReferenceMode => {
+                        match &self.mouse_coord_helper {
+                            Some(mouse_coord_helper) => {
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
+                                mouse_coord_helper.set_riff_reference_play_mode(self.tx_from_ui.clone(), y_index as i32, position);
+                            },
+                            None => (),
+                        }
+                    }
                 }
             },
             MouseButton::Button2 => {
@@ -1129,6 +1181,8 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::DeselectAll => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
                     OperationModeType::Undo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
                     OperationModeType::Redo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
+                    OperationModeType::SelectStartNote => {}
+                    OperationModeType::SelectRiffReferenceMode => {}
                 }
             },
             MouseButton::Button3 => {
@@ -1220,6 +1274,8 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::DeselectAll => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
                     OperationModeType::Undo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
                     OperationModeType::Redo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
+                    OperationModeType::SelectStartNote => {}
+                    OperationModeType::SelectRiffReferenceMode => {}
                 }
             },
         }
@@ -2249,6 +2305,12 @@ impl CustomPainter for PianoRollCustomPainter {
                                                                 let _ = context.show_text(format!("{}", note.note_id()).as_str());
                                                             }
                                                             let _ = context.fill();
+
+                                                            if note.riff_start_note() {
+                                                                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                                context.rectangle(x, y, 2.0, adjusted_entity_height_in_pixels);
+                                                                let _ = context.fill();
+                                                            }
                                                         }
                                                     }
                                                     _ => (),
@@ -2736,21 +2798,28 @@ impl CustomPainter for RiffSetTrackCustomPainter {
 
                         if segments.len() == 3 {
                             let riff_set_uuid = *segments.get(1).unwrap();
+                            let riff_set_number = if let Some((position, _)) = state.project().song().riff_sets().iter().find_position(|riff_set| riff_set.uuid() == riff_set_uuid.to_string()) {
+                                position as i32 + 1
+                            }
+                            else {
+                                1
+                            };
                             let track_uuid = *segments.get(2).unwrap();
-                            let riff_ref_linked_to = {
+                            let (riff_ref_linked_to, mode) = {
                                 if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid.to_string()) {
                                     if let Some(riff_ref) = riff_set.riff_refs().get(track_uuid.clone()) {
-                                        riff_ref.linked_to()
+                                        (riff_ref.linked_to(), riff_ref.mode().clone())
                                     }
                                     else {
-                                        "".to_string()
+                                        ("".to_string(), RiffReferenceMode::Normal)
                                     }
                                 }
                                 else {
-                                    "".to_string()
+                                    ("".to_string(), RiffReferenceMode::Normal)
                                 }
                             };
 
+                            let number_of_beats_in_bar = state.project().song().time_signature_denominator();
                             let mut state = state;
                             let mut track = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid);
 
@@ -2784,19 +2853,40 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                         context.rectangle(0.0, 0.0, width, height);
                                         let _ = context.fill();
 
+                                        let mut use_note = match mode {
+                                            RiffReferenceMode::Normal => true,
+                                            RiffReferenceMode::Start => false,
+                                            RiffReferenceMode::End => true,
+                                        };
                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                         for track_event in riff.events() {
 
                                             match track_event {
                                                 TrackEvent::Note(note) => {
-                                                    let note_number = note.note();
-                                                    let note_y_pos_inverted = note_number as f64 * entity_height_in_pixels + entity_height_in_pixels;
-                                                    // let duration_in_beats = note.duration() * adjusted_beat_width_in_pixels;
-                                                    let x = note.position() * adjusted_beat_width_in_pixels;
-                                                    let y = height - note_y_pos_inverted;
-                                                    let width = note.length() * adjusted_beat_width_in_pixels;
-                                                    context.rectangle(x, y, width, entity_height_in_pixels);
-                                                    let _ = context.fill();
+                                                    use_note = match &mode {
+                                                        RiffReferenceMode::Start => {
+                                                            if !use_note && note.riff_start_note() { true }
+                                                            else if use_note { true }
+                                                            else { false }
+                                                        }
+                                                        RiffReferenceMode::End => {
+                                                            if use_note && note.riff_start_note() { false }
+                                                            else if !use_note { false }
+                                                            else { true }
+                                                        }
+                                                        RiffReferenceMode::Normal => true,
+                                                    };
+
+                                                    if use_note {
+                                                        let note_number = note.note();
+                                                        let note_y_pos_inverted = note_number as f64 * entity_height_in_pixels + entity_height_in_pixels;
+                                                        // let duration_in_beats = note.duration() * adjusted_beat_width_in_pixels;
+                                                        let x = note.position() * adjusted_beat_width_in_pixels;
+                                                        let y = height - note_y_pos_inverted;
+                                                        let width = note.length() * adjusted_beat_width_in_pixels;
+                                                        context.rectangle(x, y, width, entity_height_in_pixels);
+                                                        let _ = context.fill();
+                                                    }
                                                 },
                                                 TrackEvent::Sample(sample) => {
                                                     context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
@@ -2809,8 +2899,10 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                                 _ => (),
                                             }
                                         }
+
+                                        // draw the riff name
                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                        context.move_to(5.0, 15.0);
+                                        context.move_to(1.0, 15.0);
                                         context.set_font_size(9.0);
                                         if riff.name() == "empty" {
                                             let _ = context.show_text("e");
@@ -2820,12 +2912,38 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                             let _ = context.show_text(riff.name());
                                             let _ = context.stroke();
 
+                                            // draw the track cursor
                                             let x = (self.track_cursor_time_in_beats as i32 % riff.length() as i32) as f64 * adjusted_beat_width_in_pixels;
-
                                             context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
                                             context.move_to(x, 0.0);
                                             context.line_to(x, height);
                                             let _ = context.stroke();
+
+                                            // draw the riff length
+                                            context.move_to(width - 20.0, height - 1.0);
+                                            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                            let _ = context.show_text(format!("{}", riff.length() / number_of_beats_in_bar).as_str());
+                                            let _ = context.stroke();
+
+                                            // draw the riff set number
+                                            context.move_to(width / 2.0 - 18.0, height / 2.0 + 14.0);
+                                            context.set_source_rgba(0.0, 0.0, 0.0, 0.1);
+                                            context.set_font_size(36.0);
+                                            let _ = context.show_text(format!("{}", riff_set_number).as_str());
+                                            let _ = context.stroke();
+
+                                            // draw the riff reference play mode
+                                            context.set_font_size(9.0);
+                                            context.move_to(1.0, height - 1.0);
+                                            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                            if let RiffReferenceMode::Start = mode {
+                                                let _ = context.show_text("start");
+                                                let _ = context.stroke();
+                                            }
+                                            else if let RiffReferenceMode::End = mode {
+                                                let _ = context.show_text("end");
+                                                let _ = context.stroke();
+                                            }
                                         }
 
                                     }
@@ -3025,6 +3143,11 @@ impl CustomPainter for TrackGridCustomPainter {
 
                         for riff in track.riffs().iter() {
                             if riff.uuid().to_string() == linked_to_riff_uuid {
+                                let mut use_notes = match riff_ref.mode() {
+                                    RiffReferenceMode::Normal => true,
+                                    RiffReferenceMode::Start => false,
+                                    RiffReferenceMode::End => true,
+                                };
                                 if let Some((red, green, blue, alpha)) = riff.colour() {
                                     context.set_source_rgba(*red, *green, *blue, *alpha);
                                 }
@@ -3103,6 +3226,16 @@ impl CustomPainter for TrackGridCustomPainter {
                                     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                     let _ = context.stroke();
 
+                                    context.move_to(x, y + 8.0);
+                                    if let RiffReferenceMode::Start = riff_ref.mode() {
+                                        let _ = context.show_text("s");
+                                        let _ = context.stroke();
+                                    }
+                                    else if let RiffReferenceMode::End = riff_ref.mode() {
+                                        let _ = context.show_text("e");
+                                        let _ = context.stroke();
+                                    }
+
                                     // draw notes
                                     for track_event in riff.events() {
                                         match track_event {
@@ -3110,25 +3243,41 @@ impl CustomPainter for TrackGridCustomPainter {
                                             TrackEvent::AfterTouch => (),
                                             TrackEvent::ProgramChange => (),
                                             TrackEvent::Note(note) => {
-                                                let note_x = (riff_ref.position() + note.position()) * adjusted_beat_width_in_pixels;
+                                                use_notes = match &riff_ref.mode() {
+                                                    RiffReferenceMode::Start => {
+                                                        if !use_notes && note.riff_start_note() { true }
+                                                        else if use_notes { true }
+                                                        else { false }
+                                                    }
+                                                    RiffReferenceMode::End => {
+                                                        if use_notes && note.riff_start_note() { false }
+                                                        else if !use_notes { false }
+                                                        else { true }
+                                                    }
+                                                    RiffReferenceMode::Normal => true,
+                                                };
 
-                                                // draw note
-                                                if self.show_note {
-                                                    let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
-                                                    // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
-                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                                    context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
-                                                    let _ = context.fill();
-                                                }
+                                                if use_notes {
+                                                    let note_x = (riff_ref.position() + note.position()) * adjusted_beat_width_in_pixels;
 
-                                                // draw velocity
-                                                if self.show_note_velocity {
-                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                                    let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
-                                                    // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
-                                                    context.move_to(note_x, velocity_y_start);
-                                                    context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
-                                                    let _ = context.stroke();
+                                                    // draw note
+                                                    if self.show_note {
+                                                        let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
+                                                        // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
+                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                        context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
+                                                        let _ = context.fill();
+                                                    }
+
+                                                    // draw velocity
+                                                    if self.show_note_velocity {
+                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                        let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                        // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                        context.move_to(note_x, velocity_y_start);
+                                                        context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                        let _ = context.stroke();
+                                                    }
                                                 }
                                             },
                                             TrackEvent::NoteOn(_) => (),
@@ -3341,6 +3490,11 @@ impl CustomPainter for RiffGridCustomPainter {
                                 context.set_source_rgba(red, green, blue, alpha);
 
                                 if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == linked_to_riff_uuid) {
+                                    let mut use_notes = match riff_ref.mode() {
+                                        RiffReferenceMode::Normal => true,
+                                        RiffReferenceMode::Start => false,
+                                        RiffReferenceMode::End => true,
+                                    };
                                     if let Some((red, green, blue, alpha)) = riff.colour() {
                                         context.set_source_rgba(*red, *green, *blue, *alpha);
                                     }
@@ -3417,6 +3571,16 @@ impl CustomPainter for RiffGridCustomPainter {
                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                         let _ = context.stroke();
 
+                                        context.move_to(x, y + 8.0);
+                                        if let RiffReferenceMode::Start = riff_ref.mode() {
+                                            let _ = context.show_text("s");
+                                            let _ = context.stroke();
+                                        }
+                                        else if let RiffReferenceMode::End = riff_ref.mode() {
+                                            let _ = context.show_text("e");
+                                            let _ = context.stroke();
+                                        }
+
                                         // draw notes
                                         for track_event in riff.events() {
                                             match track_event {
@@ -3424,25 +3588,41 @@ impl CustomPainter for RiffGridCustomPainter {
                                                 TrackEvent::AfterTouch => (),
                                                 TrackEvent::ProgramChange => (),
                                                 TrackEvent::Note(note) => {
-                                                    let note_x = (riff_ref.position() + note.position()) * adjusted_beat_width_in_pixels;
+                                                    use_notes = match &riff_ref.mode() {
+                                                        RiffReferenceMode::Start => {
+                                                            if !use_notes && note.riff_start_note() { true }
+                                                            else if use_notes { true }
+                                                            else { false }
+                                                        }
+                                                        RiffReferenceMode::End => {
+                                                            if use_notes && note.riff_start_note() { false }
+                                                            else if !use_notes { false }
+                                                            else { true }
+                                                        }
+                                                        RiffReferenceMode::Normal => true,
+                                                    };
 
-                                                    // draw note
-                                                    if self.show_note {
-                                                        let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
-                                                        // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
-                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                                        context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
-                                                        let _ = context.fill();
-                                                    }
+                                                    if use_notes {
+                                                        let note_x = (riff_ref.position() + note.position()) * adjusted_beat_width_in_pixels;
 
-                                                    // draw velocity
-                                                    if self.show_note_velocity {
-                                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                                        let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
-                                                        // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
-                                                        context.move_to(note_x, velocity_y_start);
-                                                        context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
-                                                        let _ = context.stroke();
+                                                        // draw note
+                                                        if self.show_note {
+                                                            let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
+                                                            // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
+                                                            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                            context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
+                                                            let _ = context.fill();
+                                                        }
+
+                                                        // draw velocity
+                                                        if self.show_note_velocity {
+                                                            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                            let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                            // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                            context.move_to(note_x, velocity_y_start);
+                                                            context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
+                                                            let _ = context.stroke();
+                                                        }
                                                     }
                                                 },
                                                 TrackEvent::NoteOn(_) => (),
@@ -3638,7 +3818,10 @@ impl CustomPainter for AutomationCustomPainter {
                         Some(track_uuid) => match state.selected_riff_uuid(track_uuid.clone()) {
                             Some(riff_uuid) => match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
                                 Some(track) => {
-                                    let (red, green, blue, _) = track.colour();
+                                    // let (red, green, blue, _) = track.colour();
+                                    let red = 0.0;
+                                    let green = 0.0;
+                                    let blue = 0.0;
                                     let name = track.name().to_string();
 
                                     // draw the track name
@@ -3704,7 +3887,10 @@ impl CustomPainter for AutomationCustomPainter {
                 else {
                     if let Some(track_uuid) = state.selected_track() {
                         if let Some(track) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
-                            let (red, green, blue, _) = track.colour();
+                            // let (red, green, blue, _) = track.colour();
+                            let red = 0.0;
+                            let green = 0.0;
+                            let blue = 0.0;
                             let name = track.name().to_string();
 
                             // draw the track name
@@ -3992,5 +4178,11 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
+    }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
     }
 }

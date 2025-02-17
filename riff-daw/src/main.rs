@@ -3233,211 +3233,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     gui.ui.automation_drawing_area.queue_draw();
                 },
                 TrackChangeType::AutomationTranslateSelected(_translation_entity_type, translate_direction, time_lower, _value_lower, time_higher, _value_higher) => {
-                    match state.lock() {
-                        Ok(state) => {
-                            let selected = state.selected_automation().to_vec();
-                            let tempo = {
-                                state.project().song().tempo()
-                            };
-
-                            let automation_view_mode = {
-                                match state.automation_view_mode() {
-                                    AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
-                                    AutomationViewMode::Controllers => AutomationViewMode::Controllers,
-                                    AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
-                                    AutomationViewMode::Instrument => AutomationViewMode::Instrument,
-                                    AutomationViewMode::Effect => AutomationViewMode::Effect,
-                                    AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
-                                }
-                            };
-                            let automation_type = state.automation_type();
-                            let mut state = state;
-                            let track_uuid = state.selected_track();
-                            let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
-                                state.selected_riff_uuid(track_uuid)
-                            }
-                            else {
-                                None
-                            };
-                            let song = state.get_project().song_mut();
-                            let tracks = song.tracks_mut();
-
-                            let mut snap_in_beats = 1.0;
-                            match gui.automation_grid() {
-                                Some(controller_grid) => match controller_grid.lock() {
-                                    Ok(grid) => snap_in_beats = grid.snap_position_in_beats(),
-                                    Err(_) => (),
-                                },
-                                None => (),
-                            }
-                            let snap_position_in_secs = snap_in_beats / tempo * 60.0;
-
-                            match track_uuid {
-                                Some(track_uuid) =>
-                                    {
-                                        match tracks.iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
-                                            Some(track_type) => {
-                                                let automation = track_type.automation_mut();
-                                                match automation_view_mode {
-                                                    AutomationViewMode::NoteVelocities => {
-                                                        let mut snap_in_beats = 1.0;
-                                                        match &gui.automation_grid {
-                                                            Some(automation_grid) => match automation_grid.lock() {
-                                                                Ok(grid) => snap_in_beats = grid.snap_position_in_beats(),
-                                                                Err(_) => (),
-                                                            },
-                                                            None => (),
-                                                        }
-
-                                                        match selected_riff_uuid {
-                                                            Some(riff_uuid) => {
-                                                                for riff in track_type.riffs_mut().iter_mut() {
-                                                                    if riff.uuid().to_string() == *riff_uuid {
-                                                                        for event in riff.events_mut().iter_mut() {
-                                                                            match event {
-                                                                                TrackEvent::Note(note) => if selected.contains(&note.id()) {
-                                                                                    let mut note_velocity = note.velocity();
-
-                                                                                    match translate_direction {
-                                                                                        TranslateDirection::Up => {
-                                                                                            note_velocity += 1;
-                                                                                            if note_velocity > 127 {
-                                                                                                note_velocity = 127;
-                                                                                            }
-                                                                                            note.set_velocity(note_velocity);
-                                                                                        }
-                                                                                        TranslateDirection::Down => {
-                                                                                            note_velocity -= 1;
-                                                                                            if note_velocity < 0 {
-                                                                                                note_velocity = 0;
-                                                                                            }
-                                                                                            note.set_velocity(note_velocity);
-                                                                                        }
-                                                                                        _ => {}
-                                                                                    }
-                                                                                },
-                                                                                _ => {},
-                                                                            }
-                                                                        }
-                                                                        break;
-                                                                    }
-                                                                }
-                                                            },
-                                                            None => debug!("Main - rx_ui processing loop - riff changing note velocity - problem getting selected riff index"),
-                                                        }
-                                                    }
-                                                    AutomationViewMode::Controllers => {
-                                                        if let Some(automation_type_value) = automation_type {
-                                                            automation.events_mut().iter_mut().for_each(|event| {
-                                                                match event {
-                                                                    TrackEvent::Controller(controller) => {
-                                                                        let position = controller.position();
-                                                                        if controller.controller() == automation_type_value && selected.contains(&controller.id()) {
-                                                                            match translate_direction {
-                                                                                TranslateDirection::Up => {
-                                                                                    if controller.value() < 127 {
-                                                                                        controller.set_value(controller.value() + 1);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Down => {
-                                                                                    if controller.value() > 0 {
-                                                                                        controller.set_value(controller.value() - 1);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Left => {
-                                                                                    if position > 0.0 && (position - snap_position_in_secs) >= 0.0 {
-                                                                                        controller.set_position(position - snap_position_in_secs);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Right => {
-                                                                                    controller.set_position(position + snap_position_in_secs);
-                                                                                },
-                                                                            }
-                                                                        }
-                                                                    },
-                                                                    _ => (),
-                                                                }
-                                                            })
-                                                        }
-                                                    }
-                                                    AutomationViewMode::PitchBend => {
-                                                        automation.events_mut().iter_mut().for_each(|event| {
-                                                            match event {
-                                                                TrackEvent::PitchBend(pitch_bend) => {
-                                                                    let position = pitch_bend.position();
-                                                                    if selected.contains(&pitch_bend.id()) {
-                                                                        match translate_direction {
-                                                                            TranslateDirection::Up => {
-                                                                                if pitch_bend.value() < 8192 {
-                                                                                    pitch_bend.set_value(pitch_bend.value() + 1);
-                                                                                }
-                                                                            },
-                                                                            TranslateDirection::Down => {
-                                                                                if pitch_bend.value() > -8192 {
-                                                                                    pitch_bend.set_value(pitch_bend.value() - 1);
-                                                                                }
-                                                                            },
-                                                                            TranslateDirection::Left => {
-                                                                                if position > 0.0 && (position - snap_position_in_secs) >= 0.0 {
-                                                                                    pitch_bend.set_position(position - snap_position_in_secs);
-                                                                                }
-                                                                            },
-                                                                            TranslateDirection::Right => {
-                                                                                pitch_bend.set_position(position + snap_position_in_secs);
-                                                                            },
-                                                                        }
-                                                                    }
-                                                                }
-                                                                _ => (),
-                                                            }
-                                                        })
-                                                    }
-                                                    AutomationViewMode::Instrument => {
-                                                        if let Some(automation_type_value) = automation_type {
-                                                            automation.events_mut().iter_mut().for_each(|event| {
-                                                                match event {
-                                                                    TrackEvent::AudioPluginParameter(plugin_param) => {
-                                                                        let position = plugin_param.position();
-                                                                        if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
-                                                                            match translate_direction {
-                                                                                TranslateDirection::Up => {
-                                                                                    if plugin_param.value() <= 0.99 {
-                                                                                        plugin_param.set_value(plugin_param.value() + 0.01);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Down => {
-                                                                                    if plugin_param.value() >= 0.01 {
-                                                                                        plugin_param.set_value(plugin_param.value() - 0.01);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Left => {
-                                                                                    if position > 0.0 && (position - snap_position_in_secs) >= 0.0 {
-                                                                                        plugin_param.set_position(position - snap_position_in_secs);
-                                                                                    }
-                                                                                },
-                                                                                TranslateDirection::Right => {
-                                                                                    plugin_param.set_position(position + snap_position_in_secs);
-                                                                                },
-                                                                            }
-                                                                        }
-                                                                    },
-                                                                    _ => (),
-                                                                }
-                                                            })
-                                                        }
-                                                    }
-                                                    AutomationViewMode::Effect => {}
-                                                    AutomationViewMode::NoteExpression => {}
-                                                }
-                                            },
-                                            None => ()
-                                        }
-                                    },
-                                None => debug!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
-                            };
+                    let mut snap_in_beats = 1.0;
+                    match gui.automation_grid() {
+                        Some(controller_grid) => match controller_grid.lock() {
+                            Ok(grid) => snap_in_beats = grid.snap_position_in_beats(),
+                            Err(_) => (),
                         },
-                        Err(_) => debug!("Main - rx_ui processing loop - automation add - could not get lock on state"),
-                    };
+                        None => (),
+                    }
+                    handle_automation_translate_selected(state, translate_direction, snap_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 },
@@ -3547,7 +3351,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     gui.ui.automation_drawing_area.queue_draw();
                 },
                 TrackChangeType::AutomationCut => {
-                    handle_automation_cut(&state);
+                    let edit_cursor_time_in_beats = if let Some(grid) = gui.automation_grid() {
+                        match grid.lock() {
+                            Ok(grid) => grid.edit_cursor_time_in_beats(),
+                            Err(_) => 0.0,
+                        }
+                    }
+                    else { 0.0 };
+                    handle_automation_cut(&state, edit_cursor_time_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 },
@@ -4170,6 +3981,186 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Err(_error) => debug!("Main - rx_ui processing loop - update track details - could not get lock on state"),
                         }
                     }
+                }
+                TrackChangeType::RiffSetStartNote(note_number, position) => {
+                    let mut selected_riff_uuid = None;
+                    let mut selected_riff_track_uuid = None;
+
+                    match state.lock() {
+                        Ok(state) => {
+                            selected_riff_track_uuid = state.selected_track();
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                    selected_riff_track_uuid = Some(track_uuid);
+                                },
+                                None => (),
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - set riff start note - could not get lock on state"),
+                    }
+
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut state = state;
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                                        if track.uuid().to_string() == track_uuid {
+                                            match selected_riff_uuid {
+                                                Some(riff_uuid) => {
+                                                    for riff in track.riffs_mut().iter_mut() {
+                                                        if riff.uuid().to_string() == *riff_uuid {
+                                                            // find the current start note
+                                                            let current_start_note_details = if let Some(current_start_note) = riff.events_mut().iter_mut().find(|event| match event {
+                                                                TrackEvent::Note(note) => note.note() == note_number && note.position() <= position && position <= (note.position() + note.length()) && note.riff_start_note(),
+                                                                _ => false,
+                                                            }) {
+                                                                if let TrackEvent::Note(note) = current_start_note {
+                                                                    Some((note.note(), note.position(), note.length()))
+                                                                }
+                                                                else {
+                                                                    None
+                                                                }
+                                                            }
+                                                            else {
+                                                                None
+                                                            };
+
+                                                            // reset the previous start note
+                                                            riff.events_mut().iter_mut().for_each(|event| {
+                                                                if let TrackEvent::Note(note) = event {
+                                                                    note.set_riff_start_note(false);
+                                                                }
+                                                            });
+                                                            let note = riff.events_mut().iter_mut().find(|event| match event {
+                                                                TrackEvent::Note(note) => note.note() == note_number && note.position() <= position && position <= (note.position() + note.length()),
+                                                                _ => false,
+                                                            });
+                                                            if let Some(event) = note {
+                                                                match event {
+                                                                    TrackEvent::Note(note) => {
+                                                                        debug!("Set riff start note: position={}, note={}, velocity={}, duration={}", note.position(), note.note(), note.velocity(), note.length());
+                                                                        if let Some((current_start_note_number, current_start_note_position, current_start_note_length)) = current_start_note_details {
+                                                                            if note.note() != current_start_note_number || note.position() != current_start_note_position || note.length() != current_start_note_length {
+                                                                                note.set_riff_start_note(true);
+                                                                            }
+                                                                        }
+                                                                        else {
+                                                                            note.set_riff_start_note(true);
+                                                                        }
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                None => debug!("problem getting selected riff index"),
+                                            }
+
+                                            break;
+                                        }
+                                    }
+                                },
+                                None => debug!("problem getting selected riff track number"),
+                            };
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - set riff start note - could not get lock on state"),
+                    }
+                }
+                TrackChangeType::RiffReferencePlayMode(track_number, position) => {
+                    // FIXME need to take into account the context - current view etc.
+                    match state.lock() {
+                        Ok(mut state) => {
+                            let mut found = None;
+                            match state.current_view().clone() {
+                                CurrentView::Track => {
+                                    if let Some(track) = state.get_project().song_mut().tracks_mut().get_mut(track_number as usize) {
+                                        for riff_ref in track.riff_refs().iter().filter(|riff_ref| riff_ref.position() <= position) {
+                                            if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                // position is inside the riff ref
+                                                if riff_ref.position() <= position && position <= (riff_ref.position() + riff.length()) {
+                                                    if position <= (riff_ref.position() + 1.0) {
+                                                        found = Some((riff_ref.uuid(), RiffReferenceMode::Start));
+                                                        break;
+                                                    }
+                                                    else if position >= (riff_ref.position() + riff.length() - 1.0) {
+                                                        found = Some((riff_ref.uuid(), RiffReferenceMode::End));
+                                                        break;
+                                                    }
+                                                    else {
+                                                        found = Some((riff_ref.uuid(), RiffReferenceMode::Normal));
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if let Some((riff_ref_uuid, mode)) = found {
+                                            if let Some(riff_ref) = track.riff_refs_mut().iter_mut().find(|riff_ref| riff_ref.uuid() == riff_ref_uuid) {
+                                                riff_ref.set_mode(mode);
+                                            }
+                                        }
+                                    }
+                                }
+                                CurrentView::RiffSet => {
+                                    debug!("*****************************No idea what to do with a riff set when setting a riff ref mode.");
+                                }
+                                CurrentView::RiffGrid => {
+                                    let track_details = if let Some(track) = state.project().song().tracks().get(track_number as usize) {
+                                        let mut riff_lengths = HashMap::new();
+                                        for riff in track.riffs().iter() {
+                                            riff_lengths.insert(riff.uuid().to_string(), riff.length());
+                                        }
+                                        Some((track.uuid().to_string(), riff_lengths))
+                                    }
+                                    else {
+                                        None
+                                    };
+                                    if let Some((track_uuid, riff_lengths)) = track_details {
+                                        if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid().clone() {
+                                            if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid.clone()) {
+                                                if let Some(track_riff_refs) = riff_grid.track_riff_references(track_uuid.clone()) {
+                                                    for riff_ref in track_riff_refs.iter().filter(|riff_ref| riff_ref.position() <= position) {
+                                                        if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
+                                                            // position is inside the riff ref
+                                                            if riff_ref.position() <= position && position <= (riff_ref.position() + riff_length) {
+                                                                if position <= (riff_ref.position() + 1.0) {
+                                                                    found = Some((riff_ref.uuid(), RiffReferenceMode::Start));
+                                                                    break;
+                                                                } else if position >= (riff_ref.position() + riff_length - 1.0) {
+                                                                    found = Some((riff_ref.uuid(), RiffReferenceMode::End));
+                                                                    break;
+                                                                } else {
+                                                                    found = Some((riff_ref.uuid(), RiffReferenceMode::Normal));
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if let Some((riff_ref_uuid, mode)) = found {
+                                                        if let Some(riff_refs) = riff_grid.track_riff_references_mut(track_uuid) {
+                                                            if let Some(riff_ref) = riff_refs.iter_mut().find(|riff_ref| riff_ref.uuid() == riff_ref_uuid) {
+                                                                riff_ref.set_mode(mode);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - set riff reference play mode - could not get lock on state"),
+                    }
+
                 }
             },
             DAWEvents::TrackEffectParameterChange(_, _) => debug!("Event: TrackEffectParameterChange"),
@@ -5166,7 +5157,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::RiffGridChange(riff_grid_change_type, track_uuid) => {
                 match riff_grid_change_type {
-                    RiffGridChangeType::RiffReferenceAdd(track_index, position) => {
+                    RiffGridChangeType::RiffReferenceAdd{ track_index, position } => {
                         match state.lock() {
                             Ok(mut state) => {
                                 let mut selected_riff_uuid = None;
@@ -5198,7 +5189,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         gui.ui.riff_grid_drawing_area.queue_draw();
                     }
-                    RiffGridChangeType::RiffReferenceDelete(track_index, position) => {
+                    RiffGridChangeType::RiffReferenceDelete{track_index, position} => {
                         match state.lock() {
                             Ok(mut state) => {
                                 let mut track_uuid = None;
@@ -5208,7 +5199,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(track) => {
                                         track_uuid = Some(track.uuid().to_string());
                                         track_riffs = track.riffs().iter().map(|riff| (riff.id(), riff.length())).collect_vec();
-
                                     }
                                     None => debug!("Main - rx_ui processing loop - riff grid riff reference deleted - no track at index."),
                                 }
@@ -5246,7 +5236,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         gui.ui.riff_grid_drawing_area.queue_draw();
                     }
-                    RiffGridChangeType::RiffReferenceCutSelected(x, y, x2, y2) => {
+                    RiffGridChangeType::RiffReferenceCutSelected{x1, y1, x2, y2} => {
                         match state.lock() {
                             Ok(mut state) => {
                                 let selected_track_uuid = if let Some(selected_track_uuid) = state.selected_track() {
@@ -5289,8 +5279,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         track_riff_references.retain(|riff_ref| {
                                             let mut retain = true;
                                             if let Some(riff_length) = riff_details.get(&riff_ref.linked_to()) {
-                                                debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff_length);
-                                                if riff_ref.position() >= x &&  (riff_ref.position() + riff_length) <= x2 {
+                                                debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x1, y1, x2, y2, riff_ref.position(), riff_length);
+                                                if riff_ref.position() >= x1 &&  (riff_ref.position() + riff_length) <= x2 {
                                                     debug!("Added a riff ref to the copy buffer.");
                                                     let mut value = riff_ref.clone();
                                                     value.set_position(value.position() - edit_cursor_position_in_secs);
@@ -5315,7 +5305,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff reference cut - could not get lock on state"),
                         }
                     }
-                    RiffGridChangeType::RiffReferenceCopySelected(x, y, x2, y2) => {
+                    RiffGridChangeType::RiffReferenceCopySelected{x1, y1, x2, y2} => {
                         match state.lock() {
                             Ok(mut state) => {
                                 let selected_track_uuid = if let Some(selected_track_uuid) = state.selected_track() {
@@ -5357,8 +5347,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     if let Some(track_riff_references) = riff_grid.track_riff_references_mut(selected_track_uuid.clone()) {
                                             for riff_ref in track_riff_references.iter_mut() {
                                                 if let Some(riff_length) = riff_details.get(&riff_ref.linked_to()) {
-                                                    debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x, y, x2, y2, riff_ref.position(), riff_length);
-                                                    if riff_ref.position() >= x &&  (riff_ref.position() + riff_length) <= x2 {
+                                                    debug!("x={}, y={}, x2={}, y2={}, riff ref position={}, riff len={}", x1, y1, x2, y2, riff_ref.position(), riff_length);
+                                                    if riff_ref.position() >= x1 &&  (riff_ref.position() + riff_length) <= x2 {
                                                         debug!("Added a riff ref to the copy buffer.");
                                                         let mut value = riff_ref.clone();
                                                         value.set_position(value.position() - edit_cursor_position_in_secs);
@@ -5423,7 +5413,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff reference paste - could not get lock on state"),
                         }
                     }
-                    RiffGridChangeType::RiffReferenceChange(orginal_riff_copy, changed_riff) => {
+                    RiffGridChangeType::RiffReferenceChange{ orginal_riff_copy, changed_riff } => {
                         debug!("Main - rx_ui processing loop - riff grid riff reference change.");
                         // just interested in position changes - the changed riff actually refers to riff reference by uuid
                         match state.lock() {
@@ -6057,6 +6047,78 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
         Err(_) => (),
     }
 }
+
+// FIXME work in progress trying to figure out how to appease the mighty borrow checker
+// fn get_current_context_automation_events(state: &mut DAWState) -> (String, Option<i32>, Option<String>, CurrentView, AutomationEditType, Option<&mut Vec<TrackEvent>>, Option<String>) {
+//     let track_uuid = state.selected_track().unwrap_or("".to_string());
+//     let automation_type = state.automation_type().clone();
+//     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+//         Some(selected_riff_uuid.clone())
+//     }
+//     else {
+//         None
+//     };
+//     let current_view = state.current_view().clone();
+//     let automation_edit_type = state.automation_edit_type().clone();
+//     let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+//         Some(selected_riff_arrangement_uuid.clone())
+//     }
+//     else {
+//         None
+//     };
+//     let plugin_uuid = if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+//         if let TrackType::InstrumentTrack(instrument_track) = track_type {
+//             instrument_track.instrument().uuid().to_string()
+//         }
+//         else { "".to_string() }
+//     }
+//     else { "".to_string() };
+//
+//     let (events, plugin_uuid) = if let CurrentView::RiffArrangement = current_view {
+//         // get the arrangement
+//         if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+//             if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+//                 if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+//                     (Some(riff_arr_automation.events_mut()), Some(plugin_uuid))
+//                 } else {
+//                     riff_arrangement.add_track_automation(track_uuid.clone());
+//                     (Some(riff_arrangement.automation_mut(&track_uuid).unwrap().events_mut()), Some(plugin_uuid))
+//                 }
+//             } else {
+//                 (None, Some(plugin_uuid))
+//             }
+//         } else {
+//             (None, Some(plugin_uuid))
+//         }
+//     } else if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+//         if let TrackType::InstrumentTrack(instrument_track) = track_type {
+//             match automation_edit_type {
+//                 AutomationEditType::Track => {
+//                     (Some(track_type.automation_mut().events_mut()), Some(plugin_uuid))
+//                 }
+//                 AutomationEditType::Riff => {
+//                     if let Some(selected_riff_uuid) = selected_riff_uuid.clone() {
+//                         if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+//                             (Some(riff.events_mut()), Some(plugin_uuid))
+//                         } else {
+//                             (None, None)
+//                         }
+//                     } else {
+//                         (None, None)
+//                     }
+//                 }
+//             }
+//         }
+//         else {
+//             (None, None)
+//         }
+//     }
+//     else {
+//         (None, None)
+//     };
+//
+//     (track_uuid, automation_type, selected_riff_uuid, current_view, automation_edit_type, events, plugin_uuid)
+// }
 
 fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
@@ -6818,15 +6880,15 @@ fn handle_automation_pitch_bend_delete(time: f64, state: &mut DAWState) {
     }
 }
 
-fn handle_automation_cut(state: &Arc<Mutex<DAWState>>) {
+fn handle_automation_cut(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beats: f64) {
     match state.lock() {
         Ok(mut state) => {
             match state.automation_view_mode() {
-                AutomationViewMode::Controllers => handle_automation_controller_cut(&mut state),
-                AutomationViewMode::PitchBend => handle_automation_pitch_bend_cut(&mut state),
-                AutomationViewMode::Instrument => handle_automation_instrument_cut(&mut state),
-                AutomationViewMode::Effect => handle_automation_effect_cut(&mut state),
-                AutomationViewMode::NoteExpression => handle_automation_note_expression_cut(&mut state),
+                AutomationViewMode::Controllers => handle_automation_controller_cut(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::PitchBend => handle_automation_pitch_bend_cut(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::Instrument => handle_automation_instrument_cut(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::Effect => handle_automation_effect_cut(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::NoteExpression => handle_automation_note_expression_cut(&mut state, edit_cursor_time_in_beats),
                 _ => (),
             }            
         }
@@ -6836,8 +6898,9 @@ fn handle_automation_cut(state: &Arc<Mutex<DAWState>>) {
     }
 }
 
-fn handle_automation_instrument_cut(state: &mut DAWState) {
+fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let mut events_to_copy = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -6894,6 +6957,16 @@ fn handle_automation_instrument_cut(state: &mut DAWState) {
 
             if let Some(automation_type_value) = automation_type {
                 if let Some(events) = events {
+                    for event in events.iter().filter(|event| selected.contains(&event.id())) {
+                        if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                            if plugin_param.index == automation_type_value {
+                                let mut track_event = event.clone();
+                                // adjust the position to be relative to the edit cursor
+                                track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+                                events_to_copy.push(track_event);
+                            }
+                        }
+                    }
                     events.retain(|event| {
                         match event {
                             TrackEvent::AudioPluginParameter(plugin_param) => {
@@ -6906,10 +6979,18 @@ fn handle_automation_instrument_cut(state: &mut DAWState) {
             }
         }
     }
+
+    if !events_to_copy.is_empty() {
+        state.automation_event_copy_buffer_mut().clear();
+        for event in events_to_copy.iter() {
+            state.automation_event_copy_buffer_mut().push(event.clone());
+        }
+    }
 }
 
-fn handle_automation_note_expression_cut(state: &mut DAWState) {
+fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let mut events_to_copy: Vec<TrackEvent> = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
@@ -6963,6 +7044,14 @@ fn handle_automation_note_expression_cut(state: &mut DAWState) {
             };
 
             if let Some(events) = events {
+                for event in events.iter().filter(|event| selected.contains(&event.id())) {
+                    if let TrackEvent::NoteExpression(note_expression) = event {
+                        let mut track_event = event.clone();
+                        // adjust the position to be relative to the edit cursor
+                        track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+                        events_to_copy.push(track_event);
+                    }
+                }
                 events.retain(|event| {
                     match event {
                         TrackEvent::NoteExpression(note_expression) => {
@@ -6974,10 +7063,18 @@ fn handle_automation_note_expression_cut(state: &mut DAWState) {
             }
         }
     }
+
+    if !events_to_copy.is_empty() {
+        state.automation_event_copy_buffer_mut().clear();
+        for event in events_to_copy.iter() {
+            state.automation_event_copy_buffer_mut().push(event.clone());
+        }
+    }
 }
 
-fn handle_automation_effect_cut(state: &mut DAWState) {
+fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let mut events_to_copy: Vec<TrackEvent> = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -7045,6 +7142,17 @@ fn handle_automation_effect_cut(state: &mut DAWState) {
     
                 if let Some(automation_type_value) = automation_type {
                     if let Some(events) = events {
+                        for event in events.iter().filter(|event| selected.contains(&event.id())) {
+                            if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                                if plugin_param.index == automation_type_value {
+                                    let mut track_event = event.clone();
+                                    // adjust the position to be relative to the edit cursor
+                                    track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+                                    events_to_copy.push(track_event);
+                                }
+                            }
+                        }
+
                         events.retain(|event| {
                             match event {
                                 TrackEvent::AudioPluginParameter(plugin_param) => {
@@ -7058,10 +7166,18 @@ fn handle_automation_effect_cut(state: &mut DAWState) {
             }
         }
     }
+
+    if !events_to_copy.is_empty() {
+        state.automation_event_copy_buffer_mut().clear();
+        for event in events_to_copy.iter() {
+            state.automation_event_copy_buffer_mut().push(event.clone());
+        }
+    }
 }
 
-fn handle_automation_controller_cut(state: &mut DAWState) {
+fn handle_automation_controller_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let mut events_to_copy: Vec<TrackEvent> = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -7116,6 +7232,16 @@ fn handle_automation_controller_cut(state: &mut DAWState) {
 
         if let Some(automation_type_value) = automation_type {
             if let Some(events) = events {
+                for event in events.iter().find(|event| selected.contains(&event.id())).iter() {
+                    if let TrackEvent::Controller(controller) = event {
+                        if controller.controller() == automation_type_value {
+                            let mut track_event = (*event).clone();
+                            // adjust the position to be relative to the edit cursor
+                            track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+                            events_to_copy.push(track_event);
+                        }
+                    }
+                }
                 events.retain(|event| {
                     match event {
                         TrackEvent::Controller(controller) => {
@@ -7128,9 +7254,577 @@ fn handle_automation_controller_cut(state: &mut DAWState) {
             }
         }
     }
+
+    if !events_to_copy.is_empty() {
+        state.automation_event_copy_buffer_mut().clear();
+        for event in events_to_copy.iter() {
+            state.automation_event_copy_buffer_mut().push(event.clone());
+        }
+    }
 }
 
-fn handle_automation_pitch_bend_cut(state: &mut DAWState) {
+fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
+    let selected = state.selected_automation().to_vec();
+    let mut events_to_copy: Vec<TrackEvent> = vec![];
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        Some(riff_arr_automation.events_mut())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    Some(track_type.automation_mut().events_mut())
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(events) = events {
+            for event in events.iter().filter(|event| selected.contains(&event.id())) {
+                if let TrackEvent::PitchBend(pitch_bend) = event {
+                    let mut track_event = event.clone();
+                    // adjust the position to be relative to the edit cursor
+                    track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+                    events_to_copy.push(track_event);
+                }
+            }
+            events.retain(|event| {
+                match event {
+                    TrackEvent::PitchBend(pitch_bend) => {
+                        !(selected.contains(&pitch_bend.id()))
+                    }
+                    _ => true,
+                }
+            });
+        }
+    }
+
+    if !events_to_copy.is_empty() {
+        state.automation_event_copy_buffer_mut().clear();
+        for event in events_to_copy.iter() {
+            state.automation_event_copy_buffer_mut().push(event.clone());
+        }
+    }
+}
+
+fn handle_automation_translate_selected(state: &Arc<Mutex<DAWState>>, translate_direction: TranslateDirection, snap_in_beats: f64) {
+    match state.lock() {
+        Ok(mut state) => {
+            match state.automation_view_mode() {
+                AutomationViewMode::Controllers => handle_automation_controller_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::PitchBend => handle_automation_pitch_bend_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::Instrument => handle_automation_instrument_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::Effect => handle_automation_effect_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::NoteExpression => handle_automation_note_expression_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::NoteVelocities => handle_automation_note_velocities_translate_selected(&mut state, translate_direction),
+            }
+        }
+        Err(_) => {
+
+        }
+    }
+}
+
+fn handle_automation_instrument_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(instrument_track) = track_type {
+            let plugin_uuid = instrument_track.instrument().uuid();
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            Some(riff_arr_automation.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        Some(track_type.automation_mut().events_mut())
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(automation_type_value) = automation_type {
+                if let Some(events) = events {
+                    events.iter_mut().for_each(|event| {
+                        match event {
+                            TrackEvent::AudioPluginParameter(plugin_param) => {
+                                let position = plugin_param.position();
+                                if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
+                                    match translate_direction {
+                                        TranslateDirection::Up => {
+                                            if plugin_param.value() <= 0.99 {
+                                                plugin_param.set_value(plugin_param.value() + 0.01);
+                                            }
+                                        }
+                                        TranslateDirection::Down => {
+                                            if plugin_param.value() >= 0.01 {
+                                                plugin_param.set_value(plugin_param.value() - 0.01);
+                                            }
+                                        }
+                                        TranslateDirection::Left => {
+                                            if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                                plugin_param.set_position(position - snap_in_beats);
+                                            }
+                                        }
+                                        TranslateDirection::Right => {
+                                            plugin_param.set_position(position + snap_in_beats);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => (),
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_note_expression_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(_instrument_track) = track_type {
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            Some(riff_arr_automation.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        Some(track_type.automation_mut().events_mut())
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(events) = events {
+                for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                    if let TrackEvent::NoteExpression(note_expression) = event {
+                        let position = note_expression.position();
+                        match translate_direction {
+                            TranslateDirection::Up => {
+                                if note_expression.value() <= 0.99 {
+                                    note_expression.set_value(note_expression.value() + 0.01);
+                                }
+                            }
+                            TranslateDirection::Down => {
+                                if note_expression.value() >= 0.01 {
+                                    note_expression.set_value(note_expression.value() - 0.01);
+                                }
+                            }
+                            TranslateDirection::Left => {
+                                if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                    note_expression.set_position(position - snap_in_beats);
+                                }
+                            }
+                            TranslateDirection::Right => {
+                                note_expression.set_position(position + snap_in_beats);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let selected_effect_uuid = if let Some(selected_effect_uuid) = state.selected_effect_plugin_uuid() {
+        Some(selected_effect_uuid.clone())
+    }
+    else {
+        None
+    };
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let appropriate_track_type = match track_type {
+            TrackType::InstrumentTrack(_) => true,
+            TrackType::AudioTrack(_) => true,
+            TrackType::MidiTrack(_) => false,
+        };
+        if appropriate_track_type {
+            if let Some(selected_effect_uuid) = selected_effect_uuid {
+                let events = if let CurrentView::RiffArrangement = current_view {
+                    let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                        Some(selected_arrangement_uuid.clone())
+                    } else {
+                        None
+                    };
+
+                    // get the arrangement
+                    if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                Some(riff_arr_automation.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    match automation_edit_type {
+                        AutomationEditType::Track => {
+                            Some(track_type.automation_mut().events_mut())
+                        }
+                        AutomationEditType::Riff => {
+                            if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                    Some(riff.events_mut())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                };
+
+                if let Some(automation_type_value) = automation_type {
+                    if let Some(events) = events {
+                        events.iter_mut().for_each(|event| {
+                            match event {
+                                TrackEvent::AudioPluginParameter(plugin_param) => {
+                                    let position = plugin_param.position();
+                                    if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
+                                        match translate_direction {
+                                            TranslateDirection::Up => {
+                                                if plugin_param.value() <= 0.99 {
+                                                    plugin_param.set_value(plugin_param.value() + 0.01);
+                                                }
+                                            }
+                                            TranslateDirection::Down => {
+                                                if plugin_param.value() >= 0.01 {
+                                                    plugin_param.set_value(plugin_param.value() - 0.01);
+                                                }
+                                            }
+                                            TranslateDirection::Left => {
+                                                if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                                    plugin_param.set_position(position - snap_in_beats);
+                                                }
+                                            }
+                                            TranslateDirection::Right => {
+                                                plugin_param.set_position(position + snap_in_beats);
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => (),
+                            }
+                        })
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_controller_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        Some(riff_arr_automation.events_mut())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    Some(track_type.automation_mut().events_mut())
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(automation_type_value) = automation_type {
+            if let Some(events) = events {
+                events.iter_mut().for_each(|event| {
+                    match event {
+                        TrackEvent::Controller(controller) => {
+                            let position = controller.position();
+                            if controller.controller() == automation_type_value && selected.contains(&controller.id()) {
+                                match translate_direction {
+                                    TranslateDirection::Up => {
+                                        if controller.value() < 127 {
+                                            controller.set_value(controller.value() + 1);
+                                        }
+                                    }
+                                    TranslateDirection::Down => {
+                                        if controller.value() > 0 {
+                                            controller.set_value(controller.value() - 1);
+                                        }
+                                    }
+                                    TranslateDirection::Left => {
+                                        if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                            controller.set_position(position - snap_in_beats);
+                                        }
+                                    }
+                                    TranslateDirection::Right => {
+                                        controller.set_position(position + snap_in_beats);
+                                    }
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn handle_automation_note_velocities_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        Some(riff_arr_automation.events_mut())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    Some(track_type.automation_mut().events_mut())
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(events) = events {
+            for event in events.iter_mut() {
+                match event {
+                    TrackEvent::Note(note) => if selected.contains(&note.id()) {
+                        let mut note_velocity = note.velocity();
+
+                        match translate_direction {
+                            TranslateDirection::Up => {
+                                note_velocity += 1;
+                                if note_velocity > 127 {
+                                    note_velocity = 127;
+                                }
+                                note.set_velocity(note_velocity);
+                            }
+                            TranslateDirection::Down => {
+                                note_velocity -= 1;
+                                if note_velocity < 0 {
+                                    note_velocity = 0;
+                                }
+                                note.set_velocity(note_velocity);
+                            }
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_pitch_bend_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -7184,17 +7878,40 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState) {
         };
 
         if let Some(events) = events {
-            events.retain(|event| {
+            events.iter_mut().for_each(|event| {
                 match event {
                     TrackEvent::PitchBend(pitch_bend) => {
-                        !(selected.contains(&pitch_bend.id()))
+                        let position = pitch_bend.position();
+                        if selected.contains(&pitch_bend.id()) {
+                            match translate_direction {
+                                TranslateDirection::Up => {
+                                    if pitch_bend.value() < 8192 {
+                                        pitch_bend.set_value(pitch_bend.value() + 1);
+                                    }
+                                }
+                                TranslateDirection::Down => {
+                                    if pitch_bend.value() > -8192 {
+                                        pitch_bend.set_value(pitch_bend.value() - 1);
+                                    }
+                                }
+                                TranslateDirection::Left => {
+                                    if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                        pitch_bend.set_position(position - snap_in_beats);
+                                    }
+                                }
+                                TranslateDirection::Right => {
+                                    pitch_bend.set_position(position + snap_in_beats);
+                                }
+                            }
+                        }
                     }
-                    _ => true,
+                    _ => (),
                 }
             });
         }
     }
 }
+
 
 fn handle_automation_copy(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beats: f64) {
     match state.lock() {
@@ -7699,6 +8416,9 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
                         if let TrackEvent::AudioPluginParameter(plugin_param) = event {
                             if plugin_param.index == automation_type_value {
                                 let mut track_event = event.clone();
+
+                                track_event.set_id(Uuid::new_v4().to_string());
+
                                 // adjust the position to be relative to the edit cursor
                                 track_event.set_position(edit_cursor_time_in_beats + track_event.position());
                                 events.push(track_event);
@@ -7769,6 +8489,9 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
                 for event in automation_event_copy_buffer {
                     if let TrackEvent::NoteExpression(note_expression) = event {
                         let mut track_event = event.clone();
+
+                        track_event.set_id(Uuid::new_v4().to_string());
+
                         // adjust the position to be relative to the edit cursor
                         track_event.set_position(edit_cursor_time_in_beats + track_event.position());
                         events.push(track_event);
@@ -7852,6 +8575,9 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                             if let TrackEvent::AudioPluginParameter(plugin_param) = event {
                                 if plugin_param.index == automation_type_value {
                                     let mut track_event = event.clone();
+
+                                    track_event.set_id(Uuid::new_v4().to_string());
+
                                     // adjust the position to be relative to the edit cursor
                                     track_event.set_position(edit_cursor_time_in_beats + track_event.position());
                                     events.push(track_event);
@@ -7925,6 +8651,9 @@ fn handle_automation_controller_paste(state: &mut DAWState, edit_cursor_time_in_
                     if let TrackEvent::Controller(controller) = event {
                         if controller.controller() == automation_type_value {
                             let mut track_event = event.clone();
+
+                            track_event.set_id(Uuid::new_v4().to_string());
+
                             // adjust the position to be relative to the edit cursor
                             track_event.set_position(edit_cursor_time_in_beats + track_event.position());
                             events.push(track_event);
@@ -7993,6 +8722,9 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
             for event in automation_event_copy_buffer {
                 if let TrackEvent::PitchBend(pitch_bend) = event {
                     let mut track_event = event.clone();
+
+                    track_event.set_id(Uuid::new_v4().to_string());
+
                     // adjust the position to be relative to the edit cursor
                     track_event.set_position(edit_cursor_time_in_beats + track_event.position());
                     events.push(track_event);

@@ -426,6 +426,9 @@ pub enum DragCycle {
     MousePressed,
     Dragging,
     MouseReleased,
+    CtrlMousePressed,
+    CtrlDragging,
+    CtrlMouseReleased,
 }
 
 pub struct BeatGrid {
@@ -934,8 +937,14 @@ impl MouseHandler for BeatGrid {
 
                     },
                     OperationModeType::Change => {
-                        debug!("Mouse motion: changed to EditDragCycle::Dragging");
-                        self.edit_drag_cycle = DragCycle::Dragging;
+                        if control_key {
+                            debug!("Mouse motion: changed to EditDragCycle::CtrlDragging");
+                            self.edit_drag_cycle = DragCycle::CtrlDragging;
+                        }
+                        else {
+                            debug!("Mouse motion: changed to EditDragCycle::Dragging");
+                            self.edit_drag_cycle = DragCycle::Dragging;
+                        }
                         drawing_area.queue_draw();
                     },
                     _ => (),
@@ -964,8 +973,14 @@ impl MouseHandler for BeatGrid {
                         self.select_drag_cycle = DragCycle::MousePressed;
                     }
                     OperationModeType::Change => {
-                        debug!("Mouse pressed: changed to EditDragCycle::MousePressed");
-                        self.edit_drag_cycle = DragCycle::MousePressed;
+                        if control_key {
+                            debug!("Mouse pressed: changed to EditDragCycle::CtrlMousePressed");
+                            self.edit_drag_cycle = DragCycle::CtrlMousePressed;
+                        }
+                        else {
+                            debug!("Mouse pressed: changed to EditDragCycle::MousePressed");
+                            self.edit_drag_cycle = DragCycle::MousePressed;
+                        }
                         self.mouse_pointer_previous_position = (x, y);
                         drawing_area.queue_draw();
                     }
@@ -1049,8 +1064,14 @@ impl MouseHandler for BeatGrid {
                         }
                     },
                     OperationModeType::Change => {
-                        self.edit_drag_cycle = DragCycle::MouseReleased;
-                        debug!("Mouse release: changed to EditDragCycle::MouseReleased");
+                        if (control_key) {
+                            self.edit_drag_cycle = DragCycle::CtrlMouseReleased;
+                            debug!("Mouse release: changed to EditDragCycle::CtrlMouseReleased");
+                        }
+                        else {
+                            self.edit_drag_cycle = DragCycle::MouseReleased;
+                            debug!("Mouse release: changed to EditDragCycle::MouseReleased");
+                        }
                         drawing_area.queue_draw();
                     },
                     OperationModeType::PointMode => {
@@ -2255,6 +2276,21 @@ impl CustomPainter for PianoRollCustomPainter {
                                                 (red, green, blue, 1.0)
                                             };
 
+                                            // find all the selected notes
+                                            let selected_riff_events = state.selected_riff_events().clone();
+                                            let mut selected_notes = vec![];
+                                            for event in riff.events().iter().filter(|event| {
+                                                if let TrackEvent::Note(note) = event {
+                                                    selected_riff_events.contains(&note.id())
+                                                } else {
+                                                    false
+                                                }
+                                            }) {
+                                                if let TrackEvent::Note(note) = event {
+                                                    selected_notes.push(note.clone());
+                                                }
+                                            }
+
                                             for track_event in riff.events() {
                                                 let mut event_colour = unselected_event_colour.clone();
 
@@ -2297,6 +2333,8 @@ impl CustomPainter for PianoRollCustomPainter {
                                                                 note,
                                                                 true,
                                                                 track_index as f64,
+                                                                is_selected,
+                                                                selected_notes.clone()
                                                             );
 
                                                             context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
@@ -2358,6 +2396,9 @@ impl CustomPainter for PianoRollCustomPainter {
 
 pub struct EditItemHandler<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone, U: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone> {
     pub original_item: Option<T>,
+    pub original_item_is_selected: bool,
+    pub original_selected_items: Vec<T>,
+    pub selected_item_ids: Vec<String>,
     pub dragged_item: Option<T>,
     pub referenced_item: Option<U>,
     pub event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>,
@@ -2367,6 +2408,9 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
     pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self {
         Self { 
             original_item: None,
+            original_item_is_selected: false,
+            original_selected_items: vec![],
+            selected_item_ids: vec![],
             dragged_item: None,
             referenced_item: None,
             event_sender,
@@ -2398,6 +2442,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
         referencing_item: &U,
         allow_vertical_drag: bool,
         track_index: f64,
+        item_is_selected: bool,
+        selected_items: Vec<T>,
     ) {
         let mut edit_mode = EditMode::Inactive;
 
@@ -2418,6 +2464,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                 if let DragCycle::NotStarted = edit_drag_cycle {
                     self.original_item = None;
+                    self.original_selected_items.clear();
+                    self.selected_item_ids.clear();
                     self.dragged_item = None;
                 }
 
@@ -2517,6 +2565,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                 if use_this_item {
                                     debug!("handle_item_edit EditDragCycle::MousePressed - set original and dragged items.");
                                     self.original_item = Some(item.clone());
+                                    self.original_item_is_selected = item_is_selected;
+                                    self.original_selected_items = selected_items;
                                     if item.id() != referencing_item.id() {
                                         let mut dragged_item = item.clone();
 
@@ -2535,17 +2585,32 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                 if found_item_being_changed {
                                     match edit_mode {
                                         EditMode::ChangeStart => {
-                                            if let Some(_) = self.dragged_item.as_mut() {
+                                            if let Some(dragged_item) = self.dragged_item.as_mut() {
                                                 // calculate the new item width
                                                 let new_width = width - delta_x;
 
                                                 // draw the dragged item
                                                 context.rectangle(x, y_original, new_width, adjusted_entity_height_in_pixels);
                                                 let _ = context.fill();
+
+                                                // draw the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = new_width - dragged_item.length() * adjusted_beat_width_in_pixels;
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let x = item.position() * adjusted_beat_width_in_pixels - delta_x;
+                                                            let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                            let y = canvas_height - y_pos_inverted;
+                                                            let new_width = item.length() * adjusted_beat_width_in_pixels + delta_x;
+                                                            context.rectangle(x, y, new_width, adjusted_entity_height_in_pixels);
+                                                            let _ = context.fill();
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         EditMode::Move => {
-                                            if let Some(_) = self.dragged_item.as_mut() {
+                                            if let Some(dragged_item) = self.dragged_item.as_mut() {
                                                 // draw the dragged item
                                                 if allow_vertical_drag {
                                                     context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
@@ -2554,16 +2619,63 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     context.rectangle(x, y_original, width, adjusted_entity_height_in_pixels);
                                                 }
                                                 let _ = context.fill();
+
+                                                // draw the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
+                                                    let delta_y = y - (canvas_height - dragged_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                            let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
+                                                            let y = if invert_vertically {
+                                                                canvas_height - y_pos_inverted
+                                                            }
+                                                            else {
+                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            };
+                                                            let width = item.length() * adjusted_beat_width_in_pixels;
+
+                                                            if allow_vertical_drag {
+                                                                context.rectangle(x + delta_x, y + delta_y, width, adjusted_entity_height_in_pixels);
+                                                            }
+                                                            else {
+                                                                context.rectangle(x + delta_x, y, width, adjusted_entity_height_in_pixels);
+                                                            }
+                                                            let _ = context.fill();
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         EditMode::ChangeEnd => {
-                                            if let Some(_) = self.dragged_item.as_mut() {
+                                            if let Some(dragged_item) = self.dragged_item.as_mut() {
                                                 // calculate the new item width
                                                 let new_width = width + delta_x;
 
                                                 // draw the dragged item
                                                 context.rectangle(x_original, y_original, new_width, adjusted_entity_height_in_pixels);
                                                 let _ = context.fill();
+
+                                                // draw the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = new_width - dragged_item.length() * adjusted_beat_width_in_pixels;
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let x = item.position() * adjusted_beat_width_in_pixels;
+                                                            let y = if invert_vertically {
+                                                                let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                                canvas_height - y_pos_inverted
+                                                            }
+                                                            else {
+                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            };
+                                                            let new_width = item.length() * adjusted_beat_width_in_pixels + delta_x;
+                                                            context.rectangle(x, y, new_width, adjusted_entity_height_in_pixels);
+                                                            let _ = context.fill();
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         _ => {}
@@ -2590,6 +2702,26 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_length(duration);
 
                                                     (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+
+                                                    // handle the other selected items
+                                                    if self.original_item_is_selected {
+                                                        let delta_x = new_width - original_item.length() * adjusted_beat_width_in_pixels;
+                                                        for item in self.original_selected_items.iter() {
+                                                            if item.id() != dragged_item.id() {
+                                                                let x = item.position() * adjusted_beat_width_in_pixels - delta_x;
+                                                                let position_in_beats = x /adjusted_beat_width_in_pixels;
+
+                                                                let new_width = item.length() * adjusted_beat_width_in_pixels + delta_x;
+                                                                let duration = new_width / adjusted_beat_width_in_pixels;
+
+                                                                let mut changed_item = item.clone();
+                                                                changed_item.set_position(position_in_beats);
+                                                                changed_item.set_length(duration);
+
+                                                                (self.event_sender)(item.clone(), changed_item, track_uuid.clone(), tx_from_ui.clone());
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 EditMode::Move => {
                                                     // calculate and set the position
@@ -2611,6 +2743,45 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     }
 
                                                     (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+
+                                                    // handle the other selected items
+                                                    if self.original_item_is_selected {
+                                                        let delta_x = x - original_item.position() * adjusted_beat_width_in_pixels;
+                                                        let delta_y = y - (canvas_height - original_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
+                                                        for item in self.original_selected_items.iter() {
+                                                            if item.id() != dragged_item.id() {
+                                                                let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                                let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
+                                                                let y = if invert_vertically {
+                                                                    canvas_height - y_pos_inverted
+                                                                }
+                                                                else {
+                                                                    item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                                };
+
+                                                                // calculate and set the position
+                                                                let position_in_beats = x /adjusted_beat_width_in_pixels;
+                                                                let mut changed_item = item.clone();
+                                                                changed_item.set_position(position_in_beats);
+
+                                                                // calculate and set the vertical index
+                                                                if allow_vertical_drag {
+                                                                    let vertical_index = if invert_vertically {
+                                                                        let y_pos_uninverted = canvas_height - y;
+                                                                        ((y_pos_uninverted - adjusted_entity_height_in_pixels - delta_y) / adjusted_entity_height_in_pixels) as i32
+                                                                    }
+                                                                    else {
+                                                                        ((y - delta_y) / adjusted_entity_height_in_pixels) as i32
+                                                                    };
+
+                                                                    debug!("Setting selected item vertical index to: {}", vertical_index);
+                                                                    changed_item.set_vertical_index(vertical_index + 1);
+                                                                }
+
+                                                                (self.event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 EditMode::ChangeEnd => {
                                                     // calculate and set the width
@@ -2620,6 +2791,21 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_length(duration);
 
                                                     (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+
+                                                    // handle the other selected items
+                                                    if self.original_item_is_selected {
+                                                        let delta_x = new_width - original_item.length() * adjusted_beat_width_in_pixels;
+                                                        for item in self.original_selected_items.iter() {
+                                                            if item.id() != dragged_item.id() {
+                                                                let new_width = item.length() * adjusted_beat_width_in_pixels + delta_x;
+                                                                let mut changed_item = item.clone();
+
+                                                                changed_item.set_length(new_width / adjusted_beat_width_in_pixels);
+
+                                                                (self.event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2627,6 +2813,147 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                     debug!("handle_item_edit EditDragCycle::MouseReleased - unset original and dragged items.");
                                     self.original_item = None;
+                                    self.original_selected_items.clear();
+                                    self.selected_item_ids.clear();
+                                    self.dragged_item = None;
+                                }
+                            }
+                            DragCycle::CtrlMousePressed => {
+                                debug!("handle_item_edit EditDragCycle::CtrlMousePressed");
+                                if use_this_item {
+                                    debug!("handle_item_edit EditDragCycle::CtrlMousePressed - set original and dragged items.");
+                                    self.original_item = Some(item.clone());
+                                    self.original_item_is_selected = item_is_selected;
+                                    self.original_selected_items = selected_items;
+                                    if item.id() != referencing_item.id() {
+                                        let mut dragged_item = item.clone();
+
+                                        dragged_item.set_id(referencing_item.id());
+                                        dragged_item.set_position(referencing_item.position());
+                                        self.dragged_item = Some(dragged_item);
+                                    }
+                                    else {
+                                        self.dragged_item = Some(item.clone());
+                                    }
+                                }
+                            }
+                            DragCycle::CtrlDragging => {
+                                debug!("handle_item_edit EditDragCycle::CtrlDragging");
+
+                                if found_item_being_changed {
+                                    if let EditMode::Move = edit_mode {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            // draw the dragged item
+                                            if allow_vertical_drag {
+                                                context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
+                                            }
+                                            else {
+                                                context.rectangle(x, y_original, width, adjusted_entity_height_in_pixels);
+                                            }
+                                            let _ = context.fill();
+
+                                            // draw the other selected items
+                                            if self.original_item_is_selected {
+                                                let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
+                                                let delta_y = y - (canvas_height - dragged_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
+                                                for item in self.original_selected_items.iter() {
+                                                    if item.id() != dragged_item.id() {
+                                                        let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                        let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
+                                                        let y = if invert_vertically {
+                                                            canvas_height - y_pos_inverted
+                                                        }
+                                                        else {
+                                                            item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                        };
+                                                        let width = item.length() * adjusted_beat_width_in_pixels;
+
+                                                        if allow_vertical_drag {
+                                                            context.rectangle(x + delta_x, y + delta_y, width, adjusted_entity_height_in_pixels);
+                                                        }
+                                                        else {
+                                                            context.rectangle(x + delta_x, y, width, adjusted_entity_height_in_pixels);
+                                                        }
+                                                        let _ = context.fill();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            DragCycle::CtrlMouseReleased => {
+                                debug!("handle_item_edit EditDragCycle::CtrlMouseReleased");
+
+                                if found_item_being_changed {
+                                    if let Some(original_item) = self.original_item.as_ref() {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            if let EditMode::Move = edit_mode {
+                                                // calculate and set the position
+                                                let position_in_beats = x /adjusted_beat_width_in_pixels;
+                                                dragged_item.set_position(position_in_beats);
+
+                                                // calculate and set the vertical index
+                                                if allow_vertical_drag {
+                                                    let vertical_index = if invert_vertically {
+                                                        let y_pos_inverted = canvas_height - y;
+                                                        ((y_pos_inverted - adjusted_entity_height_in_pixels) / adjusted_entity_height_in_pixels) as i32
+                                                    }
+                                                    else {
+                                                        y as i32
+                                                    };
+
+                                                    debug!("Setting dragged item vertical index to: {}", vertical_index);
+                                                    dragged_item.set_vertical_index(vertical_index + 1);
+                                                }
+
+                                                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(dragged_item.vertical_index(), position_in_beats, dragged_item.length()), Some(track_uuid.clone())));
+
+                                                // handle the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = x - original_item.position() * adjusted_beat_width_in_pixels;
+                                                    let delta_y = y - (canvas_height - original_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                            let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
+                                                            let y = if invert_vertically {
+                                                                canvas_height - y_pos_inverted
+                                                            }
+                                                            else {
+                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            };
+
+                                                            // calculate and set the position
+                                                            let position_in_beats = x /adjusted_beat_width_in_pixels;
+                                                            let mut copied_item = item.clone();
+
+                                                            // calculate and set the vertical index
+                                                            if allow_vertical_drag {
+                                                                let vertical_index = if invert_vertically {
+                                                                    let y_pos_uninverted = canvas_height - y;
+                                                                    ((y_pos_uninverted - adjusted_entity_height_in_pixels - delta_y) / adjusted_entity_height_in_pixels) as i32
+                                                                }
+                                                                else {
+                                                                    ((y - delta_y) / adjusted_entity_height_in_pixels) as i32
+                                                                };
+
+                                                                debug!("Setting selected item vertical index to: {}", vertical_index);
+                                                                copied_item.set_vertical_index(vertical_index + 1);
+                                                            }
+
+                                                            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(copied_item.vertical_index(), position_in_beats, item.length()), Some(track_uuid.clone())));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    debug!("handle_item_edit EditDragCycle::CtrlMouseReleased - unset original and dragged items.");
+                                    self.original_item = None;
+                                    self.original_selected_items.clear();
+                                    self.selected_item_ids.clear();
                                     self.dragged_item = None;
                                 }
                             }
@@ -3195,6 +3522,8 @@ impl CustomPainter for TrackGridCustomPainter {
                                         riff_ref,
                                         false,
                                         track_number,
+                                        false,
+                                        vec![]
                                     );
 
                                     context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);
@@ -3542,6 +3871,8 @@ impl CustomPainter for RiffGridCustomPainter {
                                             riff_ref,
                                             false,
                                             track_number,
+                                            false,
+                                            vec![]
                                         );
 
                                         context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);

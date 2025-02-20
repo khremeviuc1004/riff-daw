@@ -141,9 +141,11 @@ pub enum AutomationChangeData {
 #[derive(Clone)]
 pub enum RiffGridChangeType {
     RiffReferenceAdd{ track_index: i32, position: f64 },
+    RiffReferenceDragCopy { position: f64, original_riff_ref_uuid: String },
     RiffReferenceDelete{ track_index: i32, position: f64 },
-    RiffReferenceCutSelected{ x1: f64, y1: i32, x2: f64, y2: i32 },
-    RiffReferenceCopySelected{ x1: f64, y1: i32, x2: f64, y2: i32 },
+    RiffReferencesSelected(f64, i32, f64, i32, bool),
+    RiffReferenceCutSelected,
+    RiffReferenceCopySelected,
     RiffReferencePaste,
     RiffReferenceChange{ orginal_riff_copy: Riff, changed_riff: Riff },
 }
@@ -192,50 +194,32 @@ pub enum TrackChangeType {
     RiffSelect(String),             // riff uuid
 
     RiffReferenceAdd(i32, f64),                    // track index, position
+    RiffReferenceDragCopy(f64, String),                    // position, original riff reference uuid
     RiffReferenceDelete(i32, f64),                 // track index, position
-    RiffReferenceCutSelected(f64, i32, f64, i32),  // window - x1, y1, x2, y2
-    RiffReferenceCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
+    RiffReferencesSelected(f64, i32, f64, i32, bool),
+    RiffReferenceCutSelected,
+    RiffReferenceCopySelected,
     RiffReferencePaste,
 
     RiffAddNote(i32, f64, f64),    // note_number, position, duration
     RiffDeleteNote(i32, f64),      // note_number, position
     RiffAddSample(String, f64),    // sample_reference_uuid, position
     RiffDeleteSample(String, f64), // sample_reference_uuid, position
-    RiffTranslateSelected(
-        TranslationEntityType,
-        TranslateDirection,
-        f64,
-        i32,
-        f64,
-        i32,
-    ), // window - x1, y1, x2, y2
-    RiffEventChange(
-        TrackEvent,
-        TrackEvent,
-    ), // original event copy, changed event
-    RiffReferenceChange(
-        Riff,
-        Riff,
-    ), // original riff copy, changed riff
-    RiffQuantiseSelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
-    RiffCutSelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
-    RiffCopySelected(f64, i32, f64, i32), // window - x1, y1, x2, y2
+    RiffTranslateSelected(TranslationEntityType, TranslateDirection ),
+    RiffEventChange(TrackEvent, TrackEvent ), // original event copy, changed event
+    RiffReferenceChange(Riff, Riff ), // original riff copy, changed riff
+    RiffQuantiseSelected,
+    RiffCutSelected,
+    RiffCopySelected,
     RiffPasteSelected,
-    RiffChangeLengthOfSelected(bool, f64, i32, f64, i32), // true to lengthen, false to shorten, window - x1, y1, x2, y2
+    RiffChangeLengthOfSelected(bool), // true to lengthen
     RiffEventsSelected(f64, i32, f64, i32, bool),
     RiffSetStartNote(i32, f64),
     RiffReferencePlayMode(i32, f64),
 
     AutomationAdd(f64, i32),
     AutomationDelete(f64),
-    AutomationTranslateSelected(
-        TranslationEntityType,
-        TranslateDirection,
-        f64,
-        i32,
-        f64,
-        i32,
-    ), // window - x1, y1, x2, y2
+    AutomationTranslateSelected(TranslationEntityType, TranslateDirection),
     AutomationQuantiseSelected,
     AutomationCut,
     AutomationCopy,

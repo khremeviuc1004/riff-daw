@@ -134,16 +134,16 @@ pub trait BeatGridMouseCoordHelper {
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool);
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, entity_uuid: String);
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
-    fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
+    fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
     fn set_start_note(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
     fn set_riff_reference_play_mode(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
 
@@ -164,44 +164,44 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDeleteNote(y_index, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected, None));
     }
 
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected, None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
-
+    fn handle_increase_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(true), None));
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
-
+    fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(false), None));
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
@@ -232,43 +232,43 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDeleteSample(entity_uuid, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCutSelected, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffCopySelected, None));
     }
 
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffPasteSelected, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Up), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Down), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Left), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right, x, y2 as i32, x2, y as i32), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffTranslateSelected(TranslationEntityType::Note, TranslateDirection::Right), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected(x, y2 as i32, x2, y as i32), None));
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffQuantiseSelected, None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
@@ -298,46 +298,46 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceDelete(y_index, time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCutSelected(x, y2, x2, y), None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCutSelected, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCopySelected(x, y2, x2, y), None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceCopySelected, None));
     }
 
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePaste, None));
     }
 
-    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelected(x, y2, x2, y, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -363,45 +363,46 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDelete{ track_index: y_index, position: time }, None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCutSelected{x1, y2, x2, y1}, None));
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCutSelected, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCopySelected{x1, y2, x2, y1}, None));
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceCopySelected, None));
     }
 
     fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencePaste, None));
     }
 
-    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelected(x, y2, x2, y, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -1523,12 +1524,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.cut_selected(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.cut_selected(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1542,12 +1538,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.copy_selected(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.copy_selected(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1575,12 +1566,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.handle_translate_up(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.handle_translate_up(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1594,12 +1580,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.handle_translate_down(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.handle_translate_down(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1613,12 +1594,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.handle_translate_left(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.handle_translate_left(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1632,12 +1608,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.handle_translate_right(self.tx_from_ui.clone(), x, y as i32, x2, y2 as i32);
+                        mouse_coord_helper.handle_translate_right(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1651,12 +1622,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        mouse_coord_helper.handle_quantise(self.tx_from_ui.clone(), x, y2 as i32, x2, y as i32);
+                        mouse_coord_helper.handle_quantise(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1670,12 +1636,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let _ = self.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(true, x, y2 as i32, x2, y as i32), None));
+                        mouse_coord_helper.handle_increase_entity_length(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -1689,12 +1650,7 @@ impl Grid for BeatGrid {
             OperationModeType::PointMode => {
                 match &self.mouse_coord_helper {
                     Some(mouse_coord_helper) => {
-                        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
-                        let x = mouse_coord_helper.get_time(top_left_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y = mouse_coord_helper.get_entity_vertical_value(top_left_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let x2 = mouse_coord_helper.get_time(bottom_right_x, self.beat_width_in_pixels, self.zoom_horizontal);
-                        let y2 = mouse_coord_helper.get_entity_vertical_value(bottom_right_y, self.entity_height_in_pixels, self.zoom_vertical);
-                        let _ = self.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(false, x, y2 as i32, x2, y as i32), None));
+                        mouse_coord_helper.handle_decrease_entity_length(self.tx_from_ui.clone());
                     },
                     None => (),
                 }
@@ -2401,11 +2357,12 @@ pub struct EditItemHandler<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWI
     pub selected_item_ids: Vec<String>,
     pub dragged_item: Option<T>,
     pub referenced_item: Option<U>,
-    pub event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub changed_event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub copied_event_sender: Box<dyn Fn(T, String, crossbeam_channel::Sender<DAWEvents>)>,
 }
 
 impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone, U: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone> EditItemHandler<T, U> {
-    pub fn new(event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self {
+    pub fn new(changed_event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>, copied_event_sender: Box<dyn Fn(T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self {
         Self { 
             original_item: None,
             original_item_is_selected: false,
@@ -2413,7 +2370,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
             selected_item_ids: vec![],
             dragged_item: None,
             referenced_item: None,
-            event_sender,
+            changed_event_sender,
+            copied_event_sender,
         }
     }    
 }
@@ -2627,20 +2585,25 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     for item in self.original_selected_items.iter() {
                                                         if item.id() != dragged_item.id() {
                                                             let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
-                                                            let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
-                                                            let y = if invert_vertically {
-                                                                canvas_height - y_pos_inverted
+                                                            let mut y = if allow_vertical_drag {
+                                                                if invert_vertically {
+                                                                    canvas_height - item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                                }
+                                                                else {
+                                                                    item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                                }
                                                             }
                                                             else {
-                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                                // track y is not inverted
+                                                                track_index * adjusted_entity_height_in_pixels
                                                             };
                                                             let width = item.length() * adjusted_beat_width_in_pixels;
 
                                                             if allow_vertical_drag {
-                                                                context.rectangle(x + delta_x, y + delta_y, width, adjusted_entity_height_in_pixels);
+                                                                context.rectangle(x, y + delta_y, width, adjusted_entity_height_in_pixels);
                                                             }
                                                             else {
-                                                                context.rectangle(x + delta_x, y, width, adjusted_entity_height_in_pixels);
+                                                                context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
                                                             }
                                                             let _ = context.fill();
                                                         }
@@ -2701,7 +2664,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_position(position_in_beats);
                                                     dragged_item.set_length(duration);
 
-                                                    (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
@@ -2718,13 +2681,14 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                 changed_item.set_position(position_in_beats);
                                                                 changed_item.set_length(duration);
 
-                                                                (self.event_sender)(item.clone(), changed_item, track_uuid.clone(), tx_from_ui.clone());
+                                                                (self.changed_event_sender)(item.clone(), changed_item, track_uuid.clone(), tx_from_ui.clone());
                                                             }
                                                         }
                                                     }
                                                 }
                                                 EditMode::Move => {
                                                     // calculate and set the position
+                                                    let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
                                                     let position_in_beats = x /adjusted_beat_width_in_pixels;
                                                     dragged_item.set_position(position_in_beats);
 
@@ -2742,11 +2706,10 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                         dragged_item.set_vertical_index(vertical_index + 1);
                                                     }
 
-                                                    (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
-                                                        let delta_x = x - original_item.position() * adjusted_beat_width_in_pixels;
                                                         let delta_y = y - (canvas_height - original_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
                                                         for item in self.original_selected_items.iter() {
                                                             if item.id() != dragged_item.id() {
@@ -2778,7 +2741,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                     changed_item.set_vertical_index(vertical_index + 1);
                                                                 }
 
-                                                                (self.event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                                (self.changed_event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
                                                             }
                                                         }
                                                     }
@@ -2790,7 +2753,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                                     dragged_item.set_length(duration);
 
-                                                    (self.event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
@@ -2802,7 +2765,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                                                 changed_item.set_length(new_width / adjusted_beat_width_in_pixels);
 
-                                                                (self.event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                                (self.changed_event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
                                                             }
                                                         }
                                                     }
@@ -2859,20 +2822,25 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                 for item in self.original_selected_items.iter() {
                                                     if item.id() != dragged_item.id() {
                                                         let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
-                                                        let y_pos_inverted = item.vertical_index() as f64 * adjusted_entity_height_in_pixels;
-                                                        let y = if invert_vertically {
-                                                            canvas_height - y_pos_inverted
+                                                        let mut y = if allow_vertical_drag {
+                                                            if invert_vertically {
+                                                                canvas_height - item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            }
+                                                            else {
+                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            }
                                                         }
                                                         else {
-                                                            item.vertical_index() as f64 * adjusted_entity_height_in_pixels
+                                                            // track y is not inverted
+                                                            track_index * adjusted_entity_height_in_pixels
                                                         };
                                                         let width = item.length() * adjusted_beat_width_in_pixels;
 
                                                         if allow_vertical_drag {
-                                                            context.rectangle(x + delta_x, y + delta_y, width, adjusted_entity_height_in_pixels);
+                                                            context.rectangle(x, y + delta_y, width, adjusted_entity_height_in_pixels);
                                                         }
                                                         else {
-                                                            context.rectangle(x + delta_x, y, width, adjusted_entity_height_in_pixels);
+                                                            context.rectangle(x, y, width, adjusted_entity_height_in_pixels);
                                                         }
                                                         let _ = context.fill();
                                                     }
@@ -2890,6 +2858,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                         if let Some(dragged_item) = self.dragged_item.as_mut() {
                                             if let EditMode::Move = edit_mode {
                                                 // calculate and set the position
+                                                let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
                                                 let position_in_beats = x /adjusted_beat_width_in_pixels;
                                                 dragged_item.set_position(position_in_beats);
 
@@ -2907,11 +2876,11 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_vertical_index(vertical_index + 1);
                                                 }
 
-                                                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(dragged_item.vertical_index(), position_in_beats, dragged_item.length()), Some(track_uuid.clone())));
+                                                (self.copied_event_sender)(dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
 
                                                 // handle the other selected items
                                                 if self.original_item_is_selected {
-                                                    let delta_x = x - original_item.position() * adjusted_beat_width_in_pixels;
+                                                    // let delta_x = x - original_item.position() * adjusted_beat_width_in_pixels;
                                                     let delta_y = y - (canvas_height - original_item.vertical_index() as f64 * adjusted_entity_height_in_pixels);
                                                     for item in self.original_selected_items.iter() {
                                                         if item.id() != dragged_item.id() {
@@ -2927,6 +2896,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                             // calculate and set the position
                                                             let position_in_beats = x /adjusted_beat_width_in_pixels;
                                                             let mut copied_item = item.clone();
+                                                            copied_item.set_position(position_in_beats);
 
                                                             // calculate and set the vertical index
                                                             if allow_vertical_drag {
@@ -2942,7 +2912,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                 copied_item.set_vertical_index(vertical_index + 1);
                                                             }
 
-                                                            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(copied_item.vertical_index(), position_in_beats, item.length()), Some(track_uuid.clone())));
+                                                            (self.copied_event_sender)(copied_item, track_uuid.clone(), tx_from_ui.clone());
                                                         }
                                                     }
                                                 }
@@ -3458,18 +3428,41 @@ impl CustomPainter for TrackGridCustomPainter {
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
                 let mut track_number = 0.0;
+
+                // find all the selected notes
+                let selected_riff_ref_ids = state.selected_riff_references().clone();
+
                 for track in state.get_project().song_mut().tracks_mut() {
                     let riff_refs = track.riff_refs();
                     let automation = track.automation().events();
                     let (red, green, blue, alpha) = track.colour();
+                    let mut selected_riff_references = vec![];
+
+                    for riff_reference in riff_refs.iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
+                        if let Some(riff) = track.riffs().iter().find(|riff| riff.id() == riff_reference.linked_to()) {
+                            let mut riff = riff.clone();
+                            riff.set_id(riff_reference.id());
+                            riff.set_position(riff_reference.position());
+                            selected_riff_references.push(riff);
+                        }
+                    }
 
                     for riff_ref in riff_refs.iter() {
                         let linked_to_riff_uuid = riff_ref.linked_to();
 
-                        context.set_source_rgba(red, green, blue, alpha);
+                        let is_selected = selected_riff_ref_ids.iter().any(|id| *id == riff_ref.uuid().to_string());
+                        if is_selected {
+                            context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
+                        }
+                        else {
+                            context.set_source_rgba(red, green, blue, alpha);
+                        }
 
                         for riff in track.riffs().iter() {
                             if riff.uuid().to_string() == linked_to_riff_uuid {
+                                let mut riff = riff.clone();
+                                riff.set_id(riff_ref.id());
+                                riff.set_position(riff_ref.position());
                                 let mut use_notes = match riff_ref.mode() {
                                     RiffReferenceMode::Normal => true,
                                     RiffReferenceMode::Start => false,
@@ -3495,14 +3488,9 @@ impl CustomPainter for TrackGridCustomPainter {
                                 if riff_rect.intersects(&clip_rectangle) {
                                     // debug!("Part in clip region");
 
-                                    if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
-                                        select_window_top_left_y <= y && (y + adjusted_entity_height_in_pixels) <= select_window_bottom_right_y {
-                                        context.set_source_rgb(0.0, 0.0, 1.0);
-                                    }
-
                                     self.edit_item_handler.handle_item_edit(
                                         context, 
-                                        riff, 
+                                        &riff,
                                         operation_mode, 
                                         mouse_pointer_x, 
                                         mouse_pointer_y, 
@@ -3522,8 +3510,8 @@ impl CustomPainter for TrackGridCustomPainter {
                                         riff_ref,
                                         false,
                                         track_number,
-                                        false,
-                                        vec![]
+                                        is_selected,
+                                        selected_riff_references.clone()
                                     );
 
                                     context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);
@@ -3808,15 +3796,34 @@ impl CustomPainter for RiffGridCustomPainter {
                 };
                 let mut track_number = 0.0;
 
+                // find all the selected notes
+                let selected_riff_ref_ids = state.selected_riff_references().clone();
+
                 if let Some(riff_grid) = state.project().song().riff_grid(riff_grid_uuid_to_paint) {
                     for track in state.project().song().tracks() {
                         let (red, green, blue, alpha) = track.colour();
 
                         if let Some(riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
+                            let mut selected_riff_references = vec![];
+
+                            for riff_reference in riff_refs.iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
+                                if let Some(riff) = track.riffs().iter().find(|riff| riff.id() == riff_reference.linked_to()) {
+                                    let mut riff = riff.clone();
+                                    riff.set_id(riff_reference.id());
+                                    riff.set_position(riff_reference.position());
+                                    selected_riff_references.push(riff);
+                                }
+                            }
+
                             for riff_ref in riff_refs.iter() {
                                 let linked_to_riff_uuid = riff_ref.linked_to();
-
-                                context.set_source_rgba(red, green, blue, alpha);
+                                let is_selected = selected_riff_ref_ids.iter().any(|id| *id == riff_ref.uuid().to_string());
+                                if is_selected {
+                                    context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
+                                }
+                                else {
+                                    context.set_source_rgba(red, green, blue, alpha);
+                                }
 
                                 if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == linked_to_riff_uuid) {
                                     let mut use_notes = match riff_ref.mode() {
@@ -3844,11 +3851,6 @@ impl CustomPainter for RiffGridCustomPainter {
                                     if riff_rect.intersects(&clip_rectangle) {
                                         // debug!("Part in clip region");
 
-                                        if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
-                                            select_window_top_left_y <= y && (y + adjusted_entity_height_in_pixels) <= select_window_bottom_right_y {
-                                            context.set_source_rgb(0.0, 0.0, 1.0);
-                                        }
-
                                         self.edit_item_handler.handle_item_edit(
                                             context,
                                             riff,
@@ -3871,8 +3873,8 @@ impl CustomPainter for RiffGridCustomPainter {
                                             riff_ref,
                                             false,
                                             track_number,
-                                            false,
-                                            vec![]
+                                            is_selected,
+                                            selected_riff_references.clone()
                                         );
 
                                         context.rectangle(x - 1.0, y + 1.0, width - 2.0, adjusted_entity_height_in_pixels - 2.0);
@@ -4467,11 +4469,11 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationDelete(time), None));
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationCut, None));
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationCopy, None));
     }
 
@@ -4479,31 +4481,31 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationPaste, None));
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Up, x, y, x2, y2), None));
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Up), None));
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Down, x, y, x2, y2), None));
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Down), None));
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Left, x, y, x2, y2), None));
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Left), None));
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Right, x, y, x2, y2), None));
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationTranslateSelected(TranslationEntityType::Any, TranslateDirection::Right), None));
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationQuantiseSelected, None));
     }
 
-    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 
-    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
     }
 

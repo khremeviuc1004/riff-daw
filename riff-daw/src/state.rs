@@ -113,6 +113,7 @@ pub struct DAWState {
     piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId,
     selected_riff_grid_uuid: Option<String>,
     selected_riff_sequence_uuid: Option<String>,
+    selected_riff_references: Vec<String>,
 }
 
 impl DAWState {
@@ -174,6 +175,7 @@ impl DAWState {
             piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId::ALL,
             selected_riff_grid_uuid: None,
             selected_riff_sequence_uuid: None,
+            selected_riff_references: vec![],
         }
     }
 
@@ -3020,6 +3022,18 @@ impl DAWState {
 
     pub fn set_selected_riff_sequence_uuid(&mut self, selected_riff_sequence_uuid: Option<String>) {
         self.selected_riff_sequence_uuid = selected_riff_sequence_uuid;
+    }
+
+    pub fn selected_riff_references(&self) -> &Vec<String> {
+        &self.selected_riff_references
+    }
+
+    pub fn selected_riff_references_mut(&mut self) -> &mut Vec<String> {
+        &mut self.selected_riff_references
+    }
+
+    pub fn set_selected_riff_references(&mut self, selected_riff_references: Vec<String>) {
+        self.selected_riff_references = selected_riff_references;
     }
 }
 

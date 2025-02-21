@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Mutex}, vec::Vec};
 use std::any::Any;
-
+use std::collections::HashMap;
 use cairo::{Context};
 use crossbeam_channel::Sender;
 use gtk::{DrawingArea, prelude::*};
@@ -157,7 +157,7 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(y_index, time, duration), None));
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(vec![(y_index, time, duration)]), None));
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
@@ -337,7 +337,7 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelected(x, y2, x2, y, add_to_select), None));
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelected(x, y, x2, y2, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -402,7 +402,7 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     }
 
     fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelected(x, y2, x2, y, add_to_select), None));
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelected(x, y, x2, y2, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -2357,12 +2357,23 @@ pub struct EditItemHandler<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWI
     pub selected_item_ids: Vec<String>,
     pub dragged_item: Option<T>,
     pub referenced_item: Option<U>,
-    pub changed_event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>,
-    pub copied_event_sender: Box<dyn Fn(T, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub changed_event_sender: Box<dyn Fn(Vec<(T, T)>, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub copied_event_sender: Box<dyn Fn(Vec<T>, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub can_change_start: bool,
+    pub can_change_position: bool,
+    pub can_change_end: bool,
+    pub can_drag_copy: bool,
 }
 
 impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone, U: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clone> EditItemHandler<T, U> {
-    pub fn new(changed_event_sender: Box<dyn Fn(T, T, String, crossbeam_channel::Sender<DAWEvents>)>, copied_event_sender: Box<dyn Fn(T, String, crossbeam_channel::Sender<DAWEvents>)>) -> Self {
+    pub fn new(
+        changed_event_sender: Box<dyn Fn(Vec<(T, T)>, String, crossbeam_channel::Sender<DAWEvents>)>,
+        copied_event_sender: Box<dyn Fn(Vec<T>, String, crossbeam_channel::Sender<DAWEvents>)>,
+        can_change_start: bool,
+        can_change_position: bool,
+        can_change_end: bool,
+        can_drag_copy: bool
+    ) -> Self {
         Self { 
             original_item: None,
             original_item_is_selected: false,
@@ -2372,6 +2383,10 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
             referenced_item: None,
             changed_event_sender,
             copied_event_sender,
+            can_change_start,
+            can_change_position,
+            can_change_end,
+            can_drag_copy,
         }
     }    
 }
@@ -2464,7 +2479,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                 }
 
                 // draw left length adjust handle if required
-                if mouse_pointer_x as f64 >= x &&
+                if self.can_change_start &&
+                    mouse_pointer_x as f64 >= x &&
                     mouse_pointer_x <= (x + 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -2480,7 +2496,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     }
                 }
                 // draw drag position adjust handle if required
-                else if mouse_pointer_x as f64 >= (x + 5.0) &&
+                else if (self.can_change_position || self.can_drag_copy) &&
+                    mouse_pointer_x as f64 >= (x + 5.0) &&
                     mouse_pointer_x <= (x + width - 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -2496,7 +2513,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     }
                 }
                 // draw right length adjust handle if required
-                else if mouse_pointer_x as f64 <= (x + width) &&
+                else if self.can_change_end &&
+                    mouse_pointer_x as f64 <= (x + width) &&
                     mouse_pointer_x >= (x + width - 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -2514,7 +2532,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                 match edit_mode {
                     EditMode::Inactive => {
-                        debug!("EditMode::Inactive");
+                        // debug!("EditMode::Inactive");
                     }
                     _ => {
                         match edit_drag_cycle {
@@ -2595,7 +2613,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                             }
                                                             else {
                                                                 // track y is not inverted
-                                                                track_index * adjusted_entity_height_in_pixels
+                                                                debug!("Track riff ref vertical index={}", item.vertical_index());
+                                                                item.vertical_index() as f64 * adjusted_entity_height_in_pixels
                                                             };
                                                             let width = item.length() * adjusted_beat_width_in_pixels;
 
@@ -2654,6 +2673,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                             match edit_mode {
                                                 EditMode::Inactive => {}
                                                 EditMode::ChangeStart => {
+                                                    let mut change = vec![];
                                                     // calculate and set the position
                                                     let position_in_beats = x /adjusted_beat_width_in_pixels;
 
@@ -2664,7 +2684,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_position(position_in_beats);
                                                     dragged_item.set_length(duration);
 
-                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    // (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    change.push((original_item.clone(), dragged_item.clone()));
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
@@ -2681,12 +2702,18 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                 changed_item.set_position(position_in_beats);
                                                                 changed_item.set_length(duration);
 
-                                                                (self.changed_event_sender)(item.clone(), changed_item, track_uuid.clone(), tx_from_ui.clone());
+                                                                // (self.changed_event_sender)(item.clone(), changed_item, track_uuid.clone(), tx_from_ui.clone());
+                                                                change.push((item.clone(), changed_item.clone()));
                                                             }
                                                         }
                                                     }
+
+                                                    if !change.is_empty() {
+                                                        (self.changed_event_sender)(change, track_uuid.clone(), tx_from_ui.clone());
+                                                    }
                                                 }
                                                 EditMode::Move => {
+                                                    let mut change = vec![];
                                                     // calculate and set the position
                                                     let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
                                                     let position_in_beats = x /adjusted_beat_width_in_pixels;
@@ -2706,7 +2733,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                         dragged_item.set_vertical_index(vertical_index + 1);
                                                     }
 
-                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    // (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    change.push((original_item.clone(), dragged_item.clone()));
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
@@ -2741,19 +2769,25 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                     changed_item.set_vertical_index(vertical_index + 1);
                                                                 }
 
-                                                                (self.changed_event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                                // (self.changed_event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                                change.push((item.clone(), changed_item.clone()));
                                                             }
                                                         }
                                                     }
+
+                                                    if !change.is_empty() {
+                                                        (self.changed_event_sender)(change, track_uuid.clone(), tx_from_ui.clone());
+                                                    }
                                                 }
                                                 EditMode::ChangeEnd => {
+                                                    let mut change = vec![];
                                                     // calculate and set the width
                                                     let new_width = width + delta_x;
                                                     let duration = new_width / adjusted_beat_width_in_pixels;
 
                                                     dragged_item.set_length(duration);
 
-                                                    (self.changed_event_sender)(original_item.clone(), dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                    change.push((original_item.clone(), dragged_item.clone()));
 
                                                     // handle the other selected items
                                                     if self.original_item_is_selected {
@@ -2765,9 +2799,13 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                                                                 changed_item.set_length(new_width / adjusted_beat_width_in_pixels);
 
-                                                                (self.changed_event_sender)(item.clone(), changed_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                                change.push((item.clone(), changed_item.clone()));
                                                             }
                                                         }
+                                                    }
+
+                                                    if !change.is_empty() {
+                                                        (self.changed_event_sender)(change, track_uuid.clone(), tx_from_ui.clone());
                                                     }
                                                 }
                                             }
@@ -2832,7 +2870,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                         }
                                                         else {
                                                             // track y is not inverted
-                                                            track_index * adjusted_entity_height_in_pixels
+                                                            item.vertical_index() as f64 * adjusted_entity_height_in_pixels
                                                         };
                                                         let width = item.length() * adjusted_beat_width_in_pixels;
 
@@ -2857,6 +2895,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                     if let Some(original_item) = self.original_item.as_ref() {
                                         if let Some(dragged_item) = self.dragged_item.as_mut() {
                                             if let EditMode::Move = edit_mode {
+                                                let mut change = vec![];
                                                 // calculate and set the position
                                                 let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
                                                 let position_in_beats = x /adjusted_beat_width_in_pixels;
@@ -2876,7 +2915,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     dragged_item.set_vertical_index(vertical_index + 1);
                                                 }
 
-                                                (self.copied_event_sender)(dragged_item.clone(), track_uuid.clone(), tx_from_ui.clone());
+                                                change.push(dragged_item.clone());
 
                                                 // handle the other selected items
                                                 if self.original_item_is_selected {
@@ -2912,9 +2951,13 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                                 copied_item.set_vertical_index(vertical_index + 1);
                                                             }
 
-                                                            (self.copied_event_sender)(copied_item, track_uuid.clone(), tx_from_ui.clone());
+                                                            change.push(copied_item);
                                                         }
                                                     }
+                                                }
+
+                                                if !change.is_empty() {
+                                                    (self.copied_event_sender)(change, track_uuid.clone(), tx_from_ui.clone());
                                                 }
                                             }
                                         }
@@ -3427,25 +3470,26 @@ impl CustomPainter for TrackGridCustomPainter {
                 let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
-                let mut track_number = 0.0;
-
                 // find all the selected notes
                 let selected_riff_ref_ids = state.selected_riff_references().clone();
+                let mut selected_riff_references = vec![];
 
-                for track in state.get_project().song_mut().tracks_mut() {
-                    let riff_refs = track.riff_refs();
-                    let automation = track.automation().events();
-                    let (red, green, blue, alpha) = track.colour();
-                    let mut selected_riff_references = vec![];
-
-                    for riff_reference in riff_refs.iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
+                for (index, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
+                    for riff_reference in track.riff_refs().iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
                         if let Some(riff) = track.riffs().iter().find(|riff| riff.id() == riff_reference.linked_to()) {
                             let mut riff = riff.clone();
                             riff.set_id(riff_reference.id());
                             riff.set_position(riff_reference.position());
+                            riff.set_vertical_index(index as i32);
                             selected_riff_references.push(riff);
                         }
                     }
+                }
+
+                for (track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
+                    let riff_refs = track.riff_refs();
+                    let automation = track.automation().events();
+                    let (red, green, blue, alpha) = track.colour();
 
                     for riff_ref in riff_refs.iter() {
                         let linked_to_riff_uuid = riff_ref.linked_to();
@@ -3473,7 +3517,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                 }
 
                                 let x = riff_ref.position() * adjusted_beat_width_in_pixels;
-                                let y = track_number * adjusted_entity_height_in_pixels;
+                                let y = track_number as f64 * adjusted_entity_height_in_pixels;
                                 let duration_in_beats = riff.length();
                                 let width = duration_in_beats * beat_width_in_pixels * zoom_horizontal;
 
@@ -3509,7 +3553,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                         track.uuid().to_string(),
                                         riff_ref,
                                         false,
-                                        track_number,
+                                        track_number as f64,
                                         is_selected,
                                         selected_riff_references.clone()
                                     );
@@ -3579,7 +3623,7 @@ impl CustomPainter for TrackGridCustomPainter {
 
                                                     // draw note
                                                     if self.show_note {
-                                                        let note_y = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
+                                                        let note_y = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels - (adjusted_entity_height_in_pixels / 127.0 * note.note() as f64);
                                                         // debug!("Note: x={}, y={}, width={}, height={}", note_x, note_y, note.duration() * adjusted_beat_width_in_pixels, entity_height_in_pixels / 127.0);
                                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                         context.rectangle(note_x, note_y, note.length() * adjusted_beat_width_in_pixels, adjusted_entity_height_in_pixels / 127.0);
@@ -3589,7 +3633,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                                     // draw velocity
                                                     if self.show_note_velocity {
                                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                                        let velocity_y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                        let velocity_y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                         // debug!("Note velocity: x={}, y={}, height={}", note_x, velocity_y_start, velocity_y_start - (entity_height_in_pixels / 127.0 * note.velocity() as f64));
                                                         context.move_to(note_x, velocity_y_start);
                                                         context.line_to(note_x, velocity_y_start - (adjusted_entity_height_in_pixels / 127.0 * note.velocity() as f64));
@@ -3601,7 +3645,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                             TrackEvent::NoteOff(_) => (),
                                             TrackEvent::Controller(controller) => {
                                                 let x_position = (riff_ref.position() + controller.position()) * adjusted_beat_width_in_pixels;
-                                                let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
 
                                                 context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                 context.move_to(x_position, y_start);
@@ -3639,7 +3683,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                     TrackEvent::NoteOff(_) => (),
                                     TrackEvent::Controller(controller) => {
                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                                        let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                        let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                         context.move_to(x_position, y_start);
                                         context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64) as f64));
                                         let _ = context.stroke();
@@ -3654,8 +3698,6 @@ impl CustomPainter for TrackGridCustomPainter {
                             }
                         }
                     }
-
-                    track_number += 1.0;
                 }
 
                 if state.looping() {
@@ -3794,27 +3836,43 @@ impl CustomPainter for RiffGridCustomPainter {
                 else {
                     "".to_string()
                 };
-                let mut track_number = 0.0;
 
-                // find all the selected notes
+                // find all the selected riff refs
                 let selected_riff_ref_ids = state.selected_riff_references().clone();
+                let mut riff_lengths = HashMap::new();
+                for track in state.project().song().tracks().iter() {
+                    for riff in track.riffs().iter() {
+                        riff_lengths.insert(riff.id(), riff.length());
+                    }
+                }
 
                 if let Some(riff_grid) = state.project().song().riff_grid(riff_grid_uuid_to_paint) {
-                    for track in state.project().song().tracks() {
-                        let (red, green, blue, alpha) = track.colour();
+                    let mut selected_riff_references = vec![];
+                    let track_uuids = riff_grid.tracks().map(|key| key.clone()).collect_vec();
 
-                        if let Some(riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
-                            let mut selected_riff_references = vec![];
-
-                            for riff_reference in riff_refs.iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
-                                if let Some(riff) = track.riffs().iter().find(|riff| riff.id() == riff_reference.linked_to()) {
-                                    let mut riff = riff.clone();
-                                    riff.set_id(riff_reference.id());
-                                    riff.set_position(riff_reference.position());
+                    for (index, track_uuid) in track_uuids.iter().enumerate() {
+                        if let Some(riff_references) = riff_grid.track_riff_references(track_uuid.clone()) {
+                            for riff_reference in riff_references.iter().filter(|riff_ref| selected_riff_ref_ids.clone().contains(&riff_ref.uuid().to_string())) {
+                                // find the riff length
+                                if let Some(riff_length) = riff_lengths.get(&riff_reference.linked_to()) {
+                                    let mut riff = Riff::new_with_position_length_and_colour(
+                                        Uuid::parse_str(riff_reference.id().as_str()).unwrap(),
+                                        riff_reference.position(),
+                                        *riff_length,
+                                        Some((0.0, 1.0, 0.0, 1.0)),
+                                    );
+                                    riff.set_vertical_index(index as i32);
                                     selected_riff_references.push(riff);
                                 }
                             }
+                        }
+                    }
 
+                    for (index, track) in state.project().song().tracks().iter().enumerate() {
+                        let track_number = index as f64;
+                        let (red, green, blue, alpha) = track.colour();
+
+                        if let Some(riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
                             for riff_ref in riff_refs.iter() {
                                 let linked_to_riff_uuid = riff_ref.linked_to();
                                 let is_selected = selected_riff_ref_ids.iter().any(|id| *id == riff_ref.uuid().to_string());
@@ -3984,8 +4042,6 @@ impl CustomPainter for RiffGridCustomPainter {
                                 }
                             }
                         }
-
-                        track_number += 1.0;
                     }
                 }
             },

@@ -1150,6 +1150,8 @@ pub struct Riff {
 	length: f64,
     colour: Option<(f64, f64, f64, f64)>, // rgba
 	events: Vec<TrackEvent>,
+    #[serde(skip_serializing, skip_deserializing)]
+    vertical_index: i32,
 }
 
 impl DAWItemID for Riff {
@@ -1189,11 +1191,11 @@ impl DAWItemLength for Riff {
 
 impl DAWItemVerticalIndex for Riff {
     fn vertical_index(&self) -> i32 {
-        0
+        self.vertical_index
     }
 
-    fn set_vertical_index(&mut self, _value: i32) {
-        
+    fn set_vertical_index(&mut self, value: i32) {
+        self.vertical_index = value;
     }
 }
 
@@ -1206,6 +1208,19 @@ impl Riff {
             length,
             colour: None,
             events: vec![],
+            vertical_index: 0,
+        }
+    }
+
+    pub fn new_with_position_length_and_colour(uuid: Uuid, position: f64, length:f64, colour: Option<(f64, f64, f64, f64)>) -> Riff {
+        Riff {
+            uuid,
+            name: String::new(),
+            position,
+            length,
+            colour,
+            events: vec![],
+            vertical_index: 0,
         }
     }
 
@@ -1274,6 +1289,8 @@ pub struct RiffReference {
 	linked_to: String,
     #[serde(default = "RiffReferenceMode::normal")]
     mode: RiffReferenceMode,
+    #[serde(skip_serializing, skip_deserializing, default = "String::new")]
+    track_id: String,
 }
 
 impl DAWItemID for RiffReference {
@@ -1281,14 +1298,14 @@ impl DAWItemID for RiffReference {
         self.uuid().to_string()
     }
 
+    fn id_mut(&mut self) -> String {
+        return self.uuid.to_string()
+    }
+
     fn set_id(&mut self, uuid: String) {
         if let Ok(uuid) = Uuid::parse_str(uuid.as_str()) {
             self.uuid = uuid;
         }
-    }
-
-    fn id_mut(&mut self) -> String {
-        return self.uuid.to_string()
     }
 }
 
@@ -1328,6 +1345,7 @@ impl RiffReference {
             position,
             linked_to: riff_uuid,
             mode: RiffReferenceMode::Normal,
+            track_id: String::new(),
         }
     }
 
@@ -1361,6 +1379,14 @@ impl RiffReference {
 
     pub fn set_mode(&mut self, mode: RiffReferenceMode) {
         self.mode = mode;
+    }
+
+    pub fn track_id(&self) -> &str {
+        &self.track_id
+    }
+
+    pub fn set_track_id(&mut self, track_id: String) {
+        self.track_id = track_id;
     }
 }
 

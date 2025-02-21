@@ -141,13 +141,13 @@ pub enum AutomationChangeData {
 #[derive(Clone)]
 pub enum RiffGridChangeType {
     RiffReferenceAdd{ track_index: i32, position: f64 },
-    RiffReferenceDragCopy { position: f64, original_riff_ref_uuid: String },
+    RiffReferenceDragCopy(Vec<(f64, String)>), // position: f64, original_riff_ref_uuid: String
     RiffReferenceDelete{ track_index: i32, position: f64 },
     RiffReferencesSelected(f64, i32, f64, i32, bool),
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
     RiffReferencePaste,
-    RiffReferenceChange{ orginal_riff_copy: Riff, changed_riff: Riff },
+    RiffReferenceChange( Vec<(Riff, Riff)> ), // Vec<(original riff copy, changed riff)>
 }
 
 #[derive(Clone)]
@@ -194,20 +194,20 @@ pub enum TrackChangeType {
     RiffSelect(String),             // riff uuid
 
     RiffReferenceAdd(i32, f64),                    // track index, position
-    RiffReferenceDragCopy(f64, String),                    // position, original riff reference uuid
+    RiffReferenceDragCopy(Vec<(f64, String)>),                    // position, original riff reference uuid
     RiffReferenceDelete(i32, f64),                 // track index, position
     RiffReferencesSelected(f64, i32, f64, i32, bool),
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
     RiffReferencePaste,
+    RiffReferenceChange(Vec<(Riff, Riff)>), // Vec<(original riff copy, changed riff)>
 
-    RiffAddNote(i32, f64, f64),    // note_number, position, duration
+    RiffAddNote(Vec<(i32, f64, f64)>),    // note_number, position, duration
     RiffDeleteNote(i32, f64),      // note_number, position
     RiffAddSample(String, f64),    // sample_reference_uuid, position
     RiffDeleteSample(String, f64), // sample_reference_uuid, position
     RiffTranslateSelected(TranslationEntityType, TranslateDirection ),
-    RiffEventChange(TrackEvent, TrackEvent ), // original event copy, changed event
-    RiffReferenceChange(Riff, Riff ), // original riff copy, changed riff
+    RiffEventChange(Vec<(TrackEvent, TrackEvent)> ), // original event copy, changed event
     RiffQuantiseSelected,
     RiffCutSelected,
     RiffCopySelected,
@@ -335,6 +335,8 @@ pub enum DAWEvents {
 
     Panic,
     TrimAllNoteDurations,
+
+    RiffReferenceRegenerateIds,
 
     RiffSetPlay(String), // riff set uuid
     RiffSetTrackIncrementRiff(

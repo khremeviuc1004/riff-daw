@@ -14,6 +14,7 @@ use gladis::Gladis;
 use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType};
 use gtk::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, ComboBoxText, CssProvider, Dialog, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserDialog, FileChooserWidget, FileFilter, Frame, gdk, glib, Grid, Label, ListStore, MenuItem, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, RadioToolButton, RecentChooserMenu, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, ToggleToolButton, ToolButton, TreeView, Viewport, Widget};
 use indexmap::IndexMap;
+use itertools::Itertools;
 use log::*;
 use uuid::Uuid;
 
@@ -84,6 +85,9 @@ pub struct Ui {
 
     // edit menu
     pub menu_item_cut: MenuItem,
+    pub menu_item_copy: MenuItem,
+    pub menu_item_paste: MenuItem,
+    pub menu_item_regenerate_riff_ref_ids: MenuItem,
     pub menu_item_preferences: MenuItem,
 
     // help menu
@@ -3423,6 +3427,30 @@ impl MainWindow {
                 Inhibit(true)
             });
         }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.menu_item_copy.connect_button_press_event(move |_menu_item, _btn|{
+                // TODO implement
+                Inhibit(true)
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.menu_item_paste.connect_button_press_event(move |_menu_item, _btn|{
+                // TODO implement
+                Inhibit(true)
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.menu_item_regenerate_riff_ref_ids.connect_button_press_event(move |_menu_item, _btn|{
+                let _ = tx_from_ui.send(DAWEvents::RiffReferenceRegenerateIds);
+                Inhibit(true)
+            });
+        }
     }
 
     pub fn setup_main_tool_bar(
@@ -3639,13 +3667,23 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>,
     ) {
-        let changed_event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(original_riff, changed_riff), Some(track_uuid)));
+        let changed_event_sender = std::boxed::Box::new(|change: Vec<(Riff, Riff)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceChange(change), Some(track_uuid)));
         });
-        let copied_event_sender = std::boxed::Box::new(|new_riff_reference: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceDragCopy(new_riff_reference.position(), new_riff_reference.id()), Some(track_uuid.clone())));
+        let copied_event_sender = std::boxed::Box::new(|new_riff_references: Vec<Riff>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let new_riff_refs_data = new_riff_references.iter().map(|riff_reference| (riff_reference.position(), riff_reference.id())).collect_vec();
+            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceDragCopy(new_riff_refs_data), Some(track_uuid.clone())));
         });
-        let track_grid_custom_painter = TrackGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(changed_event_sender, copied_event_sender));
+        let track_grid_custom_painter = TrackGridCustomPainter::new_with_edit_item_handler(
+            state.clone(),
+            EditItemHandler::new(
+                changed_event_sender,
+                copied_event_sender,
+                false,
+                true,
+                false,
+                true
+            ));
         let mut track_grid = BeatGrid::new_with_custom(
             0.04,
             1.0,
@@ -4218,13 +4256,25 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>,
     ) {
-        let changed_event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange{orginal_riff_copy: original_riff, changed_riff}, Some(track_uuid)));
+        let changed_event_sender = std::boxed::Box::new(|change: Vec<(Riff, Riff)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(change), Some(track_uuid)));
         });
-        let copied_event_sender = std::boxed::Box::new(|new_riff_reference: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDragCopy {position: new_riff_reference.position(), original_riff_ref_uuid: new_riff_reference.id()}, Some(track_uuid.clone())));
+        let copied_event_sender = std::boxed::Box::new(|new_riff_references: Vec<Riff>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let new_riff_refs_data = new_riff_references.iter().map(|riff_reference| (riff_reference.position(), riff_reference.id())).collect_vec();
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDragCopy(new_riff_refs_data), Some(track_uuid.clone())));
         });
-        let riff_grid_custom_painter = RiffGridCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(changed_event_sender, copied_event_sender), true, None);
+        let riff_grid_custom_painter = RiffGridCustomPainter::new_with_edit_item_handler(
+            state.clone(),
+            EditItemHandler::new(
+                changed_event_sender,
+                copied_event_sender,
+                false,
+                true,
+                false,
+                true
+            ),
+            true,
+            None);
         let riff_grid = BeatGrid::new_with_custom(
             1.0,
             1.0,
@@ -5581,13 +5631,24 @@ impl MainWindow {
     ) {
         {
             let state = state;
-            let changed_event_sender = std::boxed::Box::new(|original_note: Note, changed_note: Note, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventChange(TrackEvent::Note(original_note), TrackEvent::Note(changed_note)), Some(track_uuid)));
+            let changed_event_sender = std::boxed::Box::new(|change: Vec<(Note, Note)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+                let horatio = change.iter().map(|(original, changed)| (TrackEvent::Note(original.clone()), TrackEvent::Note(changed.clone()))).collect_vec();
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventChange(horatio), Some(track_uuid)));
             });
-            let copied_event_sender = std::boxed::Box::new(|new_note: Note, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(new_note.note(), new_note.position(), new_note.length()), Some(track_uuid.clone())));
+            let copied_event_sender = std::boxed::Box::new(|new_notes: Vec<Note>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+                let new_notes_data = new_notes.iter().map(|new_note| (new_note.note(), new_note.position(), new_note.length())).collect_vec();
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(new_notes_data), Some(track_uuid.clone())));
             });
-            let piano_roll_custom_painter: PianoRollCustomPainter = PianoRollCustomPainter::new_with_edit_item_handler(state.clone(), EditItemHandler::new(changed_event_sender, copied_event_sender));
+            let piano_roll_custom_painter: PianoRollCustomPainter = PianoRollCustomPainter::new_with_edit_item_handler(
+                state.clone(),
+                EditItemHandler::new(
+                    changed_event_sender,
+                    copied_event_sender,
+                    true,
+                    true,
+                    true,
+                    true
+                ));
             let piano_roll_custom_vertical_scale_painter = PianoRollVerticalScaleCustomPainter::new(state);
             let piano_roll_grid = BeatGrid::new_with_painters(
                 2.0,
@@ -8064,11 +8125,12 @@ impl MainWindow {
             });
         }
 
-        let changed_event_sender = std::boxed::Box::new(|original_riff: Riff, changed_riff: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange{orginal_riff_copy: original_riff, changed_riff}, Some(track_uuid)));
+        let changed_event_sender = std::boxed::Box::new(|change: Vec<(Riff, Riff)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceChange(change), Some(track_uuid)));
         });
-        let copied_event_sender = std::boxed::Box::new(|new_riff_reference: Riff, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDragCopy {position: new_riff_reference.position(), original_riff_ref_uuid: new_riff_reference.id()}, Some(track_uuid.clone())));
+        let copied_event_sender = std::boxed::Box::new(|new_riff_references: Vec<Riff>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let new_riff_refs_data = new_riff_references.iter().map(|riff_reference| (riff_reference.position(), riff_reference.id())).collect_vec();
+            let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceDragCopy(new_riff_refs_data), Some(track_uuid.clone())));
         });
         let use_globally_selected_riff_grid_uuid = if let RiffGridType::RiffGrid = &riff_grid_type {
             true
@@ -8078,7 +8140,14 @@ impl MainWindow {
         };
         let riff_grid_custom_painter = RiffGridCustomPainter::new_with_edit_item_handler(
             state_arc.clone(),
-            EditItemHandler::new(changed_event_sender, copied_event_sender),
+            EditItemHandler::new(
+                changed_event_sender,
+                copied_event_sender,
+                false,
+                true,
+                false,
+                true
+            ),
             use_globally_selected_riff_grid_uuid,
             Some(uuid.to_string())
                                                                                             );

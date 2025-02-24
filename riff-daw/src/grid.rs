@@ -131,7 +131,10 @@ pub trait BeatGridMouseCoordHelper {
     fn get_time(&self, x: f64, beat_width_in_pixels: f64, zoom_horizontal: f64) -> f64 {
         x / (beat_width_in_pixels * zoom_horizontal)
     }
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool);
+    fn select_single(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool);
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool);
+    fn deselect_single(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32);
+    fn deselect_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, entity_uuid: String);
     fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
@@ -154,6 +157,22 @@ pub struct PianoRollMouseCoordHelper;
 impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
         ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
+    }
+
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelectSingle(x, y, add_to_select), None));
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelectMultiple(x, y2, x2, y, add_to_select), None));
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsDeselectSingle(x, y), None));
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsDeselectMultiple(x, y2, x2, y), None));
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, _entity_uuid: String) {
@@ -204,10 +223,6 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffChangeLengthOfSelected(false), None));
     }
 
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelected(x, y2, x2, y, add_to_select), None));
-    }
-
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSetStartNote(y_index, time), None));
     }
@@ -222,6 +237,22 @@ pub struct SampleRollMouseCoordHelper;
 impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
         ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
+    }
+
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+        todo!()
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+        todo!()
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        todo!()
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
@@ -272,10 +303,6 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
 
     }
 
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
-    }
-
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
     }
 
@@ -288,6 +315,22 @@ pub struct TrackGridMouseCoordHelper;
 impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
         y / entity_height_in_pixels * zoom_vertical
+    }
+
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelectSingle(x, y, add_to_select), None));
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelectMultiple(x, y, x2, y2, add_to_select), None));
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesDeselectSingle(x, y), None));
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesDeselectMultiple(x, y, x2, y2), None));
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
@@ -336,10 +379,6 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelected(x, y, x2, y2, add_to_select), None));
-    }
-
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
     }
 
@@ -353,6 +392,22 @@ pub struct RiffGridMouseCoordHelper;
 impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
         y / entity_height_in_pixels * zoom_vertical
+    }
+
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelectSingle(x, y, add_to_select), None));
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelectMultiple(x, y, x2, y2, add_to_select), None));
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesDeselectSingle(x, y), None));
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesDeselectMultiple(x, y, x2, y2), None));
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
@@ -399,10 +454,6 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     }
 
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
-    }
-
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelected(x, y, x2, y2, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -1097,14 +1148,47 @@ impl MouseHandler for BeatGrid {
                             // send an event to the ui via the mouse coord helper
                             if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
                                 let select_window = self.get_select_window();
-                                let add_to_select = control_key;
-                                mouse_coord_helper.select(
-                                    self.tx_from_ui.clone(), 
-                                    mouse_coord_helper.get_time(select_window.0, self.beat_width_in_pixels, self.zoom_horizontal), 
-                                    mouse_coord_helper.get_entity_vertical_value(select_window.1, self.entity_height_in_pixels, self.zoom_vertical) as i32, 
-                                    mouse_coord_helper.get_time(select_window.2, self.beat_width_in_pixels, self.zoom_horizontal), 
-                                    mouse_coord_helper.get_entity_vertical_value(select_window.3, self.entity_height_in_pixels, self.zoom_vertical) as i32,
-                                    add_to_select
+
+                                if shift_key {
+                                    mouse_coord_helper.deselect_multiple(
+                                        self.tx_from_ui.clone(),
+                                        mouse_coord_helper.get_time(select_window.0, self.beat_width_in_pixels, self.zoom_horizontal),
+                                        mouse_coord_helper.get_entity_vertical_value(select_window.1, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                        mouse_coord_helper.get_time(select_window.2, self.beat_width_in_pixels, self.zoom_horizontal),
+                                        mouse_coord_helper.get_entity_vertical_value(select_window.3, self.entity_height_in_pixels, self.zoom_vertical) as i32
+                                    );
+                                }
+                                else {
+                                    let add_to_select = control_key; // should this be the shift key???
+                                    mouse_coord_helper.select_multiple(
+                                        self.tx_from_ui.clone(),
+                                        mouse_coord_helper.get_time(select_window.0, self.beat_width_in_pixels, self.zoom_horizontal),
+                                        mouse_coord_helper.get_entity_vertical_value(select_window.1, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                        mouse_coord_helper.get_time(select_window.2, self.beat_width_in_pixels, self.zoom_horizontal),
+                                        mouse_coord_helper.get_entity_vertical_value(select_window.3, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                        add_to_select
+                                    );
+                                }
+                            }
+                        }
+                        else if shift_key { // deselect single item
+                            // send an event to the ui via the mouse coord helper
+                            if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
+                                mouse_coord_helper.deselect_single(
+                                    self.tx_from_ui.clone(),
+                                    mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal),
+                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                );
+                            }
+                        }
+                        else if control_key { // select single item
+                            // send an event to the ui via the mouse coord helper
+                            if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
+                                mouse_coord_helper.select_single(
+                                    self.tx_from_ui.clone(),
+                                    mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal),
+                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                    true
                                 );
                             }
                         }
@@ -4517,6 +4601,20 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         }
     }
 
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationDeselectMultiple(x, y2, x2, y), None));
+    }
+
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(time, y_index), None));
     }
@@ -4563,10 +4661,6 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
 
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
 
-    }
-
-    fn select(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelected(x, y2, x2, y, add_to_select), None));
     }
 
     fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {

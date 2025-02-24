@@ -1687,7 +1687,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Ok(state) => {
                             let mut found_info = vec![];
                             let mut riff_name = String::from("Unknown");
-                            
+
                             // process the track
                             if let Some(uuid) = track_uuid.clone() {
                                 if let Some(track) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == uuid) {
@@ -1700,7 +1700,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     for riff_ref in track.riff_refs().iter() {
                                         if riff_ref.linked_to() == riff_uuid {
                                             let message = format!("Track: \"{}\" has references to riff: \"{}\".", track.name(), riff_name.as_str());
-                                            
+
                                             if !found_info.iter().any(|entry| *entry == message) {
                                                 found_info.push(message);
                                             }
@@ -1841,8 +1841,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 error!("Main - rx_ui processing loop - riff delete - error getting lock for history manager: {}", error);
                             }
                         }
-                    }
-                    else {
+                    } else {
                         let mut error_message = String::from("Could not delete riff:\n");
 
                         for message in found_info.iter() {
@@ -1977,8 +1976,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     {
                         let note_id = if let Ok(state) = state.lock() {
                             state.piano_roll_mpe_note_id().clone() as i32
-                        }
-                        else {
+                        } else {
                             MidiPolyphonicExpressionNoteId::ALL as i32
                         };
                         let mut state = state.clone();
@@ -2241,7 +2239,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     // });
                     gui.ui.piano_roll_drawing_area.queue_draw();
                 },
-                TrackChangeType::RiffEventsSelected(x, y, x2, y2, add_to_select) => {
+                TrackChangeType::RiffEventsSelectMultiple(x, y, x2, y2, add_to_select) => {
                     let mut selected = Vec::new();
                     let mut selected_riff_uuid = None;
                     let mut selected_riff_track_uuid = None;
@@ -2262,7 +2260,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     match state.lock() {
                         Ok(state) => {
                             let mut state = state;
-            
+
                             match selected_riff_track_uuid {
                                 Some(track_uuid) => {
                                     match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
@@ -2299,12 +2297,207 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.selected_riff_events_mut().clear();
                                 }
                                 state.selected_riff_events_mut().append(&mut selected);
-                            }
-                            else {
+                            } else {
                                 state.selected_riff_events_mut().clear();
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - riff events selected - could not get lock on state"),
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffEventsSelectSingle(x, y, add_to_select) => {
+                    let mut selected = Vec::new();
+                    let mut selected_riff_uuid = None;
+                    let mut selected_riff_track_uuid = None;
+                    match state.lock() {
+                        Ok(state) => {
+                            selected_riff_track_uuid = state.selected_track();
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                    selected_riff_track_uuid = Some(track_uuid);
+                                },
+                                None => (),
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsSelectSingle - could not get lock on state"),
+                    };
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut state = state;
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                        Some(track) => {
+                                            match selected_riff_uuid {
+                                                Some(riff_uuid) => {
+                                                    'outer_loop:
+                                                    for riff in track.riffs_mut().iter_mut() {
+                                                        if riff.uuid().to_string() == *riff_uuid {
+                                                            // store the notes for an undo
+                                                            for track_event in riff.events_mut().iter_mut() {
+                                                                if let TrackEvent::Note(note) = track_event {
+                                                                    if note.note() == y && note.position()<= x && x <= (note.position() + note.length()) {
+                                                                        debug!("RiffEventsSelectSingle Note selected: x={}, y={}, note position={}, note={}, note duration={}", x, y, note.position(), note.note(), note.length());
+                                                                        selected.push(note.id());
+                                                                        break 'outer_loop;
+                                                                    }
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                None => debug!("Main - rx_ui processing loop - RiffEventsSelectSingle - problem getting selected riff index"),
+                                            }
+                                        },
+                                        None => ()
+                                    }
+                                },
+                                None => debug!("Main - rx_ui processing loop - RiffEventsSelectSingle  - problem getting selected riff track number"),
+                            };
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                if !add_to_select {
+                                    state.selected_riff_events_mut().clear();
+                                }
+                                state.selected_riff_events_mut().append(&mut selected);
+                            } else {
+                                state.selected_riff_events_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsSelectSingle - could not get lock on state"),
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffEventsDeselectMultiple(x, y, x2, y2) => {
+                    let mut selected = Vec::new();
+                    let mut selected_riff_uuid = None;
+                    let mut selected_riff_track_uuid = None;
+                    match state.lock() {
+                        Ok(state) => {
+                            selected_riff_track_uuid = state.selected_track();
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                    selected_riff_track_uuid = Some(track_uuid);
+                                },
+                                None => (),
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsDeselectMultiple - could not get lock on state"),
+                    };
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut state = state;
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                        Some(track) => {
+                                            match selected_riff_uuid {
+                                                Some(riff_uuid) => {
+                                                    for riff in track.riffs_mut().iter_mut() {
+                                                        if riff.uuid().to_string() == *riff_uuid {
+                                                            // store the notes for an undo
+                                                            for track_event in riff.events_mut().iter_mut() {
+                                                                if let TrackEvent::Note(note) = track_event {
+                                                                    if y <= note.note() && note.note() <= y2 && x <= note.position() && (note.position() + note.length()) <= x2 {
+                                                                        debug!("Note selected: x={}, y={}, x2={}, y2={}, note position={}, note={}, note duration={}", x, y, x2, y2, note.position(), note.note(), note.length());
+                                                                        selected.push(note.id());
+                                                                    }
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                None => debug!("Main - rx_ui processing loop - RiffEventsDeselectMultiple - problem getting selected riff index"),
+                                            }
+                                        },
+                                        None => ()
+                                    }
+                                },
+                                None => debug!("Main - rx_ui processing loop - RiffEventsDeselectMultiple  - problem getting selected riff track number"),
+                            };
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                state.selected_riff_events_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                            } else {
+                                state.selected_riff_events_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsDeselectMultiple - could not get lock on state"),
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffEventsDeselectSingle(x, y) => {
+                    let mut selected = Vec::new();
+                    let mut selected_riff_uuid = None;
+                    let mut selected_riff_track_uuid = None;
+                    match state.lock() {
+                        Ok(state) => {
+                            selected_riff_track_uuid = state.selected_track();
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                    selected_riff_track_uuid = Some(track_uuid);
+                                },
+                                None => (),
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsDeselectSingle - could not get lock on state"),
+                    };
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut state = state;
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                        Some(track) => {
+                                            match selected_riff_uuid {
+                                                Some(riff_uuid) => {
+                                                    'outer_loop:
+                                                    for riff in track.riffs_mut().iter_mut() {
+                                                        if riff.uuid().to_string() == *riff_uuid {
+                                                            // store the notes for an undo
+                                                            for track_event in riff.events_mut().iter_mut() {
+                                                                if let TrackEvent::Note(note) = track_event {
+                                                                    if note.note() == y && note.position()<= x && x <= (note.position() + note.length()) {
+                                                                        debug!("RiffEventsDeselectSingle Note selected: x={}, y={}, note position={}, note={}, note duration={}", x, y, note.position(), note.note(), note.length());
+                                                                        selected.push(note.id());
+                                                                        break 'outer_loop;
+                                                                    }
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                None => debug!("Main - rx_ui processing loop - RiffEventsDeselectSingle - problem getting selected riff index"),
+                                            }
+                                        },
+                                        None => ()
+                                    }
+                                },
+                                None => debug!("Main - rx_ui processing loop - RiffEventsDeselectSingle  - problem getting selected riff track number"),
+                            };
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                state.selected_riff_events_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                            } else {
+                                state.selected_riff_events_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsDeselectSingle - could not get lock on state"),
                     }
                     gui.ui.piano_roll_drawing_area.queue_draw();
                 }
@@ -2645,8 +2838,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             value.set_track_id(track_uuid.clone());
                                             copy_buffer.push(value);
                                             false
-                                        }
-                                        else { true }
+                                        } else { true }
                                     });
                                 }
                             }
@@ -2792,7 +2984,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         let range_max = piano_roll_vertical_adj.upper();
                                         let entity_height_in_pixels = piano_roll_drawing_area_height / 127.0;
                                         let note_vertical_position_on_grid = piano_roll_drawing_area_height - mid_note * entity_height_in_pixels;
-                                        let piano_roll_grid_vertical_scroll_position =  range_max - (note_vertical_position_on_grid/ piano_roll_drawing_area_height * range_max);
+                                        let piano_roll_grid_vertical_scroll_position = range_max - (note_vertical_position_on_grid / piano_roll_drawing_area_height * range_max);
 
                                         piano_roll_vertical_adj.set_value(piano_roll_grid_vertical_scroll_position);
                                     }
@@ -2925,8 +3117,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     };
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
-                },
-                TrackChangeType::AutomationSelected(time_lower, value_lower, time_higher, value_higher, add_to_select) => {
+                }
+                TrackChangeType::AutomationSelectMultiple(time_lower, value_lower, time_higher, value_higher, add_to_select) => {
                     match state.lock() {
                         Ok(state) => {
                             let note_expression_type = state.note_expression_type().clone();
@@ -2946,14 +3138,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             let track_uuid = state.selected_track();
                             let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
                                 state.selected_riff_uuid(track_uuid)
-                            }
-                            else {
+                            } else {
                                 None
                             };
                             let selected_effect_plugin_uuid = if let Some(uuid) = state.selected_effect_plugin_uuid() {
                                 uuid.clone()
-                            }
-                            else {
+                            } else {
                                 "".to_string()
                             };
                             let current_view = state.current_view().clone();
@@ -2978,8 +3168,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     } else {
                                                         None
                                                     }
-                                                }
-                                                else if let CurrentView::RiffArrangement = current_view {
+                                                } else if let CurrentView::RiffArrangement = current_view {
                                                     let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                                                         Some(selected_arrangement_uuid.clone())
                                                     } else {
@@ -3133,8 +3322,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None => ()
                                         }
                                     },
-                                None => debug!("Main - rx_ui processing loop - automation select - problem getting selected track number"),
-                            };
+                                None => debug!("Main - rx_ui processing loop - AutomationSelectMultiple - problem getting selected track number"),
+                            }
 
                             let mut state = state;
                             if !add_to_select {
@@ -3145,21 +3334,238 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.selected_automation_mut().append(&mut selected);
                             }
                         },
-                        Err(_) => debug!("Main - rx_ui processing loop - automation select - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - AutomationSelectMultiple - could not get lock on state"),
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
-                },
+                }
+                TrackChangeType::AutomationDeselectMultiple(time_lower, value_lower, time_higher, value_higher) => {
+                    match state.lock() {
+                        Ok(state) => {
+                            let note_expression_type = state.note_expression_type().clone();
+                            let note_expression_note_id = state.note_expression_id();
+                            let automation_view_mode = {
+                                match state.automation_view_mode() {
+                                    AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
+                                    AutomationViewMode::Controllers => AutomationViewMode::Controllers,
+                                    AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
+                                    AutomationViewMode::Instrument => AutomationViewMode::Instrument,
+                                    AutomationViewMode::Effect => AutomationViewMode::Effect,
+                                    AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
+                                }
+                            };
+                            let automation_type = state.automation_type();
+                            let mut state = state;
+                            let track_uuid = state.selected_track();
+                            let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
+                                state.selected_riff_uuid(track_uuid)
+                            } else {
+                                None
+                            };
+                            let selected_effect_plugin_uuid = if let Some(uuid) = state.selected_effect_plugin_uuid() {
+                                uuid.clone()
+                            } else {
+                                "".to_string()
+                            };
+                            let current_view = state.current_view().clone();
+                            let automation_edit_type = state.automation_edit_type();
+                            let song = state.project().song();
+                            let tracks = song.tracks();
+
+                            let mut selected = Vec::new();
+
+                            match track_uuid {
+                                Some(track_uuid) =>
+                                    {
+                                        match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
+                                            Some(track_type) => {
+                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                                            Some(riff.events_vec())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else if let CurrentView::RiffArrangement = current_view {
+                                                    let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                                        Some(selected_arrangement_uuid.clone())
+                                                    } else {
+                                                        None
+                                                    };
+
+                                                    // get the arrangement
+                                                    if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                                                        if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()) {
+                                                            if let Some(riff_arr_automation) = riff_arrangement.automation(&track_uuid) {
+                                                                Some(riff_arr_automation.events())
+                                                            } else {
+                                                                None
+                                                            }
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    match automation_edit_type {
+                                                        AutomationEditType::Track => {
+                                                            Some(track_type.automation().events())
+                                                        }
+                                                        AutomationEditType::Riff => {
+                                                            if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                                                if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                                                    Some(riff.events_vec())
+                                                                } else {
+                                                                    None
+                                                                }
+                                                            } else {
+                                                                None
+                                                            }
+                                                        }
+                                                    }
+                                                };
+
+                                                if let Some(events) = events {
+                                                    match automation_view_mode {
+                                                        AutomationViewMode::NoteVelocities => {
+                                                            for event in events.iter() {
+                                                                match event {
+                                                                    TrackEvent::Note(note) => {
+                                                                        let position = note.position();
+                                                                        if time_lower <= position && (position + note.length()) <= time_higher
+                                                                            && value_lower <= note.velocity() && note.velocity() <= value_higher {
+                                                                            selected.push(note.id());
+                                                                        }
+                                                                    },
+                                                                    _ => {},
+                                                                }
+                                                            }
+                                                        }
+                                                        AutomationViewMode::Controllers => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::Controller(controller) => {
+                                                                            let position = controller.position();
+                                                                            if controller.controller() == automation_type_value &&
+                                                                                time_lower <= position && position <= time_higher
+                                                                                && value_lower <= controller.value() && controller.value() <= value_higher {
+                                                                                selected.push(controller.id());
+                                                                            }
+                                                                        },
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::PitchBend => {
+                                                            let value_lower = (value_lower as f32 / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            let value_higher = (value_higher as f32 / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::PitchBend(pitch_bend) => {
+                                                                        let position = pitch_bend.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= pitch_bend.value() && pitch_bend.value() <= value_higher {
+                                                                            selected.push(pitch_bend.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::Instrument => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                // get the instrument plugin uuid
+                                                                let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                    instrument_track.instrument().uuid()
+                                                                } else {
+                                                                    return;
+                                                                };
+
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::AudioPluginParameter(plugin_param) => {
+                                                                            let position = plugin_param.position();
+                                                                            if plugin_param.index == automation_type_value &&
+                                                                                plugin_param.plugin_uuid.to_string() == instrument_plugin_id.to_string() &&
+                                                                                time_lower <= position &&
+                                                                                position <= time_higher {
+                                                                                selected.push(plugin_param.id());
+                                                                            }
+                                                                        },
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::Effect => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::AudioPluginParameter(plugin_param) => {
+                                                                            let position = plugin_param.position();
+                                                                            if plugin_param.index == automation_type_value &&
+                                                                                plugin_param.plugin_uuid.to_string() == selected_effect_plugin_uuid &&
+                                                                                time_lower <= position &&
+                                                                                position <= time_higher {
+                                                                                selected.push(plugin_param.id());
+                                                                            }
+                                                                        },
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::NoteExpression => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::NoteExpression(note_expression) => {
+                                                                        let position = note_expression.position();
+                                                                        if time_lower <= position &&
+                                                                            position <= time_higher &&
+                                                                            note_expression_type as i32 == *(note_expression.expression_type()) as i32 &&
+                                                                            note_expression_note_id == note_expression.note_id() {
+                                                                            selected.push(note_expression.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            None => ()
+                                        }
+                                    },
+                                None => debug!("Main - rx_ui processing loop - AutomationSelectMultiple - problem getting selected track number"),
+                            }
+
+                            let mut state = state;
+                            if !selected.is_empty() {
+                                state.selected_automation_mut().retain(|automation_id| !selected.contains(automation_id));
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - AutomationSelectMultiple - could not get lock on state"),
+                    };
+                    gui.ui.track_drawing_area.queue_draw();
+                    gui.ui.automation_drawing_area.queue_draw();
+                }
                 TrackChangeType::AutomationAdd(time, value) => {
                     handle_automation_add(time, value, &state);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
-                },
+                }
                 TrackChangeType::AutomationDelete(time) => {
                     handle_automation_delete(time, &state);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
-                },
+                }
                 TrackChangeType::AutomationTranslateSelected(_translation_entity_type, translate_direction) => {
                     let mut snap_in_beats = 1.0;
                     match gui.automation_grid() {
@@ -3172,7 +3578,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     handle_automation_translate_selected(state, translate_direction, snap_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
-                },
+                }
                 TrackChangeType::AutomationQuantiseSelected => {
                     match state.lock() {
                         Ok(state) => {
@@ -3277,15 +3683,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     };
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
-                },
+                }
                 TrackChangeType::AutomationCut => {
                     let edit_cursor_time_in_beats = if let Some(grid) = gui.automation_grid() {
                         match grid.lock() {
                             Ok(grid) => grid.edit_cursor_time_in_beats(),
                             Err(_) => 0.0,
                         }
-                    }
-                    else { 0.0 };
+                    } else { 0.0 };
                     handle_automation_cut(&state, edit_cursor_time_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3296,8 +3701,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(grid) => grid.edit_cursor_time_in_beats(),
                             Err(_) => 0.0,
                         }
-                    }
-                    else { 0.0 };
+                    } else { 0.0 };
                     handle_automation_copy(&state, edit_cursor_time_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3308,8 +3712,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(grid) => grid.edit_cursor_time_in_beats(),
                             Err(_) => 0.0,
                         }
-                    }
-                    else { 0.0 };
+                    } else { 0.0 };
                     handle_automation_paste(&state, edit_cursor_time_in_beats);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
@@ -3584,7 +3987,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         track_audio_coast.clone(),
                                         &mut instrument_track_senders2,
                                         &mut instrument_track_receivers2,
-                                        &mut  new_track_type,
+                                        &mut new_track_type,
                                         None,
                                         None,
                                         vst_host_time_info.clone(),
@@ -3634,7 +4037,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         TrackEventRoutingNodeType::Instrument(track_uuid, _) => track_uuid.clone(),
                                                         TrackEventRoutingNodeType::Effect(track_uuid, _) => track_uuid.clone(),
                                                     };
-                                                    
+
                                                     track.midi_routings_mut().remove(index);
                                                     break 'splashdown Some(destination_track_uuid);
                                                 }
@@ -3642,14 +4045,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         }
                                         None
                                     }
-                                }
-                                else {
+                                } else {
                                     None
                                 };
-                                
+
                                 // delete the routing from the source track background processor
                                 state.send_to_track_background_processor(track_from_uuid.clone(), TrackBackgroundProcessorInwardEvent::RemoveTrackEventSendRouting(route_uuid.clone()));
-                                
+
                                 // delete the routing from the destination track
                                 if let Some(destination_track_uuid) = destination_track_uuid {
                                     state.send_to_track_background_processor(destination_track_uuid, TrackBackgroundProcessorInwardEvent::RemoveTrackEventReceiveRouting(route_uuid.clone()));
@@ -3687,15 +4089,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         }
                                         None
                                     }
-                                }
-                                else {
+                                } else {
                                     None
                                 };
-                                
+
                                 if let Some((route, destination_track_uuid)) = details {
                                     // delete the routing from the source track background processor
                                     state.send_to_track_background_processor(track_from_uuid.clone(), TrackBackgroundProcessorInwardEvent::UpdateTrackEventSendRouting(route_uuid.clone(), route.clone()));
-                                    
+
                                     // delete the routing from the destination track
                                     state.send_to_track_background_processor(destination_track_uuid, TrackBackgroundProcessorInwardEvent::UpdateTrackEventReceiveRouting(route_uuid.clone(), route));
                                 }
@@ -3739,7 +4140,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         AudioRoutingNodeType::Instrument(track_uuid, _, _, _) => track_uuid.clone(),
                                                         AudioRoutingNodeType::Effect(track_uuid, _, _, _) => track_uuid.clone(),
                                                     };
-                                                    
+
                                                     track.audio_routings_mut().remove(index);
                                                     break 'splashdown Some(destination_track_uuid);
                                                 }
@@ -3747,14 +4148,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         }
                                         None
                                     }
-                                }
-                                else {
+                                } else {
                                     None
                                 };
-                                
+
                                 // delete the routing from the source track background processor
                                 state.send_to_track_background_processor(track_from_uuid.clone(), TrackBackgroundProcessorInwardEvent::RemoveAudioSendRouting(route_uuid.clone()));
-                                
+
                                 // delete the routing from the destination track
                                 if let Some(destination_track_uuid) = destination_track_uuid {
                                     state.send_to_track_background_processor(destination_track_uuid, TrackBackgroundProcessorInwardEvent::RemoveAudioReceiveRouting(route_uuid.clone()));
@@ -3858,8 +4258,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         if new_position >= 0.0 {
                                             riff_ref.set_position(new_position);
                                         }
-                                    }
-                                    else {
+                                    } else {
                                         unused_changes.push((original_riff.clone(), changed_riff.clone()));
                                     }
                                 }
@@ -3951,12 +4350,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             }) {
                                                                 if let TrackEvent::Note(note) = current_start_note {
                                                                     Some((note.note(), note.position(), note.length()))
-                                                                }
-                                                                else {
+                                                                } else {
                                                                     None
                                                                 }
-                                                            }
-                                                            else {
+                                                            } else {
                                                                 None
                                                             };
 
@@ -3978,8 +4375,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             if note.note() != current_start_note_number || note.position() != current_start_note_position || note.length() != current_start_note_length {
                                                                                 note.set_riff_start_note(true);
                                                                             }
-                                                                        }
-                                                                        else {
+                                                                        } else {
                                                                             note.set_riff_start_note(true);
                                                                         }
                                                                     }
@@ -4018,12 +4414,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     if position <= (riff_ref.position() + 1.0) {
                                                         found = Some((riff_ref.uuid(), RiffReferenceMode::Start));
                                                         break;
-                                                    }
-                                                    else if position >= (riff_ref.position() + riff.length() - 1.0) {
+                                                    } else if position >= (riff_ref.position() + riff.length() - 1.0) {
                                                         found = Some((riff_ref.uuid(), RiffReferenceMode::End));
                                                         break;
-                                                    }
-                                                    else {
+                                                    } else {
                                                         found = Some((riff_ref.uuid(), RiffReferenceMode::Normal));
                                                         break;
                                                     }
@@ -4048,8 +4442,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             riff_lengths.insert(riff.uuid().to_string(), riff.length());
                                         }
                                         Some((track.uuid().to_string(), riff_lengths))
-                                    }
-                                    else {
+                                    } else {
                                         None
                                     };
                                     if let Some((track_uuid, riff_lengths)) = track_details {
@@ -4091,7 +4484,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - set riff reference play mode - could not get lock on state"),
                     }
-
                 }
                 TrackChangeType::RiffReferenceDragCopy(mut new_riff_references_details) => {
                     match state.lock() {
@@ -4129,8 +4521,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 _ => {}
                                             }
                                         }
-                                    }
-                                    else {
+                                    } else {
                                         unused_changes.push((*position, original_riff_ref_uuid.clone()));
                                     }
                                 }
@@ -4143,8 +4534,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                     gui.ui.track_drawing_area.queue_draw();
                 }
-                TrackChangeType::RiffReferencesSelected(x, y, x2, y2, add_to_select) => {
-                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelected: x={}, y={}, x2={}, y2={}, add_to_select={}", x, y, x2, y2, add_to_select);
+                TrackChangeType::RiffReferencesSelectMultiple(x, y, x2, y2, add_to_select) => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelectMultiple: x={}, y={}, x2={}, y2={}, add_to_select={}", x, y, x2, y2, add_to_select);
                     match state.lock() {
                         Ok(state) => {
                             let mut selected = Vec::new();
@@ -4173,16 +4564,119 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.selected_riff_references_mut().clear();
                                 }
                                 state.selected_riff_references_mut().append(&mut selected);
-                            }
-                            else {
+                            } else {
                                 state.selected_riff_references_mut().clear();
                             }
                         },
-                        Err(_) => debug!("Main - rx_ui processing loop - riff references selected - could not get lock on state"),
+                        Err(_) => debug!("Main - rx_ui processing loop - riff references select multiple - could not get lock on state"),
                     }
                     gui.ui.track_drawing_area.queue_draw();
                 }
-            },
+                TrackChangeType::RiffReferencesSelectSingle(x, y, add_to_select) => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelectSingle: x={}, y={}, add_to_select={}", x, y, add_to_select);
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut selected = Vec::new();
+                            let mut state = state;
+
+                            if let Some(track) = state.get_project().song_mut().tracks_mut().get_mut(y as usize) {
+                                let track_uuid = track.uuid().to_string();
+                                let riff_lengths = track.riffs().iter().map(|riff| (riff.uuid().to_string(), riff.length())).collect_vec();
+                                for riff_ref in track.riff_refs_mut().iter_mut() {
+                                    let riff_length = riff_lengths.iter().find(|riff_length_details| riff_length_details.0 == riff_ref.linked_to());
+                                    if let Some((_, length)) = riff_length {
+                                        if riff_ref.position() <= x && x <= (riff_ref.position() + length) {
+                                            debug!("Riff ref selected: uuid={}, x={}, y={}, position={}, track={}, length={}", riff_ref.uuid().to_string(), x, y, riff_ref.position(), track_uuid.clone(), length);
+                                            selected.push(riff_ref.uuid().to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                if !add_to_select {
+                                    state.selected_riff_references_mut().clear();
+                                }
+                                state.selected_riff_references_mut().append(&mut selected);
+                            } else {
+                                state.selected_riff_references_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelectSingle - could not get lock on state"),
+                    }
+                    gui.ui.track_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffReferencesDeselectMultiple(x, y, x2, y2) => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesDeselectMultiple: x={}, y={}, x2={}, y2={}", x, y, x2, y2);
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut selected = Vec::new();
+                            let mut state = state;
+
+                            for (index, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
+                                let track_number = index as i32;
+                                if y < track_number && track_number < y2 {
+                                    let track_uuid = track.uuid().to_string();
+                                    let riff_lengths = track.riffs().iter().map(|riff| (riff.uuid().to_string(), riff.length())).collect_vec();
+                                    for riff_ref in track.riff_refs_mut().iter_mut() {
+                                        let riff_length = riff_lengths.iter().find(|riff_length_details| riff_length_details.0 == riff_ref.linked_to());
+                                        if let Some((_, length)) = riff_length {
+                                            if x <= riff_ref.position() && (riff_ref.position() + length) <= x2 {
+                                                debug!("Riff ref deselected: uuid={}, x={}, y={}, x2={}, y2={}, position={}, track={}, length={}", riff_ref.uuid().to_string(), x, y, x2, y2, riff_ref.position(), track_uuid.clone(), length);
+                                                selected.push(riff_ref.uuid().to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                            } else {
+                                state.selected_riff_references_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffReferencesDeselectMultiple - could not get lock on state"),
+                    }
+                    gui.ui.track_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffReferencesDeselectSingle(x, y) => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesDeselectSingle: x={}, y={},", x, y);
+                    match state.lock() {
+                        Ok(state) => {
+                            let mut selected = Vec::new();
+                            let mut state = state;
+
+                            if let Some(track) = state.get_project().song_mut().tracks_mut().get_mut(y as usize) {
+                                let track_uuid = track.uuid().to_string();
+                                let riff_lengths = track.riffs().iter().map(|riff| (riff.uuid().to_string(), riff.length())).collect_vec();
+                                for riff_ref in track.riff_refs_mut().iter_mut() {
+                                    let riff_length = riff_lengths.iter().find(|riff_length_details| riff_length_details.0 == riff_ref.linked_to());
+                                    if let Some((_, length)) = riff_length {
+                                        if riff_ref.position() <= x && x <= (riff_ref.position() + length) {
+                                            debug!("Riff ref deselected: uuid={}, x={}, y={}, position={}, track={}, length={}", riff_ref.uuid().to_string(), x, y, riff_ref.position(), track_uuid.clone(), length);
+                                            selected.push(riff_ref.uuid().to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                            } else {
+                                state.selected_riff_references_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesDeselectSingle - could not get lock on state"),
+                    }
+                    gui.ui.track_drawing_area.queue_draw();
+                }
+            }
             DAWEvents::TrackEffectParameterChange(_, _) => debug!("Event: TrackEffectParameterChange"),
             DAWEvents::TrackInstrumentParameterChange(_) => debug!("Event: TrackInstrumentParameterChange"),
             DAWEvents::TrackSelectedPatternChange(_, _) => debug!("Event: TrackSelectedPatternChange"),
@@ -5487,8 +5981,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         gui.ui.riff_grid_drawing_area.queue_draw();
                     }
-                    RiffGridChangeType::RiffReferencesSelected(x1, y1, x2, y2, add_to_select) => {
-                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesSelected: x1={}, y1={}, x2={}, y2={}, add_to_select={}", x1, y1, x2, y2, add_to_select);
+                    RiffGridChangeType::RiffReferencesSelectMultiple(x1, y1, x2, y2, add_to_select) => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesSelectMultiple: x1={}, y1={}, x2={}, y2={}, add_to_select={}", x1, y1, x2, y2, add_to_select);
                         let mut selected = Vec::new();
                         match state.lock() {
                             Ok(state) => {
@@ -5534,9 +6028,161 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.selected_riff_references_mut().clear();
                                 }
                             },
-                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references selected - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references select multiple - could not get lock on state"),
                         }
                         gui.ui.riff_grid_drawing_area.queue_draw();
+                    }
+                    RiffGridChangeType::RiffReferencesSelectSingle(x1, y1, add_to_select) => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesSelectSingle: x1={}, y1={}, add_to_select={}", x1, y1, add_to_select);
+                        let mut selected = Vec::new();
+                        match state.lock() {
+                            Ok(state) => {
+                                let mut state = state;
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid().clone() {
+                                    let mut riff_lengths = HashMap::new();
+                                    let mut track_uuids = vec![];
+                                    for track in state.project().song().tracks().iter() {
+                                        track_uuids.push(track.uuid().to_string());
+                                        for riff in track.riffs().iter() {
+                                            riff_lengths.insert(riff.uuid().to_string(), riff.length());
+                                        }
+                                    }
+
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
+                                        if let Some(track_uuid) = track_uuids.get(y1 as usize) {
+                                            if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
+                                                for riff_ref in riff_references.iter_mut() {
+                                                    if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
+                                                        if riff_ref.position() <= x1 && x1 <= (riff_ref.position() + riff_length) {
+                                                            debug!("Riff grid - Riff ref select single: x1={}, y1={}, position={}, track={}, length={}", x1, y1, riff_ref.position(), track_uuid.as_str(), riff_length);
+                                                            selected.push(riff_ref.uuid().to_string());
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !selected.is_empty() {
+                                    let mut state = state;
+                                    if !add_to_select {
+                                        state.selected_riff_references_mut().clear();
+                                    }
+                                    state.selected_riff_references_mut().append(&mut selected);
+                                }
+                                else {
+                                    state.selected_riff_references_mut().clear();
+                                }
+                            },
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references select single - could not get lock on state"),
+                        }
+                        gui.ui.riff_grid_drawing_area.queue_draw();
+                    }
+                    RiffGridChangeType::RiffReferencesDeselectMultiple(x1, y1, x2, y2) => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesDeselectMultiple: x1={}, y1={}, x2={}, y2={}", x1, y1, x2, y2);
+                        let mut selected = Vec::new();
+                        match state.lock() {
+                            Ok(state) => {
+                                let mut state = state;
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid().clone() {
+                                    let mut riff_lengths = HashMap::new();
+                                    let mut track_uuids = vec![];
+                                    for track in state.project().song().tracks().iter() {
+                                        track_uuids.push(track.uuid().to_string());
+                                        for riff in track.riffs().iter() {
+                                            riff_lengths.insert(riff.uuid().to_string(), riff.length());
+                                        }
+                                    }
+
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
+                                        for (index, track_uuid) in track_uuids.iter().enumerate() {
+                                            let track_number = index as i32;
+                                            if y1 < track_number && track_number < y2 {
+                                                if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
+                                                    for riff_ref in riff_references.iter_mut() {
+                                                        if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
+                                                            if x1 <= riff_ref.position() && (riff_ref.position() + riff_length) <= x2 {
+                                                                debug!("Riff grid - Riff ref deselected: x1={}, y1={}, x2={}, y2={}, position={}, track={}, length={}", x1, y1, x2, y2, riff_ref.position(), track_uuid.as_str(), riff_length);
+                                                                selected.push(riff_ref.uuid().to_string());
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !selected.is_empty() {
+                                    let mut state = state;
+                                    state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                }
+                                else {
+                                    state.selected_riff_references_mut().clear();
+                                }
+                            },
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect multiple - could not get lock on state"),
+                        }
+                        gui.ui.riff_grid_drawing_area.queue_draw();
+                    }
+                    RiffGridChangeType::RiffReferencesDeselectSingle(x1, y1) => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesDeselectSingle: x1={}, y1={}", x1, y1);
+                        let mut selected = Vec::new();
+                        match state.lock() {
+                            Ok(mut state) => {
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid().clone() {
+                                    let mut riff_lengths = HashMap::new();
+                                    let mut track_uuids = vec![];
+                                    for track in state.project().song().tracks().iter() {
+                                        track_uuids.push(track.uuid().to_string());
+                                        for riff in track.riffs().iter() {
+                                            riff_lengths.insert(riff.uuid().to_string(), riff.length());
+                                        }
+                                    }
+
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
+                                        if let Some(track_uuid) = track_uuids.get(y1 as usize) {
+                                            if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
+                                                for riff_ref in riff_references.iter_mut() {
+                                                    if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
+                                                        if riff_ref.position() <= x1 && x1 <= (riff_ref.position() + riff_length) {
+                                                            debug!("Riff grid - Riff ref select single: x1={}, y1={}, position={}, track={}, length={}", x1, y1, riff_ref.position(), track_uuid.as_str(), riff_length);
+                                                            selected.push(riff_ref.uuid().to_string());
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !selected.is_empty() {
+                                    let mut state = state;
+                                    state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                }
+                                else {
+                                    state.selected_riff_references_mut().clear();
+                                }
+                            }
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect single - could not get lock on state"),
+                        }
+                        gui.ui.riff_grid_drawing_area.queue_draw();
+                    }
+                    RiffGridChangeType::RiffReferencesDeselectAll => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesDeselectAll");
+                        match state.lock() {
+                            Ok(mut state) => {
+                                state.selected_riff_references_mut().clear();
+                                gui.ui.riff_grid_drawing_area.queue_draw();
+                            }
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect single - could not get lock on state"),
+                        }
                     }
                 }
             }

@@ -143,7 +143,11 @@ pub enum RiffGridChangeType {
     RiffReferenceAdd{ track_index: i32, position: f64 },
     RiffReferenceDragCopy(Vec<(f64, String)>), // position: f64, original_riff_ref_uuid: String
     RiffReferenceDelete{ track_index: i32, position: f64 },
-    RiffReferencesSelected(f64, i32, f64, i32, bool),
+    RiffReferencesSelectMultiple(f64, i32, f64, i32, bool),
+    RiffReferencesSelectSingle(f64, i32, bool),
+    RiffReferencesDeselectMultiple(f64, i32, f64, i32),
+    RiffReferencesDeselectSingle(f64, i32),
+    RiffReferencesDeselectAll,
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
     RiffReferencePaste,
@@ -196,7 +200,10 @@ pub enum TrackChangeType {
     RiffReferenceAdd(i32, f64),                    // track index, position
     RiffReferenceDragCopy(Vec<(f64, String)>),                    // position, original riff reference uuid
     RiffReferenceDelete(i32, f64),                 // track index, position
-    RiffReferencesSelected(f64, i32, f64, i32, bool),
+    RiffReferencesSelectMultiple(f64, i32, f64, i32, bool),
+    RiffReferencesSelectSingle(f64, i32, bool),
+    RiffReferencesDeselectMultiple(f64, i32, f64, i32),
+    RiffReferencesDeselectSingle(f64, i32),
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
     RiffReferencePaste,
@@ -213,7 +220,10 @@ pub enum TrackChangeType {
     RiffCopySelected,
     RiffPasteSelected,
     RiffChangeLengthOfSelected(bool), // true to lengthen
-    RiffEventsSelected(f64, i32, f64, i32, bool),
+    RiffEventsSelectMultiple(f64, i32, f64, i32, bool),
+    RiffEventsSelectSingle(f64, i32, bool),
+    RiffEventsDeselectMultiple(f64, i32, f64, i32),
+    RiffEventsDeselectSingle(f64, i32),
     RiffSetStartNote(i32, f64),
     RiffReferencePlayMode(i32, f64),
 
@@ -225,7 +235,8 @@ pub enum TrackChangeType {
     AutomationCopy,
     AutomationPaste,
     AutomationTypeChange(AutomationChangeData),
-    AutomationSelected(f64, i32, f64, i32, bool),
+    AutomationSelectMultiple(f64, i32, f64, i32, bool),
+    AutomationDeselectMultiple(f64, i32, f64, i32),
 
     RouteMidiTo(TrackEventRouting),
     RemoveMidiRouting(String), // route_uuid

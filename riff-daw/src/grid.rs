@@ -3466,13 +3466,17 @@ impl AutomationEditItemHandler {
                                                 dragged_item.set_position(position_in_beats);
 
                                                 // calculate and set the value
-                                                let value = if invert_vertically {
+                                                let mut value = if invert_vertically {
                                                     let y_pos_inverted = canvas_height - y;
                                                     ((y_pos_inverted - adjusted_entity_height_in_pixels) / adjusted_entity_height_in_pixels) / 127.0
                                                 }
                                                 else {
                                                     y / 127.0
                                                 };
+
+                                                if value < 0.0 {
+                                                    value = 0.0;
+                                                }
 
                                                 debug!("Automation - Setting dragged item value to: {}", value);
                                                 dragged_item.set_value(value);
@@ -3486,6 +3490,11 @@ impl AutomationEditItemHandler {
                                                     for item in self.original_selected_items.iter() {
                                                         if item.id() != dragged_item.id() {
                                                             let mut changed_item = item.clone();
+                                                            let mut changed_item_value = changed_item.value() + delta_y;
+
+                                                            if changed_item_value < 0.0 {
+                                                                changed_item_value = 0.0;
+                                                            }
 
                                                             changed_item.set_position(changed_item.position() + delta_x);
                                                             changed_item.set_value(changed_item.value() + delta_y);
@@ -4853,7 +4862,7 @@ impl AutomationCustomPainter {
         let _ = context.stroke();
     }
 
-    fn draw_automation(context: &Context, height: f64, automation_discrete: bool, mut previous_point_x: &mut f64, mut previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64) {
+    fn draw_automation(context: &Context, height: f64, automation_discrete: bool, mut previous_point_x: &mut f64, mut previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64, automation_value: f64) {
         if automation_discrete {
             context.move_to(x, height);
         } else {
@@ -4870,6 +4879,10 @@ impl AutomationCustomPainter {
             let _ = context.fill();
             let _ = context.stroke();
         }
+
+        context.move_to(x + 10.0, y);
+        context.set_font_size(9.0);
+        let _ = context.show_text(format!("{:.3}", automation_value).as_str());
 
         if !automation_discrete {
             *previous_point_x = x;
@@ -5390,7 +5403,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let x = controller.position() * adjusted_beat_width_in_pixels;
                                                         let y = height - note_y_pos_inverted;
 
-                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
+                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, controller_value as f64);
 
                                                         match context.stroke() {
                                                             Ok(_) => (),
@@ -5444,7 +5457,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let x = audio_plugin_parameter.position() * adjusted_beat_width_in_pixels;
                                                         let y = height - note_y_pos_inverted;
 
-                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
+                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, parameter_value as f64);
                                                     }
                                                 }
                                             }
@@ -5461,7 +5474,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                             let x = audio_plugin_parameter.position() * adjusted_beat_width_in_pixels;
                                                             let y = height - note_y_pos_inverted;
 
-                                                            Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
+                                                            Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, parameter_value as f64);
 
                                                             match context.stroke() {
                                                                 Ok(_) => (),
@@ -5480,7 +5493,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                     let x = note_expression.position() * adjusted_beat_width_in_pixels;
                                                     let y = height - note_y_pos_inverted;
 
-                                                    Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
+                                                    Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, note_expression_value);
 
                                                     match context.stroke() {
                                                         Ok(_) => (),

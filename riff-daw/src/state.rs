@@ -1892,7 +1892,7 @@ impl DAWState {
 
 
 
-    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64) {
+    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64) -> i32 {
         let mut song_length_in_beats = 400.0;
 
         let already_playing = self.playing();
@@ -1969,6 +1969,8 @@ impl DAWState {
                 Ok(_) => (),
                 Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning play riff arrangement on: {}", error),
         }
+
+        number_of_blocks
     }
 
 
@@ -2290,61 +2292,75 @@ impl DAWState {
                                track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) {
-        let number_of_blocks = self.play_song(tx_to_audio);
+        let number_of_blocks = match self.current_view() {
+            CurrentView::Track => Some(self.play_song(tx_to_audio) + 1000 /* silence at the end */),
+            CurrentView::RiffArrangement => {
+                if let Some(selected_riff_arrangement_uuid) = self.selected_riff_arrangement_uuid() {
+                    Some(self.play_riff_arrangement(tx_to_audio, selected_riff_arrangement_uuid.clone(), 0.0) + 1000 /* silence at the end */)
+                }
+                else {
+                    None
+                }
+            }
+            _ => None
+        };
+
         let track_render_audio_consumers = self.track_render_audio_consumers.clone();
 
-        let _ = thread::Builder::new().name("Export wave file".into()).spawn(move || {
-            match track_render_audio_consumers.lock() {
-                Ok(track_render_audio_consumers) => if let Ok(mut export_wave_file) = std::fs::File::create(path) {
-                    let number_of_audio_type_tracks = track_render_audio_consumers.len() as f32;
-                    let mut master_left_channel_data: [f32; 1024] = [0.0; 1024];
-                    let mut master_right_channel_data: [f32; 1024] = [0.0; 1024];
-                    let mut sample_data = vec![];
-                    let mut audio_blocks = vec![AudioBlock::default()];
+        if let Some(number_of_blocks) = number_of_blocks {
+            let _ = thread::Builder::new().name("Export wave file".into()).spawn(move || {
+                match track_render_audio_consumers.lock() {
+                    Ok(track_render_audio_consumers) => if let Ok(mut export_wave_file) = std::fs::File::create(path) {
+                        let number_of_audio_type_tracks = track_render_audio_consumers.len() as f32;
+                        let mut master_left_channel_data: [f32; 1024] = [0.0; 1024];
+                        let mut master_right_channel_data: [f32; 1024] = [0.0; 1024];
+                        let mut sample_data = vec![];
+                        let mut audio_blocks = vec![AudioBlock::default()];
 
-                    for _block_number in 0..number_of_blocks {
-                        // reset the master block
-                        for index in 0..1024_usize {
-                            master_left_channel_data[index] = 0.0;
-                            master_right_channel_data[index] = 0.0;
-                        }
+                        for _block_number in 0..number_of_blocks {
+                            // reset the master block
+                            for index in 0..1024_usize {
+                                master_left_channel_data[index] = 0.0;
+                                master_right_channel_data[index] = 0.0;
+                            }
 
-                        for (_track_uuid, track_audio_consumer_details) in track_render_audio_consumers.iter() {
-                            if let Some(blocks_read) = track_audio_consumer_details.consumer().read_blocking(&mut audio_blocks) {
-                                // debug!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
-                                // copy the track channel data to the master channels
-                                if blocks_read == 1 {
-                                    let audio_block = audio_blocks.get(0).unwrap();
-                                    for index in 0..1024_usize {
-                                        master_left_channel_data[index] += audio_block.audio_data_left[index] / number_of_audio_type_tracks;
-                                    }
-                                    for index in 0..1024_usize {
-                                        master_right_channel_data[index] += audio_block.audio_data_right[index] / number_of_audio_type_tracks;
+                            for (_track_uuid, track_audio_consumer_details) in track_render_audio_consumers.iter() {
+                                if let Some(blocks_read) = track_audio_consumer_details.consumer().read_blocking(&mut audio_blocks) {
+                                    // debug!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
+                                    // copy the track channel data to the master channels
+                                    if blocks_read == 1 {
+                                        let audio_block = audio_blocks.get(0).unwrap();
+                                        for index in 0..1024_usize {
+                                            master_left_channel_data[index] += audio_block.audio_data_left[index] / number_of_audio_type_tracks;
+                                        }
+                                        for index in 0..1024_usize {
+                                            master_right_channel_data[index] += audio_block.audio_data_right[index] / number_of_audio_type_tracks;
+                                        }
                                     }
                                 }
                             }
+
+                            // write the master block out
+                            for index in 0..1024_usize {
+                                sample_data.push(master_left_channel_data[index]);
+                                sample_data.push(master_right_channel_data[index]);
+                            }
                         }
 
-                        // write the master block out
-                        for index in 0..1024_usize {
-                            sample_data.push(master_left_channel_data[index]);
-                            sample_data.push(master_right_channel_data[index]);
-                        }
+                        // write the file
+                        let wav_header = wav_io::new_header(44100, 32, true, false);
+                        let _ = wav_io::write_to_file(&mut export_wave_file, &wav_header, &sample_data);
                     }
-
-                    // write the file
-                    let wav_header = wav_io::new_header(44100, 32, true, false);
-                    let _ = wav_io::write_to_file(&mut export_wave_file, &wav_header, &sample_data);
+                    Err(_) => {}
                 }
-                Err(_) => {}
-            }
 
-            if let Ok(mut coast) = track_audio_coast.lock() {
-                *coast = TrackBackgroundProcessorMode::AudioOut;
-            }
+                if let Ok(mut coast) = track_audio_coast.lock() {
+                    *coast = TrackBackgroundProcessorMode::AudioOut;
+                }
 
-            let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
-        });
+                let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+            });
+        }
     }
 
     pub fn export_to_midi_file(&self, path: std::path::PathBuf) -> bool {

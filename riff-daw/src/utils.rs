@@ -8,9 +8,15 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode};
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
+
+pub struct CalculatedSnap {
+    pub snapped_value: f64,
+    pub calculated_delta: f64,
+    pub snapped: bool,
+}
 
 pub struct DAWUtils;
 
@@ -175,8 +181,49 @@ impl DAWUtils {
         }
     }
 
+    pub fn quantise(
+        value: f64,
+        snap_in_beats: f64,
+        strength: f64,
+        length: bool,
+    ) -> CalculatedSnap {
+        // need to determine which direction to snap in
+        // work out backwards and forwards deltas
+        let backward_snap_delta = value % snap_in_beats;
+        let mut calculated_delta = 0.0;
+        let mut snapped = false;
+        let mut snapped_value = value;
+
+        if length && value < snap_in_beats {
+            calculated_delta = snap_in_beats - value;
+            snapped_value = snap_in_beats;
+            snapped = true;
+        }
+        else if backward_snap_delta > 0.0 {
+            let forward_snap_delta = snap_in_beats - backward_snap_delta;
+
+            // use smallest delta
+            if backward_snap_delta < forward_snap_delta {
+                calculated_delta = backward_snap_delta * strength * -1.0;
+                let new_value = value + calculated_delta;
+                if new_value >= 0.0 {
+                    snapped_value = new_value;
+                    snapped = true;
+                } else {
+                    calculated_delta = 0.0;
+                }
+            } else if forward_snap_delta > 0.0 {
+                calculated_delta = forward_snap_delta * strength;
+                snapped_value = value + calculated_delta;
+                snapped = true;
+            }
+        }
+
+        CalculatedSnap { snapped_value, calculated_delta, snapped }
+    }
+
     pub fn convert_to_event_blocks(
-        automation: &Vec<TrackEvent>,
+        automation: &Automation,
         riffs: &Vec<Riff>,
         riff_refs: &Vec<RiffReference>,
         bpm: f64,
@@ -184,8 +231,10 @@ impl DAWUtils {
         sample_rate: f64,
         passage_length_in_beats: f64,
         midi_channel: i32,
+        automation_discrete: bool,
     ) -> (Vec<Vec<TrackEvent>>, Vec<Vec<PluginParameter>>) {
-        debug!("Automation events for track: {}", automation.len());
+        debug!("Automation events for track: {}", automation.events().len());
+        debug!("Automation envelopes for track: {}", automation.envelopes().len());
         // TODO need to make sure that this doesn't cross over into the next measure
         // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - 1024.0; 
         let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
@@ -194,7 +243,12 @@ impl DAWUtils {
 
         let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel);
         debug!("Number of riff ref events extracted for track: {}", track_events.len());
-        let plugin_parameter_events = Self::convert_automation_events(automation, bpm, sample_rate, &mut track_events, midi_channel);
+        let plugin_parameter_events = if automation_discrete {
+            Self::convert_automation_events(automation.events(), bpm, sample_rate, &mut track_events, midi_channel)
+        }
+        else {
+            Self::convert_automation_envelope_events(automation.envelopes(), bpm, sample_rate, block_size_in_samples, &mut track_events, passage_length_in_frames)
+        };
         debug!("Number of riff ref automation parameter events extracted for track: {}", plugin_parameter_events.len());
 
         let event_blocks = Self::create_track_event_blocks(block_size_in_samples, passage_length_in_frames, &mut track_events);
@@ -322,9 +376,6 @@ impl DAWUtils {
         let mut plugin_parameter_events: Vec<PluginParameter> = Vec::new();
         for event in automation {
             match event {
-                TrackEvent::Note(_) => {},
-                TrackEvent::NoteOn(_) => {}
-                TrackEvent::NoteOff(_) => {}
                 TrackEvent::NoteExpression(note_expression) => {
                     let mut event = note_expression.clone();
                     event.set_position(event.position() / bpm * 60.0 * sample_rate);
@@ -334,7 +385,7 @@ impl DAWUtils {
                     let mut controller_event = controller.clone();
                     controller_event.set_position(controller_event.position() / bpm * 60.0 * sample_rate);
                     events_all.push(TrackEvent::Controller(controller_event));
-                },
+                }
                 TrackEvent::PitchBend(_pitch_bend) => {
                     let mut pitch_bend = _pitch_bend.clone();
                     pitch_bend.set_position(pitch_bend.position() / bpm * 60.0 * sample_rate);
@@ -344,9 +395,74 @@ impl DAWUtils {
                     let mut param_copy = parameter.clone();
                     param_copy.set_position(param_copy.position() / bpm * 60.0 * sample_rate);
                     plugin_parameter_events.push(param_copy);
-                },
-                TrackEvent::Sample(_sample) => {}
+                }
                 _ => {}
+            }
+        }
+        events_all.sort_by(|event1, event2| DAWUtils::sort_by_daw_position(event1, event2));
+        plugin_parameter_events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+        plugin_parameter_events
+    }
+
+    fn convert_automation_envelope_events(
+        automation_envelopes: &Vec<AutomationEnvelope>,
+        bpm: f64,
+        sample_rate: f64,
+        block_size_in_samples: f64,
+        events_all: &mut Vec<TrackEvent>,
+        passage_length_in_frames: f64
+    ) -> Vec<PluginParameter> {
+        let mut plugin_parameter_events: Vec<PluginParameter> = Vec::new();
+        for envelope in automation_envelopes.iter() {
+            let event_details: TrackEvent = envelope.event_details().clone();
+
+            for position_in_samples in (0..(passage_length_in_frames as i32)).step_by(block_size_in_samples as usize) {
+                // find applicable envelope events
+                let mut point_1 = None;
+                let mut point_2 = None;
+                // zoom until an envelope event position is greater than the current position
+                for event in envelope.events().iter() {
+                    let envelope_position = (event.position() / bpm * 60.0 * sample_rate) as i32;
+                    if envelope_position >= position_in_samples {
+                        point_2 = Some((envelope_position as f64, event.value()));
+                        break;
+                    }
+                    if position_in_samples > envelope_position {
+                        point_1 = Some((envelope_position as f64, event.value()));
+                    }
+                }
+
+                if let Some(point_1) = point_1 {
+                    if let Some(point_2) = point_2 {
+                        let slope = (point_2.1 - point_1.1) / (point_2.0 - point_1.0);
+                        let mut event = event_details.clone();
+                        let value = slope * (position_in_samples as f64 - point_1.0) + point_1.1;
+
+                        event.set_position(position_in_samples as f64);
+                        event.set_value(value);
+
+                        if let TrackEvent::AudioPluginParameter(param) = event {
+                            plugin_parameter_events.push(param);
+                        }
+                        else {
+                            events_all.push(event);
+                        }
+                    }
+                    else {
+                        // the position is greater than the last point in the envelope so we generate events with the same value (slope of 0)
+                        let mut event = event_details.clone();
+
+                        event.set_position(position_in_samples as f64);
+                        event.set_value(point_1.1);
+
+                        if let TrackEvent::AudioPluginParameter(param) = event {
+                            plugin_parameter_events.push(param);
+                        }
+                        else {
+                            events_all.push(event);
+                        }
+                    }
+                }
             }
         }
         events_all.sort_by(|event1, event2| DAWUtils::sort_by_daw_position(event1, event2));
@@ -1122,7 +1238,8 @@ mod tests {
 
     use crate::DAWUtils;
     // use {DAWEventPosition, Riff, RiffReference, Track, TrackEvent, VstPluginParameter};
-    use crate::domain::{DAWItemPosition, Note, Riff, RiffReference, TrackEvent};
+    use crate::domain::{Automation, AutomationEnvelope, DAWItemPosition, Note, PluginParameter, Riff, RiffReference, TrackEvent};
+    use crate::event::TranslationEntityType::AudioPluginParameter;
     use crate::state::MidiPolyphonicExpressionNoteId;
 
     #[test]
@@ -1131,7 +1248,7 @@ mod tests {
         let sample_rate = 44100.0;
         let block_size = 1024.0;
         let song_length_in_beats = 10.0;
-        let automation: Vec<TrackEvent> = vec![];
+        let automation = Automation::new();
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
 
@@ -1151,7 +1268,7 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
 
         // calculate how many blocks are expected
         let expected_blocks = ((sample_rate * 60.0 /* secs */ * song_length_in_beats) / (block_size * bpm)).round() as usize;
@@ -1275,5 +1392,229 @@ mod tests {
         }
 
         assert_eq!(0, midi_events.get(0_usize).unwrap().delta_frames);
+    }
+
+    #[test]
+    fn envelope_interpolation_positive_slope() {
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        let mut automation_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size_in_samples = 1024.0;
+        let mut events_all: Vec<TrackEvent> = vec![];
+        let passage_length_in_frames = sample_rate * 10.0 /* seconds */;
+
+        // add 2 points to the envelope - positive slope
+        let envelope_point_1 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_1));
+        let envelope_point_2 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: passage_length_in_frames / sample_rate * bpm / 60.0,
+            value: 1.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_2));
+        let automation_envelopes: Vec<AutomationEnvelope> = vec![automation_envelope];
+
+        let param_events = DAWUtils::convert_automation_envelope_events(&automation_envelopes, bpm, sample_rate, block_size_in_samples, &mut events_all, passage_length_in_frames);
+        assert_eq!((passage_length_in_frames / block_size_in_samples) as usize, param_events.len());
+        let mut previous_value = None;
+        for param_event in param_events.iter() {
+            println!("position={}, value={}", param_event.position, param_event.value);
+
+            if let Some(value) = previous_value {
+                assert!(value < param_event.value);
+            }
+
+            previous_value = Some(param_event.value);
+        }
+    }
+
+    #[test]
+    fn envelope_interpolation_positive_slope_y_offset() {
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        let mut automation_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size_in_samples = 1024.0;
+        let mut events_all: Vec<TrackEvent> = vec![];
+        let passage_length_in_frames = sample_rate * 10.0 /* seconds */;
+
+        // add 2 points to the envelope - positive slope
+        let envelope_point_1 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.2,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_1));
+        let envelope_point_2 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: passage_length_in_frames / sample_rate * bpm / 60.0,
+            value: 0.8,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_2));
+        let automation_envelopes: Vec<AutomationEnvelope> = vec![automation_envelope];
+
+        let param_events = DAWUtils::convert_automation_envelope_events(&automation_envelopes, bpm, sample_rate, block_size_in_samples, &mut events_all, passage_length_in_frames);
+        assert_eq!((passage_length_in_frames / block_size_in_samples) as usize, param_events.len());
+        let mut previous_value = None;
+        for param_event in param_events.iter() {
+            println!("position={}, value={}", param_event.position, param_event.value);
+
+            if let Some(value) = previous_value {
+                assert!(value < param_event.value);
+            }
+
+            previous_value = Some(param_event.value);
+        }
+    }
+
+    #[test]
+    fn envelope_interpolation_values_after_last_env_point() {
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        let mut automation_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size_in_samples = 1024.0;
+        let mut events_all: Vec<TrackEvent> = vec![];
+        let passage_length_in_frames = sample_rate * 10.0 /* seconds */;
+
+        // add 2 points to the envelope - positive slope
+        let envelope_point_1 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_1));
+        let position_quarter_way = passage_length_in_frames / sample_rate * bpm / 60.0 / 4.0;
+        let envelope_point_2 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: position_quarter_way,
+            value: 0.2,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_2));
+        let position_half_way = passage_length_in_frames / sample_rate * bpm / 60.0 / 2.0;
+        let envelope_point_3 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: position_half_way,
+            value: 0.8,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_3));
+        let automation_envelopes: Vec<AutomationEnvelope> = vec![automation_envelope];
+
+        let param_events = DAWUtils::convert_automation_envelope_events(&automation_envelopes, bpm, sample_rate, block_size_in_samples, &mut events_all, passage_length_in_frames);
+        // assert_eq!((passage_length_in_frames / block_size_in_samples) as usize, param_events.len());
+        let mut previous_value = None;
+        for param_event in param_events.iter() {
+            println!("half way={}, quarter way={}, position={}, value={}", passage_length_in_frames / 2.0, passage_length_in_frames / 4.0, param_event.position, param_event.value);
+
+            if let Some(value) = previous_value {
+                if param_event.position > 221184.0 {
+                    assert_eq!(value, param_event.value);
+                }
+                else {
+                    assert!(value < param_event.value);
+                }
+            }
+
+            previous_value = Some(param_event.value);
+        }
+    }
+
+    #[test]
+    fn envelope_interpolation_negative_slope() {
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        let mut automation_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size_in_samples = 1024.0;
+        let mut events_all: Vec<TrackEvent> = vec![];
+        let passage_length_in_frames = sample_rate * 10.0 /* seconds */;
+
+        // add 2 points to the envelope - positive slope
+        let envelope_point_1 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: 0.0,
+            value: 1.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_1));
+        let envelope_point_2 = PluginParameter {
+            id: Default::default(),
+            index: 0,
+            position: passage_length_in_frames / sample_rate * bpm / 60.0,
+            value: 0.0,
+            instrument: false,
+            plugin_uuid: Default::default(),
+        };
+        automation_envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_2));
+        let automation_envelopes: Vec<AutomationEnvelope> = vec![automation_envelope];
+
+        let param_events = DAWUtils::convert_automation_envelope_events(&automation_envelopes, bpm, sample_rate, block_size_in_samples, &mut events_all, passage_length_in_frames);
+        assert_eq!((passage_length_in_frames / block_size_in_samples) as usize, param_events.len());
+        let mut previous_value = None;
+        for param_event in param_events.iter() {
+            println!("position={}, value={}", param_event.position, param_event.value);
+
+            if let Some(value) = previous_value {
+                assert!(value > param_event.value);
+            }
+
+            previous_value = Some(param_event.value);
+        }
     }
 }

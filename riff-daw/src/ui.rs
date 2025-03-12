@@ -11,7 +11,7 @@ use cairo::glib::{BindingFlags, BoolError, SignalHandlerId};
 use crossbeam_channel::Sender;
 use gdk::{EventType, RGBA, ScrollDirection};
 use gladis::Gladis;
-use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType};
+use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType, Spinner};
 use gtk::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, ComboBoxText, CssProvider, Dialog, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserDialog, FileChooserWidget, FileFilter, Frame, gdk, glib, Grid, Label, ListStore, MenuItem, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, RadioToolButton, RecentChooserMenu, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, ToggleToolButton, ToolButton, TreeView, Viewport, Widget};
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -22,7 +22,7 @@ use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_V
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
-use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter};
+use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
 use crate::utils::DAWUtils;
 
@@ -109,10 +109,13 @@ pub struct Ui {
     pub track_grid_select_mode_btn: RadioToolButton,
     pub track_grid_add_loop_mode_btn: RadioToolButton,
     pub track_grid_set_riff_reference_mode_btn: RadioToolButton,
+    pub track_grid_windowed_zoom_mode_btn: RadioToolButton,
 
     pub track_grid_cut_btn: ToolButton,
     pub track_grid_copy_btn: ToolButton,
     pub track_grid_paste_btn: ToolButton,
+    pub track_grid_select_all_btn: ToolButton,
+    pub track_grid_unselect_all_btn: ToolButton,
 
     pub track_grid_horizontal_zoom_out: Button,
     pub track_grid_horizontal_zoom_scale: Scale,
@@ -130,7 +133,6 @@ pub struct Ui {
     pub track_grid_translate_down_btn: ToolButton,
 
     pub track_grid_quantise_start_choice: ComboBoxText,
-    pub track_grid_quantise_length_choice: ComboBoxText,
 
     pub track_grid_show_automation_btn: ToggleToolButton,
     pub track_grid_show_note_velocities_btn: ToggleToolButton,
@@ -150,10 +152,13 @@ pub struct Ui {
     pub riff_grid_select_mode_btn: RadioToolButton,
     pub riff_grid_add_loop_mode_btn: RadioToolButton,
     pub riff_grid_set_riff_reference_mode_btn: RadioToolButton,
+    pub riff_grid_windowed_zoom_mode_btn: RadioToolButton,
 
     pub riff_grid_cut_btn: ToolButton,
     pub riff_grid_copy_btn: ToolButton,
     pub riff_grid_paste_btn: ToolButton,
+    pub riff_grid_select_all_btn: ToolButton,
+    pub riff_grid_unselect_all_btn: ToolButton,
 
     pub riff_grid_horizontal_zoom_out: Button,
     pub riff_grid_horizontal_zoom_scale: Scale,
@@ -209,10 +214,13 @@ pub struct Ui {
     pub piano_roll_edit_mode_btn: RadioToolButton,
     pub piano_roll_select_mode_btn: RadioToolButton,
     pub piano_roll_select_riff_start_note_mode_btn: RadioToolButton,
+    pub piano_roll_windowed_zoom_mode_btn: RadioToolButton,
 
     pub piano_roll_cut_btn: ToolButton,
     pub piano_roll_copy_btn: ToolButton,
     pub piano_roll_paste_btn: ToolButton,
+    pub piano_roll_select_all_btn: ToolButton,
+    pub piano_roll_unselect_all_btn: ToolButton,
 
     pub piano_roll_horizontal_zoom_out: Button,
     pub piano_roll_horizontal_zoom_scale: Scale,
@@ -229,10 +237,14 @@ pub struct Ui {
     pub piano_roll_translate_up_btn: ToolButton,
     pub piano_roll_translate_down_btn: ToolButton,
 
+    pub piano_roll_subdivision_mode_choice: ComboBoxText,
+    pub piano_roll_triplet_type_choice: ComboBoxText,
+
     pub piano_roll_quantise_start_choice: ComboBoxText,
     pub piano_roll_quantise_length_choice: ComboBoxText,
-    pub piano_roll_quantise_start_checkbox: RadioToolButton,
-    pub piano_roll_quantise_end_checkbox: RadioToolButton,
+    pub piano_roll_quantise_start_checkbox: ToggleToolButton,
+    pub piano_roll_quantise_end_checkbox: ToggleToolButton,
+    pub piano_roll_quantise_strength_spinner: SpinButton,
     pub piano_roll_quantise_btn: ToolButton,
 
     pub piano_roll_note_length_increment_choice: ComboBoxText,
@@ -318,14 +330,17 @@ pub struct Ui {
     pub automation_ruler_drawing_area: DrawingArea,
     pub automation_drawing_area: DrawingArea,
 
-    pub automation_add_mode_btn: ToolButton,
-    pub automation_delete_mode_btn: ToolButton,
-    pub automation_edit_mode_btn: ToolButton,
-    pub automation_select_mode_btn: ToolButton,
+    pub automation_add_mode_btn: RadioToolButton,
+    pub automation_delete_mode_btn: RadioToolButton,
+    pub automation_edit_mode_btn: RadioToolButton,
+    pub automation_select_mode_btn: RadioToolButton,
+    pub automation_zoom_window_mode_btn: RadioToolButton,
 
     pub automation_cut_btn: ToolButton,
     pub automation_copy_btn: ToolButton,
     pub automation_paste_btn: ToolButton,
+    pub automation_select_all_btn: ToolButton,
+    pub automation_unselect_all_btn: ToolButton,
 
     pub automation_zoom_out: ToolButton,
     pub automation_zoom_scale: Scale,
@@ -374,6 +389,9 @@ pub struct Ui {
     pub automation_grid_mode_line: RadioToolButton,
     pub automation_grid_mode_curve: RadioToolButton,
 
+    pub automation_grid_discrete_events_btn: RadioToolButton,
+    pub automation_grid_continuous_events_btn: RadioToolButton,
+
     pub riff_sets_track_panel_scrolled_window: ScrolledWindow,
     pub riff_sets_track_panel_view_port: Viewport,
     pub riff_sets_scrolled_window: ScrolledWindow,
@@ -416,6 +434,7 @@ pub struct Ui {
     pub riffs_stack: Stack,
 
     pub song_position_txt_ctrl: Label,
+    pub song_time_txt_ctrl: Label,
 
     pub transport_goto_start_button: RadioToolButton,
     pub transport_move_back_button: RadioToolButton,
@@ -3811,6 +3830,7 @@ impl MainWindow {
             let track_grid_delete_mode_btn = self.ui.track_grid_delete_mode_btn.clone();
             let track_grid_edit_mode_btn = self.ui.track_grid_edit_mode_btn.clone();
             let track_grid_set_riff_reference_mode_btn = self.ui.track_grid_set_riff_reference_mode_btn.clone();
+            let track_grid_windowed_zoom_mode_btn = self.ui.track_grid_windowed_zoom_mode_btn.clone();
             let track_grid_add_loop_mode_btn = self.ui.track_grid_add_loop_mode_btn.clone();
             self.ui.track_drawing_area.connect_key_press_event(move |track_drawing_area, event_key| {
                 let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
@@ -3889,6 +3909,10 @@ impl MainWindow {
                     else if key_name == "r" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the track grid set riff reference play mode message
                         track_grid_set_riff_reference_mode_btn.set_active(true);
+                    }
+                    else if key_name == "z" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        // send the track grid set riff reference play mode message
+                        track_grid_windowed_zoom_mode_btn.set_active(true);
                     }
                 }
                 
@@ -4002,6 +4026,16 @@ impl MainWindow {
         }
 
         {
+            let grid = track_grid_arc.clone();
+            self.ui.track_grid_windowed_zoom_mode_btn.connect_clicked(move |_| {
+                match grid.lock() {
+                    Ok(mut grid) => grid.set_operation_mode(OperationModeType::WindowedZoom),
+                    Err(_) => (),
+                }
+            });
+        }
+
+        {
             let track_grid = track_grid_arc.clone();
             let track_drawing_area = self.ui.track_drawing_area.clone();
             self.ui.track_grid_cut_btn.connect_clicked(move |_| {
@@ -4031,6 +4065,20 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_paste(&track_drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.track_grid_select_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelectAll, None));
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.track_grid_unselect_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesDeselectAll, None));
             });
         }
 
@@ -4160,23 +4208,6 @@ impl MainWindow {
                         };
                     },
                     None => debug!("Track grid: Unable to extract a quantise start value from the ComboBox - is there an active item?"),
-                };
-            });
-        }
-
-        {
-            let track_grid = track_grid_arc.clone();
-            let track_grid_quantise_length_choice = self.ui.track_grid_quantise_length_choice.clone();
-            self.ui.track_grid_quantise_length_choice.connect_changed(move |_| {
-                match track_grid_quantise_length_choice.active_text() {
-                    Some(quantise_length_to_text) => {
-                        let snap_length_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(quantise_length_to_text.as_str(), 4.0);
-                        match track_grid.try_lock() {
-                            Ok(mut track_grid) => track_grid.set_new_entity_length_in_beats(snap_length_in_beats),
-                            Err(_) => debug!("Unable to lock the track grid in order to set the new entity length in beats."),
-                        };
-                    },
-                    None => debug!("Track grid: Unable to extract a quantise length value from the ComboBox - is there an active item?"),
                 };
             });
         }
@@ -4402,6 +4433,7 @@ impl MainWindow {
             let riff_grid_edit_mode_btn = self.ui.riff_grid_edit_mode_btn.clone();
             let riff_grid_add_loop_mode_btn = self.ui.riff_grid_add_loop_mode_btn.clone();
             let riff_grid_set_riff_reference_mode_btn = self.ui.riff_grid_set_riff_reference_mode_btn.clone();
+            let riff_grid_windowed_zoom_mode_btn= self.ui.riff_grid_windowed_zoom_mode_btn.clone();
             self.ui.riff_grid_drawing_area.connect_key_press_event(move |riff_grid_drawing_area, event_key| {
                 let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
@@ -4479,6 +4511,10 @@ impl MainWindow {
                     else if key_name == "r" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                         // send the riff grid riff reference mode message
                         riff_grid_set_riff_reference_mode_btn.set_active(true);
+                    }
+                    else if key_name == "z" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        // send the riff grid riff reference mode message
+                        riff_grid_windowed_zoom_mode_btn.set_active(true);
                     }
                 }
 
@@ -4593,6 +4629,16 @@ impl MainWindow {
 
         {
             let grid = riff_grid_arc.clone();
+            self.ui.riff_grid_windowed_zoom_mode_btn.connect_clicked(move |_| {
+                match grid.lock() {
+                    Ok(mut grid) => grid.set_operation_mode(OperationModeType::WindowedZoom),
+                    Err(_) => (),
+                }
+            });
+        }
+
+        {
+            let grid = riff_grid_arc.clone();
             let track_drawing_area = self.ui.riff_grid_drawing_area.clone();
             self.ui.riff_grid_cut_btn.connect_clicked(move |_| {
                 match grid.lock() {
@@ -4621,6 +4667,20 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_paste(&riff_grid_drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_grid_select_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelectAll, None));
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_grid_unselect_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesDeselectAll, None));
             });
         }
 
@@ -4914,8 +4974,22 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>
     ) {
-        let state = state;
-        let automation_custom_painter = AutomationCustomPainter::new(state);
+        let state_arc = state.clone();
+        let changed_event_sender = std::boxed::Box::new(|change: Vec<(TrackEvent, TrackEvent)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let horatio = change.iter().map(|(original, changed)| (original.clone(), changed.clone())).collect_vec();
+            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationChange(change), Some(track_uuid)));
+        });
+        let copied_event_sender = std::boxed::Box::new(|copies: Vec<TrackEvent>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
+            let new_automation_data = copies.iter().map(|automation| (automation.position(), automation.value() as i32)).collect_vec();
+            let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(new_automation_data), Some(track_uuid.clone())));
+        });
+        let automation_custom_painter = AutomationCustomPainter::new_with_edit_item_handler(
+            state,
+            AutomationEditItemHandler::new(
+                changed_event_sender,
+                copied_event_sender,
+                true,
+            ));
         let mut automation_grid = BeatGrid::new_with_custom(
             1.0,
             1.0,
@@ -5000,6 +5074,16 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
+            self.ui.automation_zoom_window_mode_btn.connect_clicked(move |_|{
+                match automation_grid.lock() {
+                    Ok(mut grid) => grid.set_operation_mode(OperationModeType::WindowedZoom),
+                    Err(_) => (),
+                }
+            });
+        }
+
+        {
+            let automation_grid = automation_grid_arc.clone();
             let automation_drawing_area = self.ui.automation_drawing_area.clone();
             self.ui.automation_cut_btn.connect_clicked(move |_| {
                 match automation_grid.lock() {
@@ -5028,6 +5112,20 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_paste(&automation_drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.automation_select_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectAll, None));
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.automation_unselect_all_btn.connect_clicked(move |_| {
+                let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationDeselectAll, None));
             });
         }
 
@@ -5089,6 +5187,9 @@ impl MainWindow {
                     },
                     Err(_) => (),
                 }
+
+                automation_drawing_area.queue_draw();
+
                 Inhibit(false)
             });
         }
@@ -5139,10 +5240,83 @@ impl MainWindow {
                     MouseButton::Button3
                 };
                 debug!("Controller mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                automation_drawing_area.grab_focus();
+
                 match automation_grid.lock() {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
+                Inhibit(false)
+            });
+        }
+
+        {
+            let automation_grid = automation_grid_arc.clone();
+            let automation_zoom_adjustment = self.ui.automation_zoom_scale.clone();
+            let automation_select_mode_btn = self.ui.automation_select_mode_btn.clone();
+            let automation_add_mode_btn = self.ui.automation_add_mode_btn.clone();
+            let automation_delete_mode_btn = self.ui.automation_delete_mode_btn.clone();
+            let automation_edit_mode_btn = self.ui.automation_edit_mode_btn.clone();
+            let automation_windowed_zoom_mode_btn = self.ui.automation_zoom_window_mode_btn.clone();
+            self.ui.automation_drawing_area.connect_key_press_event(move |automation_drawing_area, event_key| {
+                let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_key.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let key_pressed_value = event_key.keyval().name();
+
+                if let Some(key_name) = key_pressed_value {
+                    debug!("Automation grid key press: Key name={}, Shift key: {}, Control key: {}, Alt key: {}", key_name.as_str(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+
+                    if key_name == "c" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        match automation_grid.lock() {
+                            Ok(mut grid) => {
+                                grid.handle_copy(automation_drawing_area);
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    else if key_name == "x" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        match automation_grid.lock() {
+                            Ok(mut grid) => {
+                                grid.handle_cut(automation_drawing_area);
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    else if key_name == "v" && control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        match automation_grid.lock() {
+                            Ok(mut grid) => {
+                                grid.handle_paste(automation_drawing_area);
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    else if key_name == "plus" && !control_key_pressed && shift_key_pressed && !alt_key_pressed {
+                        let adjustment = automation_zoom_adjustment.adjustment();
+                        adjustment.set_value(adjustment.value() + adjustment.minimum_increment());
+                    }
+                    else if key_name == "minus" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        let adjustment = automation_zoom_adjustment.adjustment();
+                        adjustment.set_value(adjustment.value() - adjustment.minimum_increment());
+                    }
+                    else if key_name == "s" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        automation_select_mode_btn.set_active(true);
+                    }
+                    else if key_name == "a" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        automation_add_mode_btn.set_active(true);
+                    }
+                    else if key_name == "d" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        automation_delete_mode_btn.set_active(true);
+                    }
+                    else if key_name == "e" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        automation_edit_mode_btn.set_active(true);
+                    }
+                    else if key_name == "z" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                        automation_windowed_zoom_mode_btn.set_active(true);
+                    }
+                }
+
                 Inhibit(false)
             });
         }
@@ -5497,10 +5671,32 @@ impl MainWindow {
         }
 
         {
-            let automation_grid = automation_grid_arc;
+            let automation_grid = automation_grid_arc.clone();
             self.ui.automation_grid_mode_curve.connect_clicked(move |_|{
                 if let Ok(mut grid) = automation_grid.lock() {
                     grid.turn_on_draw_curve_mode();
+                }
+            });
+        }
+
+        {
+            let state = state_arc.clone();
+            let automation_drawing_area = self.ui.automation_drawing_area.clone();
+            self.ui.automation_grid_discrete_events_btn.connect_clicked(move |_|{
+                if let Ok(mut state) = state.lock() {
+                    state.set_automation_discrete(true);
+                    automation_drawing_area.queue_draw();
+                }
+            });
+        }
+
+        {
+            let state = state_arc.clone();
+            let automation_drawing_area = self.ui.automation_drawing_area.clone();
+            self.ui.automation_grid_continuous_events_btn.connect_clicked(move |_|{
+                if let Ok(mut state) = state.lock() {
+                    state.set_automation_discrete(false);
+                    automation_drawing_area.queue_draw();
                 }
             });
         }
@@ -5779,6 +5975,7 @@ impl MainWindow {
                 let piano_roll_delete_mode_btn = self.ui.piano_roll_delete_mode_btn.clone();
                 let piano_roll_edit_mode_btn = self.ui.piano_roll_edit_mode_btn.clone();
                 let piano_roll_set_riff_start_note_mode_btn = self.ui.piano_roll_select_riff_start_note_mode_btn.clone();
+                let piano_roll_windowed_zoom_mode_btn = self.ui.piano_roll_windowed_zoom_mode_btn.clone();
                 self.ui.piano_roll_drawing_area.connect_key_press_event(move |piano_roll_drawing_area, event_key| {
                     let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
@@ -5852,6 +6049,10 @@ impl MainWindow {
                         else if key_name == "n" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
                             // send the piano roll set riff start note mode message
                             piano_roll_set_riff_start_note_mode_btn.set_active(true);
+                        }
+                        else if key_name == "z" && !control_key_pressed && !shift_key_pressed && !alt_key_pressed {
+                            // send the piano roll set windowed zoom mode message
+                            piano_roll_windowed_zoom_mode_btn.set_active(true);
                         }
                     }
                     
@@ -6029,6 +6230,16 @@ impl MainWindow {
 
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_windowed_zoom_mode_btn.connect_clicked(move |_| {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_operation_mode(OperationModeType::WindowedZoom),
+                        Err(_) => (),
+                    }
+                });
+            }
+
+            {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
                 let piano_roll_drawing_area = self.ui.piano_roll_drawing_area.clone();
                 self.ui.piano_roll_cut_btn.connect_clicked(move |_| {
                     match piano_roll_grid.lock() {
@@ -6057,6 +6268,20 @@ impl MainWindow {
                         Ok(mut grid) => grid.handle_paste(&piano_roll_drawing_area),
                         Err(_) => (),
                     }
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_select_all_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelectAll, None));
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                self.ui.piano_roll_unselect_all_btn.connect_clicked(move |_| {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsDeselectAll, None));
                 });
             }
 
@@ -6101,6 +6326,43 @@ impl MainWindow {
                         Ok(mut grid) => grid.handle_translate_down(&piano_roll_drawing_area),
                         Err(_) => (),
                     }
+                });
+            }
+
+            {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_subdivision_mode_choice.connect_changed(move |piano_roll_subdivision_mode_choice| {
+                    match piano_roll_subdivision_mode_choice.active_id() {
+                        Some(subdivision_mode) => {
+                            let draw_mode = if subdivision_mode.as_str() == "normal" {
+                                DrawMode::Point
+                            }
+                            else {
+                                DrawMode::Triplet
+                            };
+                            match piano_roll_grid.try_lock() {
+                                Ok(mut piano_roll_grid) => piano_roll_grid.set_draw_mode(draw_mode),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set the subdivision mode."),
+                            };
+                        }
+                        None => debug!("Unable to extract a subdivision mode value from the ComboBox - is there an active item?"),
+                    };
+                });
+            }
+
+            {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_triplet_type_choice.connect_changed(move |piano_roll_triplet_type_choice| {
+                    match piano_roll_triplet_type_choice.active_text() {
+                        Some(triplet_type_text) => {
+                            let triplet_spacing_in_beats = DAWUtils::get_snap_quantise_value_in_beats_from_choice_text(triplet_type_text.as_str(), 4.0);
+                            match piano_roll_grid.try_lock() {
+                                Ok(mut piano_roll_grid) => piano_roll_grid.set_triplet_spacing_in_beats(triplet_spacing_in_beats),
+                                Err(_) => debug!("Unable to lock the piano grid in order to set triplet type."),
+                            };
+                        }
+                        None => debug!("Unable to extract a triplet type value from the ComboBox - is there an active item?"),
+                    };
                 });
             }
 
@@ -6155,14 +6417,32 @@ impl MainWindow {
             }
 
             {
-                self.ui.piano_roll_quantise_start_checkbox.connect_clicked(move |_| {
-
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_quantise_start_checkbox.connect_clicked(move |btn| {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_snap_start(btn.is_active()),
+                        Err(_) => (),
+                    }
                 });
             }
 
             {
-                self.ui.piano_roll_quantise_end_checkbox.connect_clicked(move |_| {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_quantise_end_checkbox.connect_clicked(move |btn| {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_snap_end(btn.is_active()),
+                        Err(_) => (),
+                    }
+                });
+            }
 
+            {
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                self.ui.piano_roll_quantise_strength_spinner.connect_value_changed(move |piano_roll_quantise_strength_spinner| {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_snap_strength(piano_roll_quantise_strength_spinner.value() / 100.0),
+                        Err(_) => (),
+                    }
                 });
             }
 

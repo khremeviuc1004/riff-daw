@@ -81,7 +81,8 @@ pub struct DAWState {
     playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>,
     play_position_in_frames: u32,
     track_event_copy_buffer: Vec<TrackEvent>,
-    riff_references_copy_buffer: Vec<RiffReference>,
+    track_grid_riff_references_copy_buffer: Vec<RiffReference>,
+    riff_grid_riff_references_copy_buffer: Vec<RiffReference>,
     automation_view_mode: AutomationViewMode,
     automation_edit_type: AutomationEditType,
     automation_type: Option<i32>,
@@ -113,7 +114,9 @@ pub struct DAWState {
     piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId,
     selected_riff_grid_uuid: Option<String>,
     selected_riff_sequence_uuid: Option<String>,
-    selected_riff_references: Vec<String>,
+    selected_riff_grid_riff_references: Vec<String>,
+    selected_track_grid_riff_references: Vec<String>,
+    automation_discrete: bool,
 }
 
 impl DAWState {
@@ -143,7 +146,8 @@ impl DAWState {
             playing_riff_arrangement_summary_data: None,
             play_position_in_frames: 0,
             track_event_copy_buffer: vec![],
-            riff_references_copy_buffer: vec![],
+            track_grid_riff_references_copy_buffer: vec![],
+            riff_grid_riff_references_copy_buffer: vec![],
             automation_view_mode: AutomationViewMode::NoteVelocities,
             automation_edit_type: AutomationEditType::Track,
             automation_type: None,
@@ -175,7 +179,9 @@ impl DAWState {
             piano_roll_mpe_note_id: MidiPolyphonicExpressionNoteId::ALL,
             selected_riff_grid_uuid: None,
             selected_riff_sequence_uuid: None,
-            selected_riff_references: vec![],
+            selected_riff_grid_riff_references: vec![],
+            selected_track_grid_riff_references: vec![],
+            automation_discrete: true,
         }
     }
 
@@ -607,11 +613,11 @@ impl DAWState {
                     TrackType::InstrumentTrack(track) => {
                         debug!("Adding instrument track uuid to vector: {}", track.uuid());
                         uuids.push(track.uuid().to_string());
-                    },
+                    }
                     TrackType::AudioTrack(track) => {
                         debug!("Adding audio track uuid to vector: {}", track.uuid());
                         uuids.push(track.uuid().to_string());
-                    },
+                    }
                     TrackType::MidiTrack(_) => (),
                 }
             }
@@ -627,7 +633,7 @@ impl DAWState {
                             Ok(_) => (),
                             Err(error) => debug!("Problem requesting vst preset data for track: {}", error),
                         }
-                    },
+                    }
                     None => debug!("Could not find tx_to_vst thread for track."),
                 }
             }
@@ -648,24 +654,24 @@ impl DAWState {
             for (track_uuid, track_type) in track_data.iter() {
                 match track_type {
                     GeneralTrackType::InstrumentTrack => {
-                        if let Some((uuid, vst_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
-                            match vst_outward_receiver.recv_timeout(Duration::from_secs(1)) {
+                        if let Some((uuid, track_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
+                            match track_outward_receiver.recv() {
                                 Ok(preset_data) => {
                                     debug!("Instrument track preset data received: {}", uuid.clone());
                                     presets.insert(String::from(uuid.as_str()), preset_data);
                                 },
-                                Err(error) => debug!("Problem receiving instrument track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
+                                Err(error) => debug!("Problem receiving instrument track thread plugin preset data for track uuid: {} {}", uuid.clone(), error),
                             }
                         }
                     },
                     GeneralTrackType::AudioTrack => {
-                        if let Some((uuid, vst_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
-                            match vst_outward_receiver.recv_timeout(Duration::from_secs(1)) {
+                        if let Some((uuid, track_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
+                            match track_outward_receiver.recv() {
                                 Ok(preset_data) => {
                                     debug!("Audio track preset data received: {}", uuid.clone());
                                     presets.insert(String::from(uuid.as_str()), preset_data);
                                 },
-                                Err(error) => debug!("Problem receiving audio track vst thread preset data for track uuid: {} {}", uuid.clone(), error),
+                                Err(error) => debug!("Problem receiving audio track thread plugin preset data for track uuid: {} {}", uuid.clone(), error),
                             }
                         }
                     },
@@ -969,14 +975,24 @@ impl DAWState {
         &mut self.track_event_copy_buffer
     }
 
-    /// Get a reference to the freedom daw state's riff references copy buffer.
-    pub fn riff_references_copy_buffer(&self) -> &[RiffReference] {
-        self.riff_references_copy_buffer.as_ref()
+    /// Get a reference to the freedom daw state's track grid riff references copy buffer.
+    pub fn track_grid_riff_references_copy_buffer(&self) -> &[RiffReference] {
+        self.track_grid_riff_references_copy_buffer.as_ref()
     }
 
-    /// Get a mutable reference to the freedom daw state's riff references copy buffer.
-    pub fn riff_references_copy_buffer_mut(&mut self) -> &mut Vec<RiffReference> {
-        &mut self.riff_references_copy_buffer
+    /// Get a mutable reference to the freedom daw state's track grid riff references copy buffer.
+    pub fn track_grid_riff_references_copy_buffer_mut(&mut self) -> &mut Vec<RiffReference> {
+        &mut self.track_grid_riff_references_copy_buffer
+    }
+
+    /// Get a reference to the freedom daw state's riff grid riff references copy buffer.
+    pub fn riff_grid_riff_references_copy_buffer(&self) -> &[RiffReference] {
+        self.riff_grid_riff_references_copy_buffer.as_ref()
+    }
+
+    /// Get a mutable reference to the freedom daw state's riff grid riff references copy buffer.
+    pub fn riff_grid_riff_references_copy_buffer_mut(&mut self) -> &mut Vec<RiffReference> {
+        &mut self.riff_grid_riff_references_copy_buffer
     }
 
     /// Get a reference to the freedom daw state's automation view mode.
@@ -1110,7 +1126,7 @@ impl DAWState {
             else {
                 0
             };
-            let vst_event_blocks = DAWUtils::convert_to_event_blocks(track.automation().events(), track.riffs(), track.riff_refs(), bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
+            let vst_event_blocks = DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), track.riff_refs(), bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete());
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
 
@@ -1200,8 +1216,8 @@ impl DAWState {
                         }
                         let mut riffs = vec![];
                         riffs.push(riff.clone());
-                        let automation: Vec<TrackEvent> = vec![];
-                        let track_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel);
+                        let automation = Automation::new();
+                        let track_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel, self.automation_discrete());
                         debug!("Riff set # of blocks: {}", track_event_blocks.0.len());
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, track_event_blocks.0.len() as i32));
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(track_event_blocks, true));
@@ -1464,8 +1480,8 @@ impl DAWState {
                             }
                             let mut riffs = vec![];
                             riffs.push(riff.clone());
-                            let automation: Vec<TrackEvent> = vec![];
-                            let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel);
+                            let automation = Automation::new();
+                            let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel, self.automation_discrete());
                             debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events with data");
                             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
                         }
@@ -1605,8 +1621,8 @@ impl DAWState {
                     debug!("Riff ref: uuid={}, position={}, length={} - ", riff_ref.uuid().to_string(), riff_ref.position(), riff_ref.linked_to());
                 }
                 debug!("");
-                let automation: Vec<TrackEvent> = vec![];
-                let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel);
+                let automation = Automation::new();
+                let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete());
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
             }
         }
@@ -1656,16 +1672,17 @@ impl DAWState {
             } else {
                 0
             };
+            let automation = Automation::new();
             let vst_event_blocks = if let Some(riff_grid) = song.riff_grid(riff_grid_uuid.clone()) {
                 if let Some(track_riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
                 }
                 else {
-                    DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
                 }
             }
             else {
-                DAWUtils::convert_to_event_blocks(&vec![], track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
+                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
             };
 
             if !already_playing {
@@ -1926,11 +1943,11 @@ impl DAWState {
                     Some(riff_refs) => riff_refs,
                 };
                 let vst_event_blocks = if let Some(track_automation) = riff_arrangement.automation(&track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(track_automation.events(), track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)
+                    DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
                 }
                 else {
-                    let automation: Vec<TrackEvent> = vec![];
-                    /*let vst_event_blocks = */DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel)//;
+                    let automation = Automation::new();
+                    /*let vst_event_blocks = */DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())//;
                 };
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
@@ -2980,7 +2997,7 @@ impl DAWState {
         self.playing_riff_arrangement_summary_data = None;
         self.play_position_in_frames = 0;
         self.track_event_copy_buffer.clear();
-        self.riff_references_copy_buffer.clear();
+        self.track_grid_riff_references_copy_buffer.clear();
         self.selected_effect_plugin_uuid = None;
         self.selected_riff_arrangement_uuid = None;
         self.sample_data.clear();
@@ -3024,16 +3041,36 @@ impl DAWState {
         self.selected_riff_sequence_uuid = selected_riff_sequence_uuid;
     }
 
-    pub fn selected_riff_references(&self) -> &Vec<String> {
-        &self.selected_riff_references
+    pub fn selected_riff_grid_riff_references(&self) -> &Vec<String> {
+        &self.selected_riff_grid_riff_references
     }
 
-    pub fn selected_riff_references_mut(&mut self) -> &mut Vec<String> {
-        &mut self.selected_riff_references
+    pub fn selected_riff_grid_riff_references_mut(&mut self) -> &mut Vec<String> {
+        &mut self.selected_riff_grid_riff_references
     }
 
-    pub fn set_selected_riff_references(&mut self, selected_riff_references: Vec<String>) {
-        self.selected_riff_references = selected_riff_references;
+    pub fn set_selected_riff_grid_riff_references(&mut self, selected_riff_grid_riff_references: Vec<String>) {
+        self.selected_riff_grid_riff_references = selected_riff_grid_riff_references;
+    }
+
+    pub fn selected_track_grid_riff_references(&self) -> &Vec<String> {
+        &self.selected_track_grid_riff_references
+    }
+
+    pub fn selected_track_grid_riff_references_mut(&mut self) -> &mut Vec<String> {
+        &mut self.selected_track_grid_riff_references
+    }
+
+    pub fn set_selected_track_grid_riff_references(&mut self, selected_track_grid_riff_references: Vec<String>) {
+        self.selected_track_grid_riff_references = selected_track_grid_riff_references;
+    }
+
+    pub fn automation_discrete(&self) -> bool {
+        self.automation_discrete
+    }
+
+    pub fn set_automation_discrete(&mut self, automation_discrete: bool) {
+        self.automation_discrete = automation_discrete;
     }
 }
 

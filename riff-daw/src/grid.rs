@@ -9,10 +9,11 @@ use log::*;
 use strum_macros::Display;
 use uuid::Uuid;
 use geo::{coord, Intersects, Rect};
-
+use gtk::glib::ffi::G_PI;
 use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
 use crate::event::{CurrentView, RiffGridChangeType};
 use crate::event::TrackChangeType::RiffReferencePlayMode;
+use crate::state::AutomationViewMode;
 
 #[derive(Debug)]
 pub enum MouseButton {
@@ -32,6 +33,7 @@ pub enum DrawMode {
     Point,
     Line,
     Curve,
+    Triplet,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,7 @@ pub trait Grid : MouseHandler {
     fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64);
     fn paint_custom(&mut self, context: &Context, height: f64, width: f64, drawing_area_widget_name: String, drawing_area: &DrawingArea);
     fn paint_select_window(&mut self, context: &Context, height: f64, width: f64);
+    fn paint_zoom_window(&mut self, context: &Context, height: f64, width: f64);
     fn paint_loop_markers(&mut self, context: &Context, height: f64, width: f64);
     fn paint_play_cursor(&mut self, context: &Context, height: f64, width: f64);
     fn paint_edit_cursor(&mut self, context: &Context, height: f64, width: f64);
@@ -93,10 +96,6 @@ pub trait CustomPainter {
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    select_window_top_left_x: f64, 
-                    select_window_top_left_y: f64, 
-                    select_window_bottom_right_x: f64, 
-                    select_window_bottom_right_y: f64,
                     drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
@@ -113,7 +112,7 @@ pub trait CustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                );
+    );
     fn track_cursor_time_in_beats(&self) -> f64;
     fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64);
 
@@ -123,9 +122,11 @@ pub trait CustomPainter {
 pub trait BeatGridMouseCoordHelper {
     fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64;
     fn get_snapped_to_time(&self, snap: f64, time: f64) -> f64 {
-        let mut snapped_to_time = time;
-        snapped_to_time -= time % snap;
-        snapped_to_time
+        let snap_delta = time % snap;
+        if (time - snap_delta) >= 0.0 {
+            time - snap_delta
+        }
+        else { time }
     }
 
     fn get_time(&self, x: f64, beat_width_in_pixels: f64, zoom_horizontal: f64) -> f64 {
@@ -149,7 +150,7 @@ pub trait BeatGridMouseCoordHelper {
     fn handle_decrease_entity_length(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>);
     fn set_start_note(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
     fn set_riff_reference_play_mode(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64);
-
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64);
 }
 
 pub struct PianoRollMouseCoordHelper;
@@ -230,6 +231,10 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let _ = tx_from_ui.send(DAWEvents::PianoRollWindowedZoom {x1, y1, x2, y2});
+    }
 }
 
 pub struct SampleRollMouseCoordHelper;
@@ -240,7 +245,6 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     }
 
     fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
-        todo!()
     }
 
     fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
@@ -252,7 +256,6 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     }
 
     fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
-        todo!()
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
@@ -307,6 +310,9 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     }
 
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
     }
 }
 
@@ -385,6 +391,9 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    }
 }
 
 pub struct RiffGridMouseCoordHelper;
@@ -462,6 +471,9 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    }
 }
 
 #[derive(Clone, Display)]
@@ -512,9 +524,14 @@ pub struct BeatGrid {
 	drag_started: bool,
 
     snap_position_in_beats: f64,
+    snap_strength: f64,
+    snap_start: bool,
+    snap_end: bool,
     new_entity_length_in_beats: f64,
     entity_length_increment_in_beats: f64,
     tempo: f64,
+
+    triplet_spacing_in_beats: f64,
 
 	//selection window
     draw_selection_window: bool,
@@ -522,6 +539,13 @@ pub struct BeatGrid {
 	y_selection_window_position: f64,
 	x_selection_window_position2: f64,
 	y_selection_window_position2: f64,
+
+    // zoom window
+    draw_zoom_window: bool,
+    x_zoom_window_position: f64,
+    y_zoom_window_position: f64,
+    x_zoom_window_position2: f64,
+    y_zoom_window_position2: f64,
 
     //draw coords
     x_draw_position_start: f64,
@@ -557,6 +581,7 @@ pub struct BeatGrid {
     // drag cycle state
     pub edit_drag_cycle: DragCycle,
     pub select_drag_cycle: DragCycle,
+    pub windowed_zoom_drag_cycle: DragCycle,
 
     pub draw_play_cursor: bool,
 
@@ -592,9 +617,14 @@ impl BeatGrid {
             drag_started: false,
 
             snap_position_in_beats: 1.0,
+            snap_strength: 1.0,
+            snap_start: true,
+            snap_end: false,
             new_entity_length_in_beats: 1.0,
             entity_length_increment_in_beats: 0.03125,
             tempo: 140.0,
+
+            triplet_spacing_in_beats: 0.66666666,
 
             //selection window
             draw_selection_window: false,
@@ -602,6 +632,13 @@ impl BeatGrid {
             y_selection_window_position: 0.0,
             x_selection_window_position2: 0.0,
             y_selection_window_position2: 0.0,
+
+            // zoom window
+            draw_zoom_window: false,
+            x_zoom_window_position: 0.0,
+            y_zoom_window_position: 0.0,
+            x_zoom_window_position2: 0.0,
+            y_zoom_window_position2: 0.0,
 
             //draw coords
             x_draw_position_start: 0.0,
@@ -635,6 +672,7 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+            windowed_zoom_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
 
@@ -682,9 +720,14 @@ impl BeatGrid {
             drag_started: false,
 
             snap_position_in_beats: 1.0,
+            snap_strength: 1.0,
+            snap_start: true,
+            snap_end: false,
             new_entity_length_in_beats: 1.0,
             entity_length_increment_in_beats: 0.03125,
             tempo: 140.0,
+
+            triplet_spacing_in_beats: 0.66666666,
 
             //selection window
             draw_selection_window: false,
@@ -692,6 +735,13 @@ impl BeatGrid {
             y_selection_window_position: 0.0,
             x_selection_window_position2: 0.0,
             y_selection_window_position2: 0.0,
+
+            // zoom window
+            draw_zoom_window: false,
+            x_zoom_window_position: 0.0,
+            y_zoom_window_position: 0.0,
+            x_zoom_window_position2: 0.0,
+            y_zoom_window_position2: 0.0,
 
             //draw coords
             x_draw_position_start: 0.0,
@@ -725,6 +775,7 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+            windowed_zoom_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
 
@@ -773,9 +824,14 @@ impl BeatGrid {
             drag_started: false,
 
             snap_position_in_beats: 1.0,
+            snap_strength: 1.0,
+            snap_start: true,
+            snap_end: false,
             new_entity_length_in_beats: 1.0,
             entity_length_increment_in_beats: 0.03125,
             tempo: 140.0,
+
+            triplet_spacing_in_beats: 0.66666666,
 
             //selection window
             draw_selection_window: false,
@@ -783,6 +839,13 @@ impl BeatGrid {
             y_selection_window_position: 0.0,
             x_selection_window_position2: 0.0,
             y_selection_window_position2: 0.0,
+
+            // zoom window
+            draw_zoom_window: false,
+            x_zoom_window_position: 0.0,
+            y_zoom_window_position: 0.0,
+            x_zoom_window_position2: 0.0,
+            y_zoom_window_position2: 0.0,
 
             //draw coords
             x_draw_position_start: 0.0,
@@ -816,6 +879,7 @@ impl BeatGrid {
 
             edit_drag_cycle: DragCycle::NotStarted,
             select_drag_cycle: DragCycle::NotStarted,
+            windowed_zoom_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
 
@@ -931,6 +995,18 @@ impl BeatGrid {
         (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
     }
 
+    pub fn get_zoom_window(&self) -> (f64, f64, f64, f64) {
+        // find the top left x and y
+        let top_left_x = self.x_zoom_window_position.min(self.x_zoom_window_position2);
+        let top_left_y = self.y_zoom_window_position.min(self.y_zoom_window_position2);
+
+        // find the bottom right x and y
+        let bottom_right_x = self.x_zoom_window_position.max(self.x_zoom_window_position2);
+        let bottom_right_y = self.y_zoom_window_position.max(self.y_zoom_window_position2);
+
+        (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    }
+
     pub fn tempo(&self) -> f64 {
         self.tempo
     }
@@ -958,6 +1034,42 @@ impl BeatGrid {
     pub fn vertical_scale_painter_mut(&mut self) -> &mut Option<Box<dyn CustomPainter>> {
         &mut self.vertical_scale_painter
     }
+
+    pub fn snap_start(&self) -> bool {
+        self.snap_start
+    }
+
+    pub fn set_snap_start(&mut self, snap_start: bool) {
+        self.snap_start = snap_start;
+    }
+
+    pub fn snap_end(&self) -> bool {
+        self.snap_end
+    }
+
+    pub fn set_snap_end(&mut self, snap_end: bool) {
+        self.snap_end = snap_end;
+    }
+
+    pub fn set_draw_mode(&mut self, draw_mode: DrawMode) {
+        self.draw_mode = draw_mode;
+    }
+
+    pub fn triplet_spacing_in_beats(&self) -> f64 {
+        self.triplet_spacing_in_beats
+    }
+
+    pub fn set_triplet_spacing_in_beats(&mut self, triplet_spacing_in_beats: f64) {
+        self.triplet_spacing_in_beats = triplet_spacing_in_beats;
+    }
+
+    pub fn snap_strength(&self) -> f64 {
+        self.snap_strength
+    }
+
+    pub fn set_snap_strength(&mut self, snap_strength: f64) {
+        self.snap_strength = snap_strength;
+    }
 }
 
 impl MouseHandler for BeatGrid {
@@ -978,6 +1090,13 @@ impl MouseHandler for BeatGrid {
                         self.y_selection_window_position2 = y;
                         self.draw_selection_window = true;
                         self.select_drag_cycle = DragCycle::Dragging;
+                        drawing_area.queue_draw();
+                    },
+                    OperationModeType::WindowedZoom => {
+                        self.x_zoom_window_position2 = x;
+                        self.y_zoom_window_position2 = y;
+                        self.draw_zoom_window = true;
+                        self.windowed_zoom_drag_cycle = DragCycle::Dragging;
                         drawing_area.queue_draw();
                     },
                     OperationModeType::Add => {
@@ -1023,6 +1142,11 @@ impl MouseHandler for BeatGrid {
                         self.x_selection_window_position = x;
                         self.y_selection_window_position = y;
                         self.select_drag_cycle = DragCycle::MousePressed;
+                    }
+                    OperationModeType::WindowedZoom => {
+                        self.x_zoom_window_position = x;
+                        self.y_zoom_window_position = y;
+                        self.windowed_zoom_drag_cycle = DragCycle::MousePressed;
                     }
                     OperationModeType::Change => {
                         if control_key {
@@ -1100,6 +1224,16 @@ impl MouseHandler for BeatGrid {
                                         position += self.snap_position_in_beats;
                                         y_start += y_increment;
                                     }
+                                }
+                                else if let DrawMode::Triplet = self.draw_mode {
+                                    let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
+                                    let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
+                                    let duration = self.new_entity_length_in_beats - 0.01; // take off just a little off so that the note off does not overlap the next note on
+
+                                    mouse_coord_helper.add_entity(self.tx_from_ui.clone(), y_index as i32, snap_position, duration, data.clone());
+                                    mouse_coord_helper.add_entity(self.tx_from_ui.clone(), y_index as i32, snap_position + self.triplet_spacing_in_beats, duration, data.clone());
+                                    mouse_coord_helper.add_entity(self.tx_from_ui.clone(), y_index as i32, snap_position + (self.triplet_spacing_in_beats * 2.0), duration, data);
                                 }
                             },
                             None => (),
@@ -1193,7 +1327,17 @@ impl MouseHandler for BeatGrid {
                             }
                         }
                         drawing_area.queue_draw();
-                    },
+                    }
+                    OperationModeType::WindowedZoom => {
+                        self.draw_zoom_window = false;
+                        self.windowed_zoom_drag_cycle = DragCycle::NotStarted;
+                        // send an event to the ui via the mouse coord helper
+                        if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
+                            let (x1, y1, x2, y2) = self.get_zoom_window();
+                            mouse_coord_helper.handle_windowed_zoom(self.tx_from_ui.clone(), x1, y1, x2, y2);
+                        }
+                        drawing_area.queue_draw();
+                    }
                     OperationModeType::LoopPointMode => {
                         match &self.mouse_coord_helper {
                             Some(mouse_coord_helper) => {
@@ -1206,26 +1350,6 @@ impl MouseHandler for BeatGrid {
                             },
                             None => (),
                         }
-                    },
-                    OperationModeType::DeleteSelected => {
-                    },
-                    OperationModeType::CopySelected => {
-
-                    },
-                    OperationModeType::PasteSelected => {
-
-                    },
-                    OperationModeType::SelectAll => {
-
-                    },
-                    OperationModeType::DeselectAll => {
-
-                    },
-                    OperationModeType::Undo => {
-
-                    },
-                    OperationModeType::Redo => {
-
                     },
                     OperationModeType::SelectStartNote => {
                         match &self.mouse_coord_helper {
@@ -1280,15 +1404,9 @@ impl MouseHandler for BeatGrid {
 
                     },
                     OperationModeType::LoopPointMode => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::DeleteSelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::CopySelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::PasteSelected => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::SelectAll => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::DeselectAll => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Undo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
-                    OperationModeType::Redo => debug!("mouse button clicked=2, mode={:?}", self.operation_mode),
                     OperationModeType::SelectStartNote => {}
                     OperationModeType::SelectRiffReferenceMode => {}
+                    OperationModeType::WindowedZoom => {}
                 }
             },
             MouseButton::Button3 => {
@@ -1373,15 +1491,9 @@ impl MouseHandler for BeatGrid {
                         },
                         None => (),
                     },
-                    OperationModeType::DeleteSelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::CopySelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::PasteSelected => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::SelectAll => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::DeselectAll => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Undo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
-                    OperationModeType::Redo => debug!("mouse button clicked=3, mode={:?}", self.operation_mode),
                     OperationModeType::SelectStartNote => {}
                     OperationModeType::SelectRiffReferenceMode => {}
+                    OperationModeType::WindowedZoom => {}
                 }
             },
         }
@@ -1425,6 +1537,9 @@ impl Grid for BeatGrid {
         if self.draw_selection_window {
             self.paint_select_window(context, height, width);
         }
+        if self.draw_zoom_window {
+            self.paint_zoom_window(context, height, width);
+        }
         if self.draw_play_cursor {
             self.paint_play_cursor(context, height, width);
         }
@@ -1446,17 +1561,13 @@ impl Grid for BeatGrid {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
 
         if let Some(vertical_scale_painter) = self.vertical_scale_painter_mut() {
-            vertical_scale_painter.paint_custom(context, 
-                                                height, 
-                                                width, 
+            vertical_scale_painter.paint_custom(context,
+                                                height,
+                                                width,
                                                 entity_height_in_pixels,
                                                 beat_width_in_pixels,
                                                 zoom_horizontal,
                                                 zoom_vertical,
-                                                x_selection_window_position,
-                                                y_selection_window_position,
-                                                x_selection_window_position2,
-                                                x_selection_window_position2,
                                                 None,
                                                 0.0,
                                                 0.0,
@@ -1473,7 +1584,7 @@ impl Grid for BeatGrid {
                                                 false,
                                                 &edit_drag_cycle,
                                                 tx_from_ui,
-                                            );
+            );
         }
         else {
             context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
@@ -1543,10 +1654,6 @@ impl Grid for BeatGrid {
                 self.beat_width_in_pixels,
                 self.zoom_horizontal,
                 self.zoom_vertical,
-                x_selection_window_position,
-                y_selection_window_position,
-                x_selection_window_position2,
-                y_selection_window_position2,
                 Some(drawing_area_widget_name),
                 x,
                 y,
@@ -1575,6 +1682,13 @@ impl Grid for BeatGrid {
     fn paint_select_window(&mut self, context: &Context, _height: f64, _width: f64) {
         context.set_source_rgba(0.0, 0.0, 1.0, 0.5);
         let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_select_window();
+        context.rectangle(top_left_x, top_left_y, bottom_right_x - top_left_x, bottom_right_y - top_left_y);
+        let _ = context.fill();
+    }
+
+    fn paint_zoom_window(&mut self, context: &Context, _height: f64, _width: f64) {
+        context.set_source_rgba(0.0, 0.0, 0.0, 0.5);
+        let (top_left_x, top_left_y, bottom_right_x, bottom_right_y) = self.get_zoom_window();
         context.rectangle(top_left_x, top_left_y, bottom_right_x - top_left_x, bottom_right_y - top_left_y);
         let _ = context.fill();
     }
@@ -1953,6 +2067,9 @@ impl Grid for BeatGridRuler {
     fn paint_select_window(&mut self, _context: &Context, _height: f64, _width: f64) {
     }
 
+    fn paint_zoom_window(&mut self, _context: &Context, _height: f64, _width: f64) {
+    }
+
     fn paint_loop_markers(&mut self, _context: &Context, _height: f64, _width: f64) {
     }
 
@@ -2246,8 +2363,6 @@ impl Piano {
 
 pub struct PianoRollCustomPainter {
     state: Arc<Mutex<DAWState>>,
-    pub original_track_event_copy: Option<TrackEvent>,
-    pub dragged_track_event: Option<TrackEvent>,
     pub edit_item_handler: EditItemHandler<Note, Note>,
 }
 
@@ -2255,43 +2370,37 @@ impl PianoRollCustomPainter {
     pub fn new_with_edit_item_handler(state: Arc<Mutex<DAWState>>, edit_item_handler: EditItemHandler<Note, Note>) -> PianoRollCustomPainter {
         PianoRollCustomPainter {
             state,
-            original_track_event_copy: None,
-            dragged_track_event: None,
             edit_item_handler,
         }
     }
 }
 
 impl CustomPainter for PianoRollCustomPainter {
-    fn paint_custom(&mut self, 
-                    context: &Context, 
-                    canvas_height: f64, 
-                    _canvas_width: f64, 
+    fn paint_custom(&mut self,
+                    context: &Context,
+                    height: f64,
+                    width: f64,
                     entity_height_in_pixels: f64,
-                    beat_width_in_pixels: f64, 
-                    zoom_horizontal: f64, 
-                    zoom_vertical: f64, 
-                    select_window_top_left_x: f64, 
-                    select_window_top_left_y: f64, 
-                    select_window_bottom_right_x: f64, 
-                    select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
+                    beat_width_in_pixels: f64,
+                    zoom_horizontal: f64,
+                    zoom_vertical: f64,
+                    drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    _drag_started: bool,
+                    drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+    ) {
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
         match self.state.lock() {
@@ -2341,7 +2450,7 @@ impl CustomPainter for PianoRollCustomPainter {
                                                             let note_y_pos_inverted = note_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                             let x = note.position() * adjusted_beat_width_in_pixels;
                                                             // let x_original = x;
-                                                            let y = canvas_height - note_y_pos_inverted;
+                                                            let y = height - note_y_pos_inverted;
                                                             // let y_original = y;
                                                             let width = note.length() * adjusted_beat_width_in_pixels;
 
@@ -2364,7 +2473,7 @@ impl CustomPainter for PianoRollCustomPainter {
                                                                 x,
                                                                 y,
                                                                 width,
-                                                                canvas_height,
+                                                                height,
                                                                 drawing_area,
                                                                 edit_drag_cycle,
                                                                 tx_from_ui.clone(),
@@ -2412,7 +2521,7 @@ impl CustomPainter for PianoRollCustomPainter {
         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
         context.move_to(mouse_pointer_x, mouse_pointer_y);
         context.set_font_size(12.0);
-        let note_number = ((canvas_height - mouse_pointer_y) / adjusted_entity_height_in_pixels) as i32;
+        let note_number = ((height - mouse_pointer_y) / adjusted_entity_height_in_pixels) as i32;
         let note_name_index = (note_number % 12) as usize;
 
         if note_name_index >=0 && note_name_index < NOTE_NAMES.len() {
@@ -2564,7 +2673,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
 
                 // draw left length adjust handle if required
                 if self.can_change_start &&
-                    mouse_pointer_x as f64 >= x &&
+                    mouse_pointer_x >= x &&
                     mouse_pointer_x <= (x + 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -2581,7 +2690,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                 }
                 // draw drag position adjust handle if required
                 else if (self.can_change_position || self.can_drag_copy) &&
-                    mouse_pointer_x as f64 >= (x + 5.0) &&
+                    mouse_pointer_x >= (x + 5.0) &&
                     mouse_pointer_x <= (x + width - 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -3067,6 +3176,481 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
     }
 }
 
+
+pub struct AutomationEditItemHandler {
+    pub original_item: Option<TrackEvent>,
+    pub original_item_is_selected: bool,
+    pub original_selected_items: Vec<TrackEvent>,
+    pub selected_item_ids: Vec<String>,
+    pub dragged_item: Option<TrackEvent>,
+    pub referenced_item: Option<TrackEvent>,
+    pub changed_event_sender: Box<dyn Fn(Vec<(TrackEvent, TrackEvent)>, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub copied_event_sender: Box<dyn Fn(Vec<TrackEvent>, String, crossbeam_channel::Sender<DAWEvents>)>,
+    pub can_change_position: bool,
+    pub can_drag_copy: bool,
+}
+
+impl AutomationEditItemHandler {
+    pub fn new(
+        changed_event_sender: Box<dyn Fn(Vec<(TrackEvent, TrackEvent)>, String, crossbeam_channel::Sender<DAWEvents>)>,
+        copied_event_sender: Box<dyn Fn(Vec<TrackEvent>, String, crossbeam_channel::Sender<DAWEvents>)>,
+        can_drag_copy: bool
+    ) -> Self {
+        Self {
+            original_item: None,
+            original_item_is_selected: false,
+            original_selected_items: vec![],
+            selected_item_ids: vec![],
+            dragged_item: None,
+            referenced_item: None,
+            changed_event_sender,
+            copied_event_sender,
+            can_change_position: true,
+            can_drag_copy,
+        }
+    }
+}
+
+impl AutomationEditItemHandler {
+    pub fn handle_item_edit(
+        &mut self,
+        context: &Context,
+        item: &TrackEvent,
+        operation_mode: &OperationModeType,
+        mouse_pointer_x: f64,
+        mouse_pointer_y: f64,
+        mouse_pointer_previous_x: f64,
+        mouse_pointer_previous_y: f64,
+        adjusted_entity_height_in_pixels: f64,
+        adjusted_beat_width_in_pixels: f64,
+        x_original: f64,
+        y_original: f64,
+        canvas_height: f64,
+        drawing_area: &DrawingArea,
+        edit_drag_cycle: &DragCycle,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        invert_vertically: bool,
+        track_uuid: String,
+        referencing_item: &TrackEvent,
+        item_is_selected: bool,
+        selected_items: Vec<TrackEvent>,
+        previous_point_x: f64,
+        previous_point_y: f64,
+        automation_discrete: bool,
+        selected_automation_b4_after_points: &HashMap<String, ((String, f64, f64), (String, f64, f64))>
+    ) {
+        let mut edit_mode = EditMode::Inactive;
+
+        match operation_mode {
+            OperationModeType::Change => {
+                let mut x = x_original;
+                let mut y = y_original;
+                let mut found_item_being_changed = false;
+                // calculate the mouse position deltas
+                let delta_x = mouse_pointer_x - mouse_pointer_previous_x;
+                let delta_y = mouse_pointer_y - mouse_pointer_previous_y;
+                let mut use_this_item = false;
+
+                if (item.position() - referencing_item.position()).abs() > 1e-10 {
+                    x = referencing_item.position() * adjusted_beat_width_in_pixels;
+                }
+
+                if let DragCycle::NotStarted = edit_drag_cycle {
+                    self.original_item = None;
+                    self.original_selected_items.clear();
+                    self.selected_item_ids.clear();
+                    self.dragged_item = None;
+                }
+
+                // make sure original item matches the iterated item
+                if let Some(original_item) = self.original_item.as_ref() {
+                    if (original_item.position() - item.position()).abs() < 1e-10 &&
+                        original_item.id() == item.id() &&
+                        (original_item.value() - item.value()).abs() < 1e-10 {
+                        if let Some(dragged_item) = self.dragged_item.as_ref() {
+                            if dragged_item.id() == referencing_item.id() {
+                                found_item_being_changed = true;
+                            }
+                        }
+                    }
+                }
+
+                if found_item_being_changed {
+                    if let Some(dragged_item) = self.dragged_item.as_ref() {
+                        debug!("Automation - Dragged item found.");
+                        let vertical_y_position = dragged_item.value() * 127.0 * adjusted_entity_height_in_pixels;
+                        x = dragged_item.position() * adjusted_beat_width_in_pixels + delta_x;
+
+                        if invert_vertically {
+                            y = canvas_height - vertical_y_position + delta_y - adjusted_entity_height_in_pixels;
+                        }
+                        else {
+                            y = vertical_y_position + delta_y;
+                        }
+                    }
+                }
+
+                // draw drag position adjust handle if required
+                if found_item_being_changed || ((self.can_change_position || self.can_drag_copy) &&
+                    mouse_pointer_x >= (x - 5.0) &&
+                    mouse_pointer_x <= (x + 5.0) &&
+                    (canvas_height - mouse_pointer_y) >= (y - 5.0) &&
+                    (canvas_height - mouse_pointer_y) <= (y + 5.0)) {
+                    //change the mode
+                    edit_mode = EditMode::Move;
+                    use_this_item = true;
+
+                    // change the prompt
+                    if let Some(window) = drawing_area.window() {
+                        window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Hand1)));
+                        // debug!("Automation - drawing hand prompt.");
+                    }
+                }
+
+                match edit_mode {
+                    EditMode::Inactive => {
+                        // debug!("Automation - EditMode::Inactive");
+                    }
+                    _ => {
+                        match edit_drag_cycle {
+                            DragCycle::MousePressed => {
+                                debug!("Automation - handle_item_edit EditDragCycle::MousePressed");
+                                if use_this_item {
+                                    debug!("Automation - handle_item_edit EditDragCycle::MousePressed - set original and dragged items.");
+                                    self.original_item = Some(item.clone());
+                                    self.original_item_is_selected = item_is_selected;
+                                    self.original_selected_items = selected_items;
+                                    if item.id() != referencing_item.id() {
+                                        let mut dragged_item = item.clone();
+
+                                        dragged_item.set_id(referencing_item.id());
+                                        dragged_item.set_position(referencing_item.position());
+                                        dragged_item.set_value(referencing_item.value());
+                                        self.dragged_item = Some(dragged_item);
+                                    }
+                                    else {
+                                        self.dragged_item = Some(item.clone());
+                                    }
+                                }
+                            }
+                            DragCycle::Dragging => {
+                                debug!("Automation - handle_item_edit EditDragCycle::Dragging");
+
+                                if found_item_being_changed {
+                                    if let EditMode::Move =  edit_mode {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
+                                            let delta_y = y - (canvas_height - dragged_item.value() * 127.0 * adjusted_entity_height_in_pixels);
+                                            let mut updated_selected_items: HashMap<String, (f64, f64)> = HashMap::new();
+
+                                            // draw the dragged item
+                                            if automation_discrete {
+                                                context.move_to(x, canvas_height);
+                                            }
+                                            else {
+                                                if let Some((b4_point, after_point)) = selected_automation_b4_after_points.get(&dragged_item.id()) {
+                                                    // need a look ahead check for another selected item that positionally comes before this one and use it's new position as the b4 point
+                                                    debug!("dragged id={}, x_b4_point={}, b4_point_y={}", dragged_item.id(), b4_point.0, b4_point.1);
+                                                    if self.original_item_is_selected {
+                                                        if let Some(b4_item) = self.original_selected_items.iter().find(|event| event.id() == b4_point.0.clone()) {
+                                                            context.move_to(
+                                                                b4_item.position() * adjusted_beat_width_in_pixels + delta_x,
+                                                                if invert_vertically {
+                                                                    canvas_height - b4_item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                                }
+                                                                else {
+                                                                    b4_item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                                }
+                                                            );
+                                                        }
+                                                        else {
+                                                            context.move_to(b4_point.1, b4_point.2);
+                                                        }
+
+                                                        updated_selected_items.insert(dragged_item.id(), (x, y));
+                                                    }
+                                                    else {
+                                                        context.move_to(b4_point.1, b4_point.2);
+                                                    }
+                                                }
+                                                else {
+                                                    context.move_to(previous_point_x, previous_point_y);
+                                                }
+                                            }
+
+                                            context.line_to(x, y);
+                                            let _ = context.stroke();
+
+                                            if ! automation_discrete {
+                                                context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+                                                let _ = context.fill();
+                                            }
+
+                                            // if the after point does not come from a selected item then draw its line - the square denoting the position will be drawn by the normal code
+                                            if let Some((_, after_point)) = selected_automation_b4_after_points.get(&dragged_item.id()) {
+                                                if !self.original_selected_items.iter().any(|event| event.id() == after_point.0.clone()) {
+                                                    context.move_to(x, y);
+                                                    context.line_to(after_point.1, after_point.2);
+                                                    let _ = context.stroke();
+                                                }
+                                            }
+
+                                            // draw the other selected items
+                                            if self.original_item_is_selected {
+                                                for item in self.original_selected_items.iter() {
+                                                    if item.id() != dragged_item.id() {
+                                                        let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                        let y = if invert_vertically {
+                                                            canvas_height - item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                        }
+                                                        else {
+                                                            item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                        };
+
+                                                        if automation_discrete {
+                                                            context.move_to(x, canvas_height);
+                                                        }
+                                                        else {
+                                                            if let Some((b4_point, after_point)) = selected_automation_b4_after_points.get(&item.id()) {
+                                                                debug!("selected id={}, b4_point_id={}, b4_point_x={}, b4_point_y={}, after_point_id={}, after_point_x={}, after_point_y={}", item.id(), b4_point.0, b4_point.1, b4_point.2, after_point.0, after_point.1, after_point.2);
+                                                                if let Some((b4_updated_x, b4_updated_y)) = updated_selected_items.get(&b4_point.0.clone()) {
+                                                                    context.move_to(*b4_updated_x, *b4_updated_y);
+                                                                }
+                                                                else {
+                                                                    context.move_to(b4_point.1, b4_point.2);
+                                                                }
+
+                                                                updated_selected_items.insert(item.id(), (x, y));
+
+                                                            }
+                                                            else {
+                                                                context.move_to(previous_point_x, previous_point_y);
+                                                            }
+                                                        }
+
+                                                        context.line_to(x, y);
+                                                        let _ = context.stroke();
+
+                                                        if ! automation_discrete {
+                                                            context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+                                                            let _ = context.fill();
+                                                        }
+
+                                                        // if the after point does not come from a selected item then draw its line - the square denoting the position will be drawn by the normal code
+                                                        if let Some((_, after_point)) = selected_automation_b4_after_points.get(&item.id()) {
+                                                            if !self.original_selected_items.iter().any(|event| event.id() == after_point.0.clone()) {
+                                                                context.move_to(x, y);
+                                                                context.line_to(after_point.1, after_point.2);
+                                                                let _ = context.stroke();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                debug!("updated_selected_items count={}", updated_selected_items.iter().count());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            DragCycle::MouseReleased => {
+                                debug!("Automation - handle_item_edit EditDragCycle::MouseReleased");
+
+                                if found_item_being_changed {
+                                    if let Some(original_item) = self.original_item.as_ref() {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            if let EditMode::Move =  edit_mode {
+                                                let mut change = vec![];
+                                                // calculate and set the position
+                                                let position_in_beats = x /adjusted_beat_width_in_pixels;
+                                                dragged_item.set_position(position_in_beats);
+
+                                                // calculate and set the value
+                                                let value = if invert_vertically {
+                                                    let y_pos_inverted = canvas_height - y;
+                                                    ((y_pos_inverted - adjusted_entity_height_in_pixels) / adjusted_entity_height_in_pixels) / 127.0
+                                                }
+                                                else {
+                                                    y / 127.0
+                                                };
+
+                                                debug!("Automation - Setting dragged item value to: {}", value);
+                                                dragged_item.set_value(value);
+
+                                                change.push((original_item.clone(), dragged_item.clone()));
+
+                                                // handle the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = position_in_beats - original_item.position();
+                                                    let delta_y = value - original_item.value();
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let mut changed_item = item.clone();
+
+                                                            changed_item.set_position(changed_item.position() + delta_x);
+                                                            changed_item.set_value(changed_item.value() + delta_y);
+                                                            change.push((item.clone(), changed_item));
+                                                        }
+                                                    }
+                                                }
+
+                                                if !change.is_empty() {
+                                                    (self.changed_event_sender)(change, track_uuid.clone(), tx_from_ui.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    debug!("Automation - handle_item_edit EditDragCycle::MouseReleased - unset original and dragged items.");
+                                    self.original_item = None;
+                                    self.original_selected_items.clear();
+                                    self.selected_item_ids.clear();
+                                    self.dragged_item = None;
+                                }
+                            }
+                            DragCycle::CtrlMousePressed => {
+                                debug!("Automation - handle_item_edit EditDragCycle::CtrlMousePressed");
+                                if use_this_item {
+                                    debug!("Automation - handle_item_edit EditDragCycle::CtrlMousePressed - set original and dragged items.");
+                                    self.original_item = Some(item.clone());
+                                    self.original_item_is_selected = item_is_selected;
+                                    self.original_selected_items = selected_items;
+                                    if item.id() != referencing_item.id() {
+                                        let mut dragged_item = item.clone();
+
+                                        dragged_item.set_id(referencing_item.id());
+                                        dragged_item.set_position(referencing_item.position());
+                                        dragged_item.set_value(referencing_item.value());
+                                        self.dragged_item = Some(dragged_item);
+                                    }
+                                    else {
+                                        self.dragged_item = Some(item.clone());
+                                    }
+                                }
+                            }
+                            DragCycle::CtrlDragging => {
+                                debug!("Automation - handle_item_edit EditDragCycle::CtrlDragging");
+
+                                if found_item_being_changed {
+                                    if let EditMode::Move = edit_mode {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            // draw the dragged item
+                                            if automation_discrete {
+                                                context.move_to(x, canvas_height);
+                                            }
+                                            else {
+                                                context.move_to(previous_point_x, previous_point_y);
+                                            }
+                                            context.line_to(x, y);
+                                            let _ = context.stroke();
+
+                                            if ! automation_discrete {
+                                                context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+                                                let _ = context.fill();
+                                            }
+
+                                            // draw the other selected items
+                                            if self.original_item_is_selected {
+                                                let delta_x = x - dragged_item.position() * adjusted_beat_width_in_pixels;
+                                                let delta_y = y - (canvas_height - dragged_item.value() * 127.0 * adjusted_entity_height_in_pixels);
+                                                for item in self.original_selected_items.iter() {
+                                                    if item.id() != dragged_item.id() {
+                                                        let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
+                                                        let y = if invert_vertically {
+                                                            canvas_height - item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                        }
+                                                        else {
+                                                            item.value() * 127.0 * adjusted_entity_height_in_pixels + delta_y
+                                                        };
+
+                                                        if automation_discrete {
+                                                            context.move_to(x, canvas_height);
+                                                        }
+                                                        else {
+                                                            context.move_to(previous_point_x, previous_point_y);
+                                                        }
+
+                                                        context.line_to(x, y);
+                                                        let _ = context.stroke();
+
+                                                        if ! automation_discrete {
+                                                            context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+                                                            let _ = context.fill();
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            DragCycle::CtrlMouseReleased => {
+                                debug!("Automation - handle_item_edit EditDragCycle::CtrlMouseReleased");
+
+                                if found_item_being_changed {
+                                    if let Some(original_item) = self.original_item.as_ref() {
+                                        if let Some(dragged_item) = self.dragged_item.as_mut() {
+                                            if let EditMode::Move = edit_mode {
+                                                let mut copied = vec![];
+                                                // calculate and set the position
+                                                let position_in_beats = x /adjusted_beat_width_in_pixels;
+                                                dragged_item.set_position(position_in_beats);
+
+                                                // calculate and set the vertical index
+                                                let value = if invert_vertically {
+                                                    let y_pos_inverted = canvas_height - y;
+                                                    ((y_pos_inverted - adjusted_entity_height_in_pixels) / adjusted_entity_height_in_pixels) / 127.0
+                                                }
+                                                else {
+                                                    y / 127.0
+                                                };
+
+                                                debug!("Automation - Setting dragged item vertical index to: {}", value);
+                                                dragged_item.set_value(value * 127.0);
+
+                                                copied.push(dragged_item.clone());
+
+                                                // handle the other selected items
+                                                if self.original_item_is_selected {
+                                                    let delta_x = position_in_beats - original_item.position();
+                                                    let delta_y = value - original_item.value();
+                                                    for item in self.original_selected_items.iter() {
+                                                        if item.id() != dragged_item.id() {
+                                                            let mut copied_item = item.clone();
+
+                                                            copied_item.set_position(copied_item.position() + delta_x);
+                                                            copied_item.set_value((copied_item.value() + delta_y) * 127.0);
+                                                            copied.push(copied_item);
+                                                        }
+                                                    }
+                                                }
+
+                                                if !copied.is_empty() {
+                                                    (self.copied_event_sender)(copied, track_uuid.clone(), tx_from_ui.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    debug!("Automation - handle_item_edit EditDragCycle::CtrlMouseReleased - unset original and dragged items.");
+                                    self.original_item = None;
+                                    self.original_selected_items.clear();
+                                    self.selected_item_ids.clear();
+                                    self.dragged_item = None;
+                                }
+                            }
+                            DragCycle::NotStarted => {
+                                debug!("Automation - handle_item_edit EditDragCycle::NotStarted");
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+            }
+        }
+    }
+}
+
 pub struct SampleRollCustomPainter {
     state: Arc<Mutex<DAWState>>,
 }
@@ -3080,31 +3664,27 @@ impl SampleRollCustomPainter {
 }
 
 impl CustomPainter for SampleRollCustomPainter {
-    fn paint_custom(&mut self, context: &Context, _height: f64, _width: f64, entity_height_in_pixels: f64,
-                    beat_width_in_pixels: f64, 
-                    zoom_horizontal: f64, 
-                    zoom_vertical: f64, 
-                    select_window_top_left_x: f64, 
-                    select_window_top_left_y: f64, 
-                    select_window_bottom_right_x: f64, 
-                    select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
-                    _mouse_pointer_x: f64,
-                    _mouse_pointer_y: f64,
-                    _mouse_pointer_previous_x: f64,
-                    _mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
-                    _drawing_area: &DrawingArea,
-                    _operation_mode: &OperationModeType,
-                    _drag_started: bool,
-                    _edit_drag_cycle: &DragCycle,
-                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+    fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64,
+                    beat_width_in_pixels: f64,
+                    zoom_horizontal: f64,
+                    zoom_vertical: f64,
+                    drawing_area_widget_name: Option<String>,
+                    mouse_pointer_x: f64,
+                    mouse_pointer_y: f64,
+                    mouse_pointer_previous_x: f64,
+                    mouse_pointer_previous_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
+                    drawing_area: &DrawingArea,
+                    operation_mode: &OperationModeType,
+                    drag_started: bool,
+                    edit_drag_cycle: &DragCycle,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    ) {
         match self.state.lock() {
             Ok( state) => {
                 // let bpm = state.get_project().song().tempo();
@@ -3133,10 +3713,10 @@ impl CustomPainter for SampleRollCustomPainter {
                                                     let sample_y_pos = 0.0;
                                                     let x = sample.position() * adjusted_beat_width_in_pixels;
                                                     let width = 1.0 * adjusted_beat_width_in_pixels;
-                                                    if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
-                                                        select_window_top_left_y <= sample_y_pos && (sample_y_pos + entity_height_in_pixels) <= select_window_bottom_right_y {
-                                                        context.set_source_rgb(0.0, 0.0, 1.0);
-                                                    }
+                                                    // if select_window_top_left_x <= x && (x + width) <= select_window_bottom_right_x &&
+                                                    //     select_window_top_left_y <= sample_y_pos && (sample_y_pos + entity_height_in_pixels) <= select_window_bottom_right_y {
+                                                    //     context.set_source_rgb(0.0, 0.0, 1.0);
+                                                    // }
                                                     context.rectangle(x, sample_y_pos, width, entity_height_in_pixels);
                                                     let _ = context.fill();
                                                 }
@@ -3186,30 +3766,26 @@ impl RiffSetTrackCustomPainter {
 
 impl CustomPainter for RiffSetTrackCustomPainter {
     fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64,
-                    beat_width_in_pixels: f64, 
+                    beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    _select_window_top_left_x: f64, 
-                    _select_window_top_left_y: f64, 
-                    _select_window_bottom_right_x: f64, 
-                    _select_window_bottom_right_y: f64,
                     drawing_area_widget_name: Option<String>,
-                    _mouse_pointer_x: f64,
-                    _mouse_pointer_y: f64,
-                    _mouse_pointer_previous_x: f64,
-                    _mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
-                    _drawing_area: &DrawingArea,
-                    _operation_mode: &OperationModeType,
-                    _drag_started: bool,
-                    _edit_drag_cycle: &DragCycle,
-                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+                    mouse_pointer_x: f64,
+                    mouse_pointer_y: f64,
+                    mouse_pointer_previous_x: f64,
+                    mouse_pointer_previous_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
+                    drawing_area: &DrawingArea,
+                    operation_mode: &OperationModeType,
+                    drag_started: bool,
+                    edit_drag_cycle: &DragCycle,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    ) {
         // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
         match self.state.lock() {
             Ok( state) => {
@@ -3410,30 +3986,26 @@ impl PianoRollVerticalScaleCustomPainter {
 
 impl CustomPainter for PianoRollVerticalScaleCustomPainter {
     fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64,
-                    _beat_width_in_pixels: f64,
-                    _zoom_horizontal: f64,
+                    beat_width_in_pixels: f64,
+                    zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    _select_window_top_left_x: f64, 
-                    _select_window_top_left_y: f64, 
-                    _select_window_bottom_right_x: f64, 
-                    _select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
-                    _mouse_pointer_x: f64,
-                    _mouse_pointer_y: f64,
-                    _mouse_pointer_previous_x: f64,
-                    _mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
-                    _drawing_area: &DrawingArea,
-                    _operation_mode: &OperationModeType,
-                    _drag_started: bool,
-                    _edit_drag_cycle: &DragCycle,
-                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+                    drawing_area_widget_name: Option<String>,
+                    mouse_pointer_x: f64,
+                    mouse_pointer_y: f64,
+                    mouse_pointer_previous_x: f64,
+                    mouse_pointer_previous_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
+                    drawing_area: &DrawingArea,
+                    operation_mode: &OperationModeType,
+                    drag_started: bool,
+                    edit_drag_cycle: &DragCycle,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    ) {
         context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
@@ -3480,8 +4052,6 @@ pub struct TrackGridCustomPainter {
     show_note: bool,
     show_note_velocity: bool,
     show_pan: bool,
-    pub original_riff: Option<Riff>,
-    pub dragged_riff: Option<Riff>,
     pub edit_item_handler: EditItemHandler<Riff, RiffReference>,
 }
 
@@ -3493,8 +4063,6 @@ impl TrackGridCustomPainter {
             show_note: true,
             show_note_velocity: false,
             show_pan: false,
-            original_riff: None,
-            dragged_riff: None,
             edit_item_handler,
         }
     }
@@ -3513,35 +4081,31 @@ impl TrackGridCustomPainter {
 }
 
 impl CustomPainter for TrackGridCustomPainter {
-    fn paint_custom(&mut self, 
-                    context: &Context, 
-                    canvas_height: f64, 
-                    _canvas_width: f64, 
+    fn paint_custom(&mut self,
+                    context: &Context,
+                    height: f64,
+                    width: f64,
                     entity_height_in_pixels: f64,
-                    beat_width_in_pixels: f64, 
-                    zoom_horizontal: f64, 
-                    zoom_vertical: f64, 
-                    select_window_top_left_x: f64, 
-                    select_window_top_left_y: f64, 
-                    select_window_bottom_right_x: f64, 
-                    select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
+                    beat_width_in_pixels: f64,
+                    zoom_horizontal: f64,
+                    zoom_vertical: f64,
+                    drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    _drag_started: bool,
+                    drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+    ) {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         // debug!("TrackGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
         let clip_rectangle = Rect::new(
@@ -3555,7 +4119,7 @@ impl CustomPainter for TrackGridCustomPainter {
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
                 // find all the selected notes
-                let selected_riff_ref_ids = state.selected_riff_references().clone();
+                let selected_riff_ref_ids = state.selected_track_grid_riff_references().clone();
                 let mut selected_riff_references = vec![];
 
                 for (index, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
@@ -3617,22 +4181,22 @@ impl CustomPainter for TrackGridCustomPainter {
                                     // debug!("Part in clip region");
 
                                     self.edit_item_handler.handle_item_edit(
-                                        context, 
+                                        context,
                                         &riff,
-                                        operation_mode, 
-                                        mouse_pointer_x, 
-                                        mouse_pointer_y, 
-                                        mouse_pointer_previous_x, 
-                                        mouse_pointer_previous_y, 
-                                        adjusted_entity_height_in_pixels, 
-                                        adjusted_beat_width_in_pixels, 
-                                        x, 
-                                        y, 
-                                        width, 
-                                        canvas_height, 
-                                        drawing_area, 
-                                        edit_drag_cycle, 
-                                        tx_from_ui.clone(), 
+                                        operation_mode,
+                                        mouse_pointer_x,
+                                        mouse_pointer_y,
+                                        mouse_pointer_previous_x,
+                                        mouse_pointer_previous_y,
+                                        adjusted_entity_height_in_pixels,
+                                        adjusted_beat_width_in_pixels,
+                                        x,
+                                        y,
+                                        width,
+                                        height,
+                                        drawing_area,
+                                        edit_drag_cycle,
+                                        tx_from_ui.clone(),
                                         false,
                                         track.uuid().to_string(),
                                         riff_ref,
@@ -3790,7 +4354,7 @@ impl CustomPainter for TrackGridCustomPainter {
                             let start_x = active_loop.start_position() * adjusted_beat_width_in_pixels;
                             let end_x = active_loop.end_position() * adjusted_beat_width_in_pixels;
                             context.set_source_rgba(0.0, 1.0, 0.0, 0.1);
-                            context.rectangle(start_x, 0.0, end_x - start_x, canvas_height);
+                            context.rectangle(start_x, 0.0, end_x - start_x, height);
                             match context.fill() {
                                 Ok(_) => (),
                                 Err(_) => (),
@@ -3822,8 +4386,6 @@ pub struct RiffGridCustomPainter {
     show_note: bool,
     show_note_velocity: bool,
     show_pan: bool,
-    pub original_riff: Option<Riff>,
-    pub dragged_riff: Option<Riff>,
     pub edit_item_handler: EditItemHandler<Riff, RiffReference>,
     use_globally_selected_riff_grid: bool,
     riff_grid_uuid: Option<String>,
@@ -3843,8 +4405,6 @@ impl RiffGridCustomPainter {
             show_note: true,
             show_note_velocity: false,
             show_pan: false,
-            original_riff: None,
-            dragged_riff: None,
             edit_item_handler,
             use_globally_selected_riff_grid,
             riff_grid_uuid,
@@ -3868,30 +4428,26 @@ impl RiffGridCustomPainter {
 impl CustomPainter for RiffGridCustomPainter {
     fn paint_custom(&mut self,
                     context: &Context,
-                    canvas_height: f64,
-                    _canvas_width: f64,
+                    height: f64,
+                    width: f64,
                     entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    select_window_top_left_x: f64,
-                    select_window_top_left_y: f64,
-                    select_window_bottom_right_x: f64,
-                    select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
+                    drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    _draw_mode_on: bool,
-                    _draw_mode: DrawMode,
-                    _draw_mode_start_x: f64,
-                    _draw_mode_start_y: f64,
-                    _draw_mode_end_x: f64,
-                    _draw_mode_end_y: f64,
+                    draw_mode_on: bool,
+                    draw_mode: DrawMode,
+                    draw_mode_start_x: f64,
+                    draw_mode_start_y: f64,
+                    draw_mode_end_x: f64,
+                    draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    _drag_started: bool,
+                    drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) {
@@ -3922,7 +4478,7 @@ impl CustomPainter for RiffGridCustomPainter {
                 };
 
                 // find all the selected riff refs
-                let selected_riff_ref_ids = state.selected_riff_references().clone();
+                let selected_riff_ref_ids = state.selected_riff_grid_riff_references().clone();
                 let mut riff_lengths = HashMap::new();
                 for track in state.project().song().tracks().iter() {
                     for riff in track.riffs().iter() {
@@ -4006,7 +4562,7 @@ impl CustomPainter for RiffGridCustomPainter {
                                             x,
                                             y,
                                             width,
-                                            canvas_height,
+                                            height,
                                             drawing_area,
                                             edit_drag_cycle,
                                             tx_from_ui.clone(),
@@ -4149,12 +4705,63 @@ impl CustomPainter for RiffGridCustomPainter {
 
 pub struct AutomationCustomPainter {
     state: Arc<Mutex<DAWState>>,
+    pub edit_item_handler: AutomationEditItemHandler,
 }
 
 impl AutomationCustomPainter {
-    pub fn new(state: Arc<Mutex<DAWState>>) -> AutomationCustomPainter {
+    pub fn new_with_edit_item_handler(state: Arc<Mutex<DAWState>>, edit_item_handler: AutomationEditItemHandler) -> AutomationCustomPainter {
         AutomationCustomPainter {
             state,
+            edit_item_handler,
+        }
+    }
+
+    fn draw_riff(context: &Context, height: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, zoom: f64, adjusted_beat_width_in_pixels: f64, riff: &Riff, track: &TrackType) {
+        let duration_in_beats = riff.length();
+        let x = riff.position() * adjusted_beat_width_in_pixels;
+        let y = height / 2.0;
+        let width = duration_in_beats * beat_width_in_pixels * zoom;
+        let (red, green, blue, alpha) = track.colour();
+
+        // draw the riff ref rectangle
+        context.set_source_rgba(red, green, blue, alpha);
+        context.rectangle(x + 1.0, y + 1.0, width - 2.0, entity_height_in_pixels * 15.0 - 2.0);
+        let _ = context.fill();
+
+        // draw the riff name
+        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+        context.move_to(x + 5.0, y + 10.0);
+        context.set_font_size(9.0);
+        let mut name = riff.name().to_string();
+        let mut name_fits = false;
+        while !name_fits {
+            if let Ok(text_extents) = context.text_extents(name.as_str()) {
+                if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                    if !name.is_empty() {
+                        name = name.as_str()[0..name.len() - 1].to_string();
+                    } else {
+                        name_fits = true;
+                        break;
+                    }
+                } else {
+                    name_fits = true;
+                    break;
+                }
+            }
+        }
+        let _ = context.show_text(name.as_str());
+
+        // draw the notes
+        for track_event in riff.events() {
+            if let TrackEvent::Note(note) = track_event {
+                let note_x = (riff.position() + note.position()) * adjusted_beat_width_in_pixels;
+
+                // draw note
+                let note_y = height / 2.0 + entity_height_in_pixels * 15.0 - (entity_height_in_pixels * 15.0 / 127.0 * note.note() as f64);
+                context.move_to(note_x, note_y);
+                context.line_to(note_x + note.length() * adjusted_beat_width_in_pixels, note_y);
+                let _ = context.stroke();
+            }
         }
     }
 
@@ -4244,38 +4851,58 @@ impl AutomationCustomPainter {
         context.line_to(x_end, y_end);
         let _ = context.stroke();
     }
+
+    fn draw_automation(context: &Context, height: f64, automation_discrete: bool, mut previous_point_x: &mut f64, mut previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64) {
+        if automation_discrete {
+            context.move_to(x, height);
+        } else {
+            context.move_to(*previous_point_x, *previous_point_y);
+            context.set_line_width(0.75);
+        }
+
+        context.line_to(x, y);
+        let _ = context.stroke();
+        context.set_line_width(default_line_width);
+
+        if !automation_discrete {
+            context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+            let _ = context.fill();
+            let _ = context.stroke();
+        }
+
+        if !automation_discrete {
+            *previous_point_x = x;
+            *previous_point_y = y;
+        }
+    }
 }
 
 impl CustomPainter for AutomationCustomPainter {
     fn paint_custom(&mut self,
                     context: &Context,
                     height: f64,
-                    _width: f64,
+                    width: f64,
                     entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    select_window_top_left_x: f64, 
-                    select_window_top_left_y: f64, 
-                    select_window_bottom_right_x: f64, 
-                    select_window_bottom_right_y: f64,
-                    _drawing_area_widget_name: Option<String>,
-                    _mouse_pointer_x: f64,
-                    _mouse_pointer_y: f64,
-                    _mouse_pointer_previous_x: f64,
-                    _mouse_pointer_previous_y: f64,
+                    drawing_area_widget_name: Option<String>,
+                    mouse_pointer_x: f64,
+                    mouse_pointer_y: f64,
+                    mouse_pointer_previous_x: f64,
+                    mouse_pointer_previous_y: f64,
                     draw_mode_on: bool,
                     draw_mode: DrawMode,
                     draw_mode_start_x: f64,
                     draw_mode_start_y: f64,
                     draw_mode_end_x: f64,
                     draw_mode_end_y: f64,
-                    _drawing_area: &DrawingArea,
-                    _operation_mode: &OperationModeType,
-                    _drag_started: bool,
-                    _edit_drag_cycle: &DragCycle,
-                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-                ) {
+                    drawing_area: &DrawingArea,
+                    operation_mode: &OperationModeType,
+                    drag_started: bool,
+                    edit_drag_cycle: &DragCycle,
+                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+    ) {
         match self.state.lock() {
             Ok(mut state) => {
                 let automation_type = *state.automation_type_mut();
@@ -4285,6 +4912,13 @@ impl CustomPainter for AutomationCustomPainter {
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
                 let type_to_show = state.automation_view_mode();
                 let current_view = state.current_view();
+                let automation_discrete = state.automation_discrete();
+                let selected_effect_uuid = if let Some(selected_effect_uuid) = state.selected_effect_plugin_uuid() {
+                    selected_effect_uuid.clone()
+                }
+                else {
+                    "".to_string()
+                };
 
                 if let crate::state::AutomationViewMode::NoteVelocities = type_to_show {
                     match state.selected_track() {
@@ -4369,57 +5003,311 @@ impl CustomPainter for AutomationCustomPainter {
                             // draw the track name
                             Self::draw_track_name(context, name.as_str());
 
-                            let events = if let CurrentView::RiffArrangement = current_view {
-                                // get the arrangement
-                                if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
-                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()){
-                                        if let Some(riff_arr_automation) = riff_arrangement.automation(&track_uuid) {
-                                            Some(riff_arr_automation.events())
-                                        }
-                                        else {
-                                            None
-                                        }
+                            let events = match current_view {
+                                CurrentView::Track => if let AutomationEditType::Track = state.automation_edit_type() {
+                                    let automation = track.automation();
+                                    if automation_discrete {
+                                        Some(automation.events())
                                     }
                                     else {
-                                        None
+                                        if let Some(automation_type_value) = automation_type {
+                                            if let Some(automation_envelope) = automation.envelopes().iter().find(|envelope| {
+                                                let mut found = false;
+
+                                                // need to know what kind of events we are looking for in order to get the appropriate envelope
+                                                match type_to_show {
+                                                    AutomationViewMode::NoteVelocities => {
+
+                                                    }
+                                                    AutomationViewMode::Controllers => {
+                                                        if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                                            if controller.controller() == automation_type_value {
+                                                                found = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    AutomationViewMode::PitchBend => {
+                                                        if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
+                                                    AutomationViewMode::Instrument => {
+                                                        let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track {
+                                                            instrument_track.instrument().uuid().to_string()
+                                                        }
+                                                        else {
+                                                            "".to_string()
+                                                        };
+                                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
+                                                                found = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    AutomationViewMode::Effect => {
+                                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                                found = true;
+                                                            }
+                                                        }
+                                                    }
+                                                    AutomationViewMode::NoteExpression => {
+                                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                                            if *note_expression.expression_type() as i32 == automation_type_value {
+                                                                found = true;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                return found;
+                                            }) {
+                                                Some(automation_envelope.events())
+                                            } else { None }
+                                        }
+                                        else { None }
                                     }
                                 }
                                 else {
                                     None
                                 }
-                            }
-                            else {
-                                match state.automation_edit_type() {
-                                    AutomationEditType::Track => {
-                                        Some(track.automation().events())
-                                    }
-                                    AutomationEditType::Riff => {
-                                        if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
-                                            if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == selected_riff_uuid) {
-                                                Self::draw_riff_name(context, riff.name());
-                                                Some(riff.events_vec())
-                                            }
-                                            else {
-                                                None
-                                            }
+                                CurrentView::RiffSet => if let AutomationEditType::Riff = state.automation_edit_type() {
+                                    if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+                                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == selected_riff_uuid) {
+                                            Self::draw_riff_name(context, riff.name());
+                                            Some(riff.events_vec())
                                         }
-                                        else {
-                                            None
-                                        }
+                                        else { None }
                                     }
+                                    else { None }
+                                }
+                                else {
+                                    None
+                                }
+                                CurrentView::RiffSequence => None,
+                                CurrentView::RiffGrid => None,
+                                CurrentView::RiffArrangement => if let CurrentView::RiffArrangement = current_view {
+                                    // get the arrangement
+                                    if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                        if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()){
+                                            if let Some(automation) = riff_arrangement.automation(&track_uuid) {
+                                                if automation_discrete {
+                                                    Some(automation.events())
+                                                }
+                                                else {
+                                                    if let Some(automation_type_value) = automation_type {
+                                                        if let Some(automation_envelope) = automation.envelopes().iter().find(|envelope| {
+                                                            let mut found = false;
+
+                                                            // need to know what kind of events we are looking for in order to get the appropriate envelope
+                                                            match type_to_show {
+                                                                AutomationViewMode::NoteVelocities => {
+
+                                                                }
+                                                                AutomationViewMode::Controllers => {
+                                                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                                                        if controller.controller() == automation_type_value {
+                                                                            found = true;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::PitchBend => {
+                                                                    if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::Instrument => {
+                                                                    let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track {
+                                                                        instrument_track.instrument().uuid().to_string()
+                                                                    }
+                                                                    else {
+                                                                        "".to_string()
+                                                                    };
+                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
+                                                                            found = true;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::Effect => {
+                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                        if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                                            found = true;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::NoteExpression => {
+                                                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                                                        if *note_expression.expression_type() as i32 == automation_type_value {
+                                                                            found = true;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            return found;
+                                                        }) {
+                                                            Some(automation_envelope.events())
+                                                        } else { None }
+                                                    }
+                                                    else { None }
+                                                }
+                                            }
+                                            else { None }
+                                        }
+                                        else { None }
+                                    }
+                                    else { None }
+                                }
+                                else {
+                                    None
                                 }
                             };
-                
-                            if let Some(events) = events {
-                                if let CurrentView::Track = current_view {
-                                    let riff_refs = track.riff_refs();
-                                    Self::draw_track(context, height, adjusted_entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, track, riff_refs);
+
+                            // draw the riff refs so we know where to add automation
+                            if let CurrentView::Track = current_view {
+                                let riff_refs = track.riff_refs();
+                                Self::draw_track(context, height, adjusted_entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, track, riff_refs);
+                            }
+                            else if let CurrentView::RiffArrangement = current_view { // draw the riff arrangement track riff refs if relevant so that the user can see where to place their automation
+                                // get the current riff arrangement
+                                if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()){
+                                        // loop through all the riff sets, riff seqs and riff grids fetching the riff refs using the LCF on riff sets to get the number of iterations for a riff ref for a track
+                                        let mut running_position = 0.0;
+                                        for item in riff_arrangement.items().iter() {
+                                            // instantiate and pack new riffs to represent the riff ref and the underlying riff all packed into one.
+                                            match item.item_type() {
+                                                RiffItemType::RiffSet => {
+                                                    if let Some(riff_set) = state.project().song().riff_set(item.item_uuid().to_string()) {
+                                                        let mut riff_lengths = vec![];
+                                                        let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, 4.0, None);
+
+                                                        // get the number of repeats
+                                                        for track in state.project().song().tracks().iter() {
+                                                            // get the riff_ref
+                                                            if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                                                                // get the riff
+                                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                                    riff_lengths.push(riff.length() as i32);
+
+                                                                    if track_uuid == track.uuid().to_string() {
+                                                                        riff_to_draw = riff.clone();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+
+                                                        let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
+
+                                                        // draw the riff reference x number of times
+                                                        for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
+                                                            riff_to_draw.set_position(running_position);
+                                                            if riff_to_draw.name() != "empty" {
+                                                                Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
+                                                            }
+                                                            running_position += riff_to_draw.length();
+                                                        }
+                                                    }
+                                                }
+                                                RiffItemType::RiffSequence => {
+
+                                                }
+                                                RiffItemType::RiffGrid => {
+
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
+                            }
 
+                            if let Some(events) = events {
                                 let unselected_event_colour = (red, green, blue, 1.0);
+                                let mut previous_point_x = 0.0;
+                                let mut previous_point_y = height;
+                                let default_line_width = context.line_width();
+                                let selected_automation  = events.iter().filter(|event| state.selected_automation().contains(&event.id())).map(|event| event.clone()).collect_vec();
+                                let mut selected_automation_b4_after_points: HashMap<String, ((String, f64, f64), (String, f64, f64))>  = HashMap::new();
+                                {
+                                    let mut previous_point = ("start".to_string(), 0.0, height);
+                                    let mut current_id = "".to_string();
+                                    let mut process_post_point = false;
+                                    for event in events.iter() {
+                                        if process_post_point {
+                                            if let Some((b4_point, _)) = selected_automation_b4_after_points.get(&current_id) {
+                                                selected_automation_b4_after_points.insert(
+                                                    current_id.clone(),
+                                                    (
+                                                            (b4_point.0.clone(), b4_point.1, b4_point.2),
+                                                            (event.id(), event.position() * adjusted_beat_width_in_pixels, height - event.value() * 127.0 * adjusted_entity_height_in_pixels)
+                                                    )
+                                                );
+                                                process_post_point = false;
+                                            }
+                                        }
+                                        if state.selected_automation().contains(&event.id()) {
+                                            current_id = event.id();
+                                            selected_automation_b4_after_points.insert(current_id.clone(), ((previous_point.0, previous_point.1, previous_point.2), ("".to_string(), 0.0, 0.0)));
+                                            // debug!("id={}, x_pre={}, y_pre={}", current_id.as_str(), previous_point.0, previous_point.1);
+                                            process_post_point = true;
+                                        }
 
+                                        previous_point = (event.id(), event.position() * adjusted_beat_width_in_pixels, height - event.value() * 127.0 * adjusted_entity_height_in_pixels);
+                                    }
+
+                                    if process_post_point {
+                                        if let Some((b4_point, _)) = selected_automation_b4_after_points.get(&current_id) {
+                                            selected_automation_b4_after_points.insert(
+                                                current_id.clone(),
+                                                (
+                                                    (b4_point.0.clone(), b4_point.1, b4_point.2),
+                                                    ("end".to_string(), width - previous_point.1, previous_point.2)
+                                                )
+                                            );
+                                            process_post_point = false;
+                                        }
+                                    }
+                                }
+                                // debug!("selected_automation_b4_after_points entry count={}", selected_automation_b4_after_points.iter().count());
+                                // selected_automation_b4_after_points.iter().for_each(|(key, (pre, post))| debug!("id={}, x_pre={}, y_pre={}, x_post={}, y_post={}", key, pre.0, pre.1, post.0, post.1));
                                 for track_event in events.iter() {
                                     let mut event_colour = unselected_event_colour.clone();
+                                    let is_selected = state.selected_automation().iter().any(|id| {
+                                        id.as_str() == track_event.id().as_str()
+                                    });
+
+                                    if is_selected {
+                                        event_colour = (0.0, 0.0, 1.0, 1.0);
+                                    }
+                                    context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
+
+                                    self.edit_item_handler.handle_item_edit(
+                                        context,
+                                        track_event,
+                                        operation_mode,
+                                        mouse_pointer_x,
+                                        mouse_pointer_y,
+                                        mouse_pointer_previous_x,
+                                        mouse_pointer_previous_y,
+                                        adjusted_entity_height_in_pixels,
+                                        adjusted_beat_width_in_pixels,
+                                        track_event.position() * adjusted_beat_width_in_pixels,
+                                        track_event.value() * 127.0 * adjusted_entity_height_in_pixels,
+                                        height,
+                                        drawing_area,
+                                        edit_drag_cycle,
+                                        tx_from_ui.clone(),
+                                        true,
+                                        track_uuid.clone(),
+                                        track_event,
+                                        is_selected,
+                                        selected_automation.clone(),
+                                        previous_point_x,
+                                        previous_point_y,
+                                        automation_discrete,
+                                        &selected_automation_b4_after_points
+                                    );
 
                                     match type_to_show {
                                         crate::state::AutomationViewMode::Controllers => {
@@ -4431,16 +5319,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let x = controller.position() * adjusted_beat_width_in_pixels;
                                                         let y = height - note_y_pos_inverted;
 
-                                                        let is_selected = state.selected_automation().iter().any(|id| {
-                                                            id.as_str() == controller.id().as_str()
-                                                        });
-                                                        if is_selected {
-                                                            event_colour = (0.0, 0.0, 1.0, 1.0);
-                                                        }
-                                                        context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
-
-                                                        context.move_to(x, height);
-                                                        context.line_to(x, y);
+                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
 
                                                         match context.stroke() {
                                                             Ok(_) => (),
@@ -4457,16 +5336,27 @@ impl CustomPainter for AutomationCustomPainter {
                                                 let x = pitch_bend.position() * adjusted_beat_width_in_pixels;
                                                 let y = height - note_y_pos_inverted;
 
-                                                let is_selected = state.selected_automation().iter().any(|id| {
-                                                    id.as_str() == pitch_bend.id().as_str()
-                                                });
-                                                if is_selected {
-                                                    event_colour = (0.0, 0.0, 1.0, 1.0);
+                                                if automation_discrete {
+                                                    context.move_to(x, height / 2.0);
+                                                } else {
+                                                    context.move_to(previous_point_x, previous_point_y);
+                                                    context.set_line_width(0.75);
                                                 }
-                                                context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
 
-                                                context.move_to(x, height / 2.0);
                                                 context.line_to(x, y);
+                                                let _ = context.stroke();
+                                                context.set_line_width(default_line_width);
+
+                                                if !automation_discrete {
+                                                    context.rectangle(x - 5.0, y - 5.0, 10.0, 10.0);
+                                                    let _ = context.fill();
+                                                    let _ = context.stroke();
+                                                }
+
+                                                if !automation_discrete {
+                                                    previous_point_x = x;
+                                                    previous_point_y = y;
+                                                }
 
                                                 match context.stroke() {
                                                     Ok(_) => (),
@@ -4482,21 +5372,8 @@ impl CustomPainter for AutomationCustomPainter {
                                                         let note_y_pos_inverted = parameter_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                         let x = audio_plugin_parameter.position() * adjusted_beat_width_in_pixels;
                                                         let y = height - note_y_pos_inverted;
-                                                        let width = 1.0;
 
-                                                        let is_selected = state.selected_automation().iter().any(|id| id.as_str() == audio_plugin_parameter.id().as_str());
-                                                        if is_selected {
-                                                            event_colour = (0.0, 0.0, 1.0, 1.0);
-                                                        }
-                                                        context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
-
-                                                        context.move_to(x, height);
-                                                        context.line_to(x, y);
-
-                                                        match context.stroke() {
-                                                            Ok(_) => (),
-                                                            Err(error) => debug!("Problem drawing instrument plugin parameter in the automation view: {:?}", error),
-                                                        }
+                                                        Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
                                                     }
                                                 }
                                             }
@@ -4512,16 +5389,8 @@ impl CustomPainter for AutomationCustomPainter {
                                                             let note_y_pos_inverted = parameter_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                             let x = audio_plugin_parameter.position() * adjusted_beat_width_in_pixels;
                                                             let y = height - note_y_pos_inverted;
-                                                            let width = 1.0;
 
-                                                            let is_selected = state.selected_automation().iter().any(|id| id.as_str() == audio_plugin_parameter.id().as_str());
-                                                            if is_selected {
-                                                                event_colour = (0.0, 0.0, 1.0, 1.0);
-                                                            }
-                                                            context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
-    
-                                                            context.move_to(x, height);
-                                                            context.line_to(x, y);
+                                                            Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
 
                                                             match context.stroke() {
                                                                 Ok(_) => (),
@@ -4539,16 +5408,8 @@ impl CustomPainter for AutomationCustomPainter {
                                                     let note_y_pos_inverted = note_expression_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                     let x = note_expression.position() * adjusted_beat_width_in_pixels;
                                                     let y = height - note_y_pos_inverted;
-                                                    let width = 1.0;
 
-                                                    let is_selected = state.selected_automation().iter().any(|id| id.as_str() == note_expression.id().as_str());
-                                                    if is_selected {
-                                                        event_colour = (0.0, 0.0, 1.0, 1.0);
-                                                    }
-                                                    context.set_source_rgba(event_colour.0, event_colour.1, event_colour.2, event_colour.3);
-
-                                                    context.move_to(x, height);
-                                                    context.line_to(x, y);
+                                                    Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y);
 
                                                     match context.stroke() {
                                                         Ok(_) => (),
@@ -4559,6 +5420,13 @@ impl CustomPainter for AutomationCustomPainter {
                                         }
                                         _ => {}
                                     }
+                                }
+                                if !automation_discrete {
+                                    context.set_line_width(0.75);
+                                    context.move_to(previous_point_x, previous_point_y);
+                                    context.line_to(width, previous_point_y);
+                                    let _ = context.stroke();
+                                    context.set_line_width(default_line_width);
                                 }
                             }
                         }
@@ -4616,7 +5484,9 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
-        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(time, y_index), None));
+        let mut new_entities = vec![];
+        new_entities.push((time, y_index));
+        let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(new_entities), None));
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
@@ -4667,5 +5537,8 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     }
 
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
     }
 }

@@ -79,15 +79,9 @@ pub enum OperationModeType {
     Change,
     PointMode,
     LoopPointMode,
-    DeleteSelected,
-    CopySelected,
-    PasteSelected,
-    SelectAll,
-    DeselectAll,
-    Undo,
-    Redo,
     SelectStartNote,
     SelectRiffReferenceMode,
+    WindowedZoom,
 }
 
 #[derive(Clone)]
@@ -147,6 +141,7 @@ pub enum RiffGridChangeType {
     RiffReferencesSelectSingle(f64, i32, bool),
     RiffReferencesDeselectMultiple(f64, i32, f64, i32),
     RiffReferencesDeselectSingle(f64, i32),
+    RiffReferencesSelectAll,
     RiffReferencesDeselectAll,
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
@@ -208,6 +203,8 @@ pub enum TrackChangeType {
     RiffReferenceCopySelected,
     RiffReferencePaste,
     RiffReferenceChange(Vec<(Riff, Riff)>), // Vec<(original riff copy, changed riff)>
+    RiffReferencesSelectAll,
+    RiffReferencesDeselectAll,
 
     RiffAddNote(Vec<(i32, f64, f64)>),    // note_number, position, duration
     RiffDeleteNote(i32, f64),      // note_number, position
@@ -224,12 +221,15 @@ pub enum TrackChangeType {
     RiffEventsSelectSingle(f64, i32, bool),
     RiffEventsDeselectMultiple(f64, i32, f64, i32),
     RiffEventsDeselectSingle(f64, i32),
+    RiffEventsSelectAll,
+    RiffEventsDeselectAll,
     RiffSetStartNote(i32, f64),
     RiffReferencePlayMode(i32, f64),
 
-    AutomationAdd(f64, i32),
+    AutomationAdd(Vec<(f64, i32)>),
     AutomationDelete(f64),
     AutomationTranslateSelected(TranslationEntityType, TranslateDirection),
+    AutomationChange(Vec<(TrackEvent, TrackEvent)> ), // original event copy, changed event
     AutomationQuantiseSelected,
     AutomationCut,
     AutomationCopy,
@@ -237,6 +237,8 @@ pub enum TrackChangeType {
     AutomationTypeChange(AutomationChangeData),
     AutomationSelectMultiple(f64, i32, f64, i32, bool),
     AutomationDeselectMultiple(f64, i32, f64, i32),
+    AutomationSelectAll,
+    AutomationDeselectAll,
 
     RouteMidiTo(TrackEventRouting),
     RemoveMidiRouting(String), // route_uuid
@@ -407,6 +409,7 @@ pub enum DAWEvents {
     PianoRollSetTrackName(String),
     PianoRollSetRiffName(String),
     PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId),
+    PianoRollWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
 
     SampleRollSetTrackName(String),
     SampleRollSetRiffName(String),

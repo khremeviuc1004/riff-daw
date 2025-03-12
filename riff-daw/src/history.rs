@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::domain::{DAWItemLength, DAWItemID, Riff};
 use crate::{DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent};
 use crate::event::{DAWEvents, TrackChangeType, TranslateDirection, TranslationEntityType};
+use crate::utils::DAWUtils;
 
 /// Command pattern variation with undo
 /// Memento pattern not used to hold state - a bit heavy
@@ -1164,7 +1165,11 @@ pub struct RiffQuantiseSelectedAction {
     track_uuid: Option<String>,
     riff_uuid: Option<String>,
     snap_in_beats: f64,
+    snap_strength: f64,
     snap_deltas: HashMap<String, f64>,
+    length_snap_deltas: HashMap<String, f64>,
+    snap_start: bool,
+    snap_end: bool,
 }
 
 impl RiffQuantiseSelectedAction {
@@ -1173,13 +1178,20 @@ impl RiffQuantiseSelectedAction {
         track_uuid: Option<String>,
         riff_uuid: Option<String>,
         snap_in_beats: f64,
+        snap_strength: f64,
+        snap_start: bool,
+        snap_end: bool,
     ) -> Self {
         Self {
             riff_event_uuids,
             track_uuid,
             riff_uuid,
             snap_in_beats,
+            snap_strength,
             snap_deltas: HashMap::new(),
+            length_snap_deltas: HashMap::new(),
+            snap_start,
+            snap_end
         }
     }
 }
@@ -1210,14 +1222,23 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::ProgramChange => {},
                                                     TrackEvent::Note(note) => {
                                                         if self.riff_event_uuids.contains(&note.id_mut()) {
-                                                            let note_position = note.position();
+                                                            if self.snap_start {
+                                                                let note_position = note.position();
+                                                                let calculated_snap = DAWUtils::quantise(note_position, self.snap_in_beats, self.snap_strength, false);
 
-                                                            if note_position > 0.0 {
-                                                                let snap_delta = note_position % self.snap_in_beats;
-                                                                if (note_position - snap_delta) >= 0.0 {
-                                                                    note.set_position(note_position - snap_delta);
-                                                                    self.snap_deltas.insert(note.id_mut(), snap_delta);
+                                                                if calculated_snap.snapped {
+                                                                    note.set_position(calculated_snap.snapped_value);
+                                                                    self.snap_deltas.insert(note.id_mut(), calculated_snap.calculated_delta);
+                                                                    riff_changed = true;
+                                                                }
+                                                            }
+                                                            if self.snap_end {
+                                                                let note_length = note.length();
+                                                                let calculated_snap = DAWUtils::quantise(note_length, self.snap_in_beats, self.snap_strength, true);
 
+                                                                if calculated_snap.snapped {
+                                                                    note.set_length(calculated_snap.snapped_value);
+                                                                    self.length_snap_deltas.insert(note.id_mut(), calculated_snap.calculated_delta);
                                                                     riff_changed = true;
                                                                 }
                                                             }
@@ -1282,15 +1303,32 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::AfterTouch => {},
                                                     TrackEvent::ProgramChange => {},
                                                     TrackEvent::Note(note) => {
-                                                        if self.riff_event_uuids.contains(&note.id_mut()) {
-                                                            let note_position = note.position();
+                                                        if self.snap_start {
+                                                            if self.riff_event_uuids.contains(&note.id_mut()) {
+                                                                let note_position = note.position();
 
-                                                            if note_position >= 0.0 {
-                                                                if let Some(snap_delta) = self.snap_deltas.get(&note.id_mut()) {
-                                                                    if (note_position + snap_delta) >= 0.0 {
-                                                                        note.set_position(note_position + snap_delta);
+                                                                if note_position >= 0.0 {
+                                                                    if let Some(snap_delta) = self.snap_deltas.get(&note.id_mut()) {
+                                                                        if (note_position + snap_delta) >= 0.0 {
+                                                                            note.set_position(note_position + snap_delta);
 
-                                                                        riff_changed = true;
+                                                                            riff_changed = true;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if self.snap_end {
+                                                            if self.riff_event_uuids.contains(&note.id_mut()) {
+                                                                let note_length = note.length();
+
+                                                                if note_length >= 0.0 {
+                                                                    if let Some(snap_delta) = self.length_snap_deltas.get(&note.id_mut()) {
+                                                                        if (note_length + snap_delta) > 0.0 {
+                                                                            note.set_length(note_length + snap_delta);
+
+                                                                            riff_changed = true;
+                                                                        }
                                                                     }
                                                                 }
                                                             }

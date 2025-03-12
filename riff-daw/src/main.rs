@@ -6,7 +6,8 @@ use apres::MIDI;
 use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, VST_PATH_ENVIRONMENT_VARIABLE_NAME, CLAP_PATH_ENVIRONMENT_VARIABLE_NAME, DAW_AUTO_SAVE_THREAD_NAME};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use flexi_logger::{LogSpecification, Logger};
-use gtk::{Adjustment, ButtonsType, ComboBoxText, DrawingArea, Frame, glib, MessageDialog, MessageType, prelude::{ActionMapExt, AdjustmentExt, ApplicationExt, Cast, ComboBoxExtManual, ComboBoxTextExt, ContainerExt, DialogExt, EntryExt, GtkWindowExt, LabelExt, ProgressBarExt, ScrolledWindowExt, SpinButtonExt, TextBufferExt, TextViewExt, ToggleToolButtonExt, WidgetExt}, SpinButton, Window, WindowType};
+use gtk::{Adjustment, ButtonsType, ComboBoxText, DrawingArea, Frame, glib, MessageDialog, MessageType, prelude::{ActionMapExt, AdjustmentExt, ApplicationExt, Cast, ComboBoxExtManual, ComboBoxTextExt, ContainerExt, DialogExt, EntryExt, GtkWindowExt, LabelExt, ProgressBarExt, ScrolledWindowExt, SpinButtonExt, TextBufferExt, TextViewExt, ToggleToolButtonExt, WidgetExt}, SpinButton, Window, WindowType, Viewport};
+use gtk::prelude::BinExt;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::MidiOut;
@@ -1170,6 +1171,38 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         gui.ui.piano_roll_drawing_area.queue_draw();
                     }
                     Err(_) => debug!("Main - rx_ui processing loop - PianoRollMPENoteIdChange - could not get lock on state"),
+                }
+            }
+            DAWEvents::PianoRollWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
+                if let Some(widget) = gui.ui.piano_roll_scrolled_window.child() {
+                    if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
+                        let width = view_port.allocated_width();
+                        let height = view_port.allocated_height();
+                        let window_width = x2 - x1;
+                        let window_height = y2 - y1;
+                        let horizontal_scale_up = width as f64 / window_width;
+                        let vertical_scale_up = height as f64 / window_height;
+
+                        if let Some(grid_arc) = gui.piano_roll_grid.clone() {
+                            if let Ok(mut grid) = grid_arc.lock() {
+                                let zoom_horizontal = grid.zoom_horizontal();
+                                let zoom_vertical = grid.zoom_vertical();
+                                let adjusted_horizontal_zoom = zoom_horizontal * horizontal_scale_up;
+                                let adjusted_vertical_zoom = zoom_vertical * vertical_scale_up;
+
+                                grid.set_horizontal_zoom(zoom_horizontal * horizontal_scale_up);
+                                grid.set_vertical_zoom(zoom_vertical * vertical_scale_up);
+
+
+                                // need to adjust the gtk scale widget adjustments (ranges) - probably should do this rather than setting the zoom directly
+
+
+                                // need to scroll the zoom window into view
+
+
+                            }
+                        }
+                    }
                 }
             }
             DAWEvents::SampleRollSetTrackName(name) => {
@@ -2501,6 +2534,72 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                     gui.ui.piano_roll_drawing_area.queue_draw();
                 }
+                TrackChangeType::RiffEventsSelectAll => {
+                    let mut selected = Vec::new();
+                    let mut selected_riff_uuid = None;
+                    let mut selected_riff_track_uuid = None;
+                    match state.lock() {
+                        Ok(state) => {
+                            selected_riff_track_uuid = state.selected_track();
+
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+                                    selected_riff_track_uuid = Some(track_uuid);
+                                },
+                                None => (),
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsSelectAll - could not get lock on state"),
+                    }
+                    match state.lock() {
+                        Ok(mut state) => {
+                            match selected_riff_track_uuid {
+                                Some(track_uuid) => {
+                                    match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                        Some(track) => {
+                                            match selected_riff_uuid {
+                                                Some(riff_uuid) => {
+                                                    for riff in track.riffs_mut().iter_mut() {
+                                                        if riff.uuid().to_string() == *riff_uuid {
+                                                            for track_event in riff.events_mut().iter_mut() {
+                                                                if let TrackEvent::Note(note) = track_event {
+                                                                    selected.push(note.id());
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                None => debug!("Main - rx_ui processing loop - RiffEventsSelectAll - problem getting selected riff index"),
+                                            }
+                                        },
+                                        None => ()
+                                    }
+                                },
+                                None => debug!("Main - rx_ui processing loop - RiffEventsSelectAll  - problem getting selected riff track number"),
+                            }
+
+                            if !selected.is_empty() {
+                                state.selected_riff_events_mut().clear();
+                                state.selected_riff_events_mut().append(&mut selected);
+                            } else {
+                                state.selected_riff_events_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsSelectAll - could not get lock on state"),
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffEventsDeselectAll => {
+                    match state.lock() {
+                        Ok(mut state) => {
+                                state.selected_riff_events_mut().clear();
+                        }
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffEventsDeselectAll - could not get lock on state"),
+                    }
+                    gui.ui.piano_roll_drawing_area.queue_draw();
+                }
                 TrackChangeType::RiffCutSelected => {
                     let mut selected_riff_uuid = None;
                     let mut selected_riff_track_uuid = None;
@@ -2595,7 +2694,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
                 TrackChangeType::Record(_record) => {
-                    // TODO implement arming of tracks for recording into
+                    // TODO implement arming of tracks for recording into???
                     // match state.lock() {
                     //     Ok(mut state) => {
                     //         // state.set_recording(record);
@@ -2627,9 +2726,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         match history_manager.lock() {
                             Ok(mut history) => {
                                 let mut snap_in_beats = 1.0;
+                                let mut snap_strength = 1.0;
+                                let mut snap_start = true;
+                                let mut snap_end = false;
                                 match gui.piano_roll_grid() {
                                     Some(piano_roll_grid) => match piano_roll_grid.lock() {
-                                        Ok(piano_roll) => snap_in_beats = piano_roll.snap_position_in_beats(),
+                                        Ok(piano_roll) => {
+                                            snap_in_beats = piano_roll.snap_position_in_beats();
+                                            snap_strength = piano_roll.snap_strength();
+                                            snap_start = piano_roll.snap_start();
+                                            snap_end = piano_roll.snap_end();
+                                        }
                                         Err(_) => (),
                                     },
                                     None => (),
@@ -2638,7 +2745,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     selected_riff_events,
                                     selected_riff_track_uuid,
                                     selected_riff_uuid,
-                                    snap_in_beats
+                                    snap_in_beats,
+                                    snap_strength,
+                                    snap_start,
+                                    snap_end,
                                 );
                                 if let Err(error) = history.apply(&mut state, Box::new(action)) {
                                     error!("Main - rx_ui processing loop - riff translate selected - error: {}", error);
@@ -2811,22 +2921,55 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                 }
                 TrackChangeType::RiffReferenceCutSelected => {
-                    let edit_cursor_position_in_secs = if let Some(grid) = gui.track_grid() {
-                        match grid.lock() {
-                            Ok(track_beat_grid) => {
-                                track_beat_grid.edit_cursor_time_in_beats()
-                            },
-                            Err(_) => 0.0,
-                        }
-                    } else {
-                        0.0
-                    };
                     let mut copy_buffer: Vec<RiffReference> = vec![];
+
                     match state.lock() {
-                        Ok(state) => {
-                            {
-                                let mut state = state;
-                                let selected_riff_references = state.selected_riff_references().clone();
+                        Ok(mut state) => {
+                            let current_view = state.current_view();
+                            if let CurrentView::RiffGrid = current_view {
+                                let selected_riff_references = state.selected_riff_grid_riff_references().clone();
+                                let edit_cursor_position_in_secs = if let Some(grid) = gui.riff_grid() {
+                                    match grid.lock() {
+                                        Ok(grid) => {
+                                            grid.edit_cursor_time_in_beats()
+                                        }
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid) = state.selected_riff_grid_uuid().clone() {
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid.clone()) {
+                                        for track in riff_grid.tracks_mut().map(|track_uuid| track_uuid.clone()).collect_vec().iter() {
+                                            if let Some(riff_refs) = riff_grid.track_riff_references_mut(track.clone()) {
+                                                riff_refs.retain(|riff_ref| {
+                                                    if selected_riff_references.clone().contains(&riff_ref.uuid().to_string()) {
+                                                        let mut value = riff_ref.clone();
+                                                        value.set_position(value.position() - edit_cursor_position_in_secs);
+                                                        value.set_track_id(track.clone());
+                                                        copy_buffer.push(value);
+                                                        false
+                                                    } else { true }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            else if let CurrentView::Track = current_view {
+                                let selected_riff_references = state.selected_track_grid_riff_references().clone();
+                                let edit_cursor_position_in_secs = if let Some(grid) = gui.track_grid() {
+                                    match grid.lock() {
+                                        Ok(track_beat_grid) => {
+                                            track_beat_grid.edit_cursor_time_in_beats()
+                                        },
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
 
                                 for track in state.get_project().song_mut().tracks_mut().iter_mut() {
                                     debug!("Selected track riff ref count: {}", track.riff_refs().len());
@@ -2851,8 +2994,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if !copy_buffer.is_empty() {
                                 debug!("Riff references copy buffer length: {}", copy_buffer.len());
                                 let mut state = state;
-                                state.riff_references_copy_buffer_mut().clear();
-                                copy_buffer.iter().for_each(|event| state.riff_references_copy_buffer_mut().push(event.clone()));
+                                state.track_grid_riff_references_copy_buffer_mut().clear();
+                                copy_buffer.iter().for_each(|event| state.track_grid_riff_references_copy_buffer_mut().push(event.clone()));
                             }
                         },
                         Err(_) => (),
@@ -2861,34 +3004,64 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     gui.ui.track_drawing_area.queue_draw();
                 },
                 TrackChangeType::RiffReferenceCopySelected => {
-                    let edit_cursor_position_in_secs = if let Some(grid) = gui.track_grid() {
-                        match grid.lock() {
-                            Ok(track_beat_grid) => {
-                                track_beat_grid.edit_cursor_time_in_beats()
-                            },
-                            Err(_) => 0.0,
-                        }
-                    } else {
-                        0.0
-                    };
                     let mut copy_buffer: Vec<RiffReference> = vec![];
                     match state.lock() {
-                        Ok(state) => {
-                            {
-                                let state = state;
-                                let selected_riff_references = state.selected_riff_references().clone();
+                        Ok(mut state) => {
+                            let current_view = state.current_view();
+                            if let CurrentView::RiffGrid = current_view {
+                                let selected_riff_references = state.selected_riff_grid_riff_references().clone();
+                                let edit_cursor_position_in_secs = if let Some(grid) = gui.riff_grid() {
+                                    match grid.lock() {
+                                        Ok(grid) => {
+                                            grid.edit_cursor_time_in_beats()
+                                        }
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
 
-                                for track in state.project().song().tracks().iter() {
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid) = state.selected_riff_grid_uuid().clone() {
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid.clone()) {
+                                        for track in riff_grid.tracks_mut().map(|track_uuid| track_uuid.clone()).collect_vec().iter() {
+                                            if let Some(riff_refs) = riff_grid.track_riff_references_mut(track.clone()) {
+                                                riff_refs.iter().filter(|riff_ref| selected_riff_references.clone().contains(&riff_ref.uuid().to_string())).for_each(|riff_ref|  {
+                                                    let mut value = riff_ref.clone();
+                                                    value.set_position(value.position() - edit_cursor_position_in_secs);
+                                                    value.set_track_id(track.clone());
+                                                    copy_buffer.push(value);
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            else if let CurrentView::Track = current_view {
+                                let selected_riff_references = state.selected_track_grid_riff_references().clone();
+                                let edit_cursor_position_in_secs = if let Some(grid) = gui.track_grid() {
+                                    match grid.lock() {
+                                        Ok(track_beat_grid) => {
+                                            track_beat_grid.edit_cursor_time_in_beats()
+                                        },
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+
+                                for track in state.get_project().song_mut().tracks_mut().iter_mut() {
                                     debug!("Selected track riff ref count: {}", track.riff_refs().len());
-                                    track.riff_refs().iter().filter(|riff_ref| selected_riff_references.clone().contains(&riff_ref.uuid().to_string())).for_each(|riff_ref| {
+                                    let track_uuid = track.uuid_mut().to_string();
+                                    track.riff_refs_mut().iter().filter(|riff_ref| selected_riff_references.clone().contains(&riff_ref.uuid().to_string())).for_each(|riff_ref|  {
                                         let mut value = riff_ref.clone();
                                         value.set_position(value.position() - edit_cursor_position_in_secs);
-                                        value.set_track_id(track.uuid().to_string());
+                                        value.set_track_id(track_uuid.clone());
                                         copy_buffer.push(value);
                                     });
                                 }
                             }
-                        },
+                        }
                         Err(_) => debug!("Main - rx_ui processing loop - riff references copy selected - could not get lock on state"),
                     };
 
@@ -2897,8 +3070,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if !copy_buffer.is_empty() {
                                 debug!("Riff references copy buffer length: {}", copy_buffer.len());
                                 let mut state = state;
-                                state.riff_references_copy_buffer_mut().clear();
-                                copy_buffer.iter().for_each(|event| state.riff_references_copy_buffer_mut().push(event.clone()));
+                                state.track_grid_riff_references_copy_buffer_mut().clear();
+                                copy_buffer.iter().for_each(|event| state.track_grid_riff_references_copy_buffer_mut().push(event.clone()));
                             }
                         },
                         Err(_) => (),
@@ -2906,39 +3079,72 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 },
                 TrackChangeType::RiffReferencePaste => {
                     match state.lock() {
-                        Ok(state) => {
-                            let edit_cursor_position_in_secs = if let Some(track_grid) = gui.track_grid() {
-                                match track_grid.lock() {
-                                    Ok(grid) => {
-                                        grid.edit_cursor_time_in_beats()
-                                    },
-                                    Err(_) => 0.0,
-                                }
-                            } else {
-                                0.0
-                            };
-                            let mut copy_buffer: Vec<RiffReference> = vec![];
-                            let mut copy_buffer_riff_ref_ids: Vec<String> = vec![];
-                            state.riff_references_copy_buffer().iter().for_each(|riff_ref| {
-                                copy_buffer.push(riff_ref.clone());
-                                copy_buffer_riff_ref_ids.push(riff_ref.uuid().to_string());
-                            });
-                            let mut state = state;
+                        Ok(mut state) => {
+                            let current_view = state.current_view();
+                            if let CurrentView::RiffGrid = current_view {
+                                let edit_cursor_position_in_secs = if let Some(riff_grid) = gui.riff_grid() {
+                                    match riff_grid.lock() {
+                                        Ok(grid) => {
+                                            grid.edit_cursor_time_in_beats()
+                                        },
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+                                let mut copy_buffer: Vec<RiffReference> = vec![];
+                                let mut copy_buffer_riff_ref_ids: Vec<String> = vec![];
 
-                            for track in state.get_project().song_mut().tracks_mut().iter_mut() {
-                                let track_uuid = track.uuid_mut().to_string();
-                                let mut copy_buffer_riff_refs_to_remove = vec![];
-                                for riff_ref in copy_buffer.iter() {
-                                    if track_uuid == riff_ref.track_id() {
-                                        track.riff_refs_mut().push(RiffReference::new(riff_ref.linked_to(), riff_ref.position() + edit_cursor_position_in_secs));
-                                        copy_buffer_riff_refs_to_remove.push(riff_ref.uuid().to_string());
+                                state.riff_grid_riff_references_copy_buffer().iter().for_each(|riff_ref| {
+                                    copy_buffer.push(riff_ref.clone());
+                                    copy_buffer_riff_ref_ids.push(riff_ref.uuid().to_string());
+                                });
+
+                                if let Some(selected_riff_grid) = state.selected_riff_grid_uuid().clone() {
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid.clone()) {
+                                        for track_uuid in riff_grid.tracks_mut().map(|track_uuid| track_uuid.clone()).collect_vec().iter() {
+                                            for riff_ref in copy_buffer.iter() {
+                                                if track_uuid == riff_ref.track_id() {
+                                                    if let Some(riff_refs) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
+                                                        riff_refs.push(RiffReference::new(riff_ref.linked_to(), riff_ref.position() + edit_cursor_position_in_secs));
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                                copy_buffer.retain(|riff_ref| !copy_buffer_riff_refs_to_remove.contains(&riff_ref.uuid().to_string()));
                             }
+                            else if let CurrentView::Track = current_view {
+                                let edit_cursor_position_in_secs = if let Some(track_grid) = gui.track_grid() {
+                                    match track_grid.lock() {
+                                        Ok(grid) => {
+                                            grid.edit_cursor_time_in_beats()
+                                        },
+                                        Err(_) => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+                                let mut copy_buffer: Vec<RiffReference> = vec![];
+                                let mut copy_buffer_riff_ref_ids: Vec<String> = vec![];
+                                state.track_grid_riff_references_copy_buffer().iter().for_each(|riff_ref| {
+                                    copy_buffer.push(riff_ref.clone());
+                                    copy_buffer_riff_ref_ids.push(riff_ref.uuid().to_string());
+                                });
+                                let mut state = state;
 
-                            // re-calculate the song length
-                            state.get_project().song_mut().recalculate_song_length();
+                                for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                                    let track_uuid = track.uuid_mut().to_string();
+                                    for riff_ref in copy_buffer.iter() {
+                                        if track_uuid == riff_ref.track_id() {
+                                            track.riff_refs_mut().push(RiffReference::new(riff_ref.linked_to(), riff_ref.position() + edit_cursor_position_in_secs));
+                                        }
+                                    }
+                                }
+
+                                // re-calculate the song length
+                                state.get_project().song_mut().recalculate_song_length();
+                            }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - riff references paste selected - could not get lock on state"),
                     };
@@ -3162,48 +3368,145 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     if let Some(selected_riff_uuid) = selected_riff_uuid {
                                                         if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
                                                             Some(riff.events_vec())
-                                                        } else {
-                                                            None
-                                                        }
-                                                    } else {
-                                                        None
-                                                    }
+                                                        } else { None }
+                                                    } else { None }
                                                 } else if let CurrentView::RiffArrangement = current_view {
                                                     let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                                                         Some(selected_arrangement_uuid.clone())
-                                                    } else {
-                                                        None
-                                                    };
+                                                    } else { None };
 
                                                     // get the arrangement
                                                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                                                         if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()) {
-                                                            if let Some(riff_arr_automation) = riff_arrangement.automation(&track_uuid) {
-                                                                Some(riff_arr_automation.events())
-                                                            } else {
-                                                                None
-                                                            }
-                                                        } else {
-                                                            None
-                                                        }
-                                                    } else {
-                                                        None
-                                                    }
+                                                            if let Some(automation) = riff_arrangement.automation(&track_uuid) {
+                                                                if state.automation_discrete() {
+                                                                    Some(automation.events())
+                                                                }
+                                                                else {
+                                                                    if let Some(automation_type_value) = automation_type {
+                                                                        if let Some(automation_envelope) = automation.envelopes().iter().find(|envelope| {
+                                                                            let mut found = false;
+
+                                                                            // need to know what kind of events we are looking for in order to get the appropriate envelope
+                                                                            match automation_view_mode {
+                                                                                AutomationViewMode::NoteVelocities => {}
+                                                                                AutomationViewMode::Controllers => {
+                                                                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                                                                        if controller.controller() == automation_type_value {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::PitchBend => {
+                                                                                    if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::Instrument => {
+                                                                                    let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                                        instrument_track.instrument().uuid().to_string()
+                                                                                    } else {
+                                                                                        "".to_string()
+                                                                                    };
+                                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::Effect => {
+                                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                        if param.index == automation_type_value && param.plugin_uuid() == selected_effect_plugin_uuid {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::NoteExpression => {
+                                                                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                                                                        if *note_expression.expression_type() as i32 == automation_type_value {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            return found;
+                                                                        }) {
+                                                                            Some(automation_envelope.events())
+                                                                        } else { None }
+                                                                    }
+                                                                    else { None }
+                                                                }
+                                                            } else { None }
+                                                        } else { None }
+                                                    } else { None }
                                                 } else {
                                                     match automation_edit_type {
                                                         AutomationEditType::Track => {
-                                                            Some(track_type.automation().events())
+                                                            let automation = track_type.automation();
+                                                            if state.automation_discrete() {
+                                                                Some(automation.events())
+                                                            }
+                                                            else {
+                                                                if let Some(automation_type_value) = automation_type {
+                                                                    if let Some(automation_envelope) = automation.envelopes().iter().find(|envelope| {
+                                                                        let mut found = false;
+
+                                                                        // need to know what kind of events we are looking for in order to get the appropriate envelope
+                                                                        match automation_view_mode {
+                                                                            AutomationViewMode::NoteVelocities => {}
+                                                                            AutomationViewMode::Controllers => {
+                                                                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                                                                    if controller.controller() == automation_type_value {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::PitchBend => {
+                                                                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::Instrument => {
+                                                                                let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                                    instrument_track.instrument().uuid().to_string()
+                                                                                } else {
+                                                                                    "".to_string()
+                                                                                };
+                                                                                if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                    if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::Effect => {
+                                                                                if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                    if param.index == automation_type_value && param.plugin_uuid() == selected_effect_plugin_uuid {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::NoteExpression => {
+                                                                                if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                                                                    if *note_expression.expression_type() as i32 == automation_type_value {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        return found;
+                                                                    }) {
+                                                                        Some(automation_envelope.events())
+                                                                    } else { None }
+                                                                }
+                                                                else { None }
+                                                            }
                                                         }
                                                         AutomationEditType::Riff => {
                                                             if let Some(selected_riff_uuid) = selected_riff_uuid {
                                                                 if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
                                                                     Some(riff.events_vec())
-                                                                } else {
-                                                                    None
-                                                                }
-                                                            } else {
-                                                                None
-                                                            }
+                                                                } else { None }
+                                                            } else { None }
                                                         }
                                                     }
                                                 };
@@ -3556,8 +3859,324 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 }
-                TrackChangeType::AutomationAdd(time, value) => {
-                    handle_automation_add(time, value, &state);
+                TrackChangeType::AutomationSelectAll => {
+                    match state.lock() {
+                        Ok(state) => {
+                            let note_expression_type = state.note_expression_type().clone();
+                            let note_expression_note_id = state.note_expression_id();
+                            let note_expression_type = state.note_expression_type().clone();
+                            let note_expression_port_index = state.note_expression_port_index() as i16;
+                            let note_expression_channel = state.note_expression_channel() as i16;
+                            let note_expression_key = state.note_expression_key();
+                            let automation_view_mode = {
+                                match state.automation_view_mode() {
+                                    AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
+                                    AutomationViewMode::Controllers => AutomationViewMode::Controllers,
+                                    AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
+                                    AutomationViewMode::Instrument => AutomationViewMode::Instrument,
+                                    AutomationViewMode::Effect => AutomationViewMode::Effect,
+                                    AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
+                                }
+                            };
+                            let automation_type = state.automation_type();
+                            let mut state = state;
+                            let track_uuid = state.selected_track();
+                            let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
+                                state.selected_riff_uuid(track_uuid)
+                            } else {
+                                None
+                            };
+                            let selected_effect_plugin_uuid = if let Some(uuid) = state.selected_effect_plugin_uuid() {
+                                uuid.clone()
+                            } else {
+                                "".to_string()
+                            };
+                            let current_view = state.current_view().clone();
+                            let automation_edit_type = state.automation_edit_type();
+                            let song = state.project().song();
+                            let tracks = song.tracks();
+                            let automation_discrete = state.automation_discrete();
+                            let mut selected = Vec::new();
+
+                            match track_uuid {
+                                Some(track_uuid) =>
+                                    {
+                                        match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
+                                            Some(track_type) => {
+                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                                            Some(riff.events_vec())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else if let CurrentView::RiffArrangement = current_view {
+                                                    let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                                        Some(selected_arrangement_uuid.clone())
+                                                    } else {
+                                                        None
+                                                    };
+
+                                                    // get the arrangement
+                                                    if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                                                        if let Some(riff_arrangement) = state.project().song().riff_arrangement(selected_arrangement_uuid.clone()) {
+                                                            if let Some(automation) = riff_arrangement.automation(&track_uuid) {
+                                                                if automation_discrete {
+                                                                    Some(automation.events())
+                                                                }
+                                                                else {
+                                                                    // find the relevant envelope
+                                                                    if let Some(automation_type_value) = automation_type {
+                                                                        let instrument_plugin_uuid = if let TrackType::InstrumentTrack(track) = track_type {
+                                                                            track.instrument().uuid().to_string()
+                                                                        }
+                                                                        else {
+                                                                            "".to_string()
+                                                                        };
+
+                                                                        match automation_view_mode {
+                                                                            AutomationViewMode::NoteVelocities => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::Note(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::Controllers => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                                                                        if controller.controller() == automation_type_value {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::PitchBend => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::Instrument => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                        if param.index == automation_type_value && param.plugin_uuid() == instrument_plugin_uuid {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::Effect => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                                                        if param.index == automation_type_value && param.plugin_uuid() == selected_effect_plugin_uuid {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::NoteExpression => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                                                                        if
+                                                                                        *(note_expression.expression_type()) == note_expression_type &&
+                                                                                            note_expression.port() == note_expression_port_index &&
+                                                                                            note_expression.channel() == note_expression_channel &&
+                                                                                            note_expression.note_id() == note_expression_note_id &&
+                                                                                            note_expression.key() == note_expression_key
+                                                                                        {
+                                                                                            found = true;
+                                                                                        }
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    else { None }
+                                                                }
+                                                            } else {
+                                                                None
+                                                            }
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    match automation_edit_type {
+                                                        AutomationEditType::Track => {
+                                                            Some(track_type.automation().events())
+                                                        }
+                                                        AutomationEditType::Riff => {
+                                                            if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                                                if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                                                    Some(riff.events_vec())
+                                                                } else {
+                                                                    None
+                                                                }
+                                                            } else {
+                                                                None
+                                                            }
+                                                        }
+                                                    }
+                                                };
+
+                                                if let Some(events) = events {
+                                                    match automation_view_mode {
+                                                        AutomationViewMode::NoteVelocities => {
+                                                            for event in events.iter() {
+                                                                match event {
+                                                                    TrackEvent::Note(note) => {
+                                                                        selected.push(note.id());
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                        }
+                                                        AutomationViewMode::Controllers => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::Controller(controller) => {
+                                                                            if controller.controller() == automation_type_value {
+                                                                                selected.push(controller.id());
+                                                                            }
+                                                                        }
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::PitchBend => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::PitchBend(pitch_bend) => {
+                                                                        selected.push(pitch_bend.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::Instrument => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                // get the instrument plugin uuid
+                                                                let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                    instrument_track.instrument().uuid()
+                                                                } else {
+                                                                    return;
+                                                                };
+
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::AudioPluginParameter(plugin_param) => {
+                                                                            if plugin_param.index == automation_type_value &&
+                                                                                plugin_param.plugin_uuid.to_string() == instrument_plugin_id.to_string() {
+                                                                                selected.push(plugin_param.id());
+                                                                            }
+                                                                        }
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::Effect => {
+                                                            if let Some(automation_type_value) = automation_type {
+                                                                events.iter().for_each(|event| {
+                                                                    match event {
+                                                                        TrackEvent::AudioPluginParameter(plugin_param) => {
+                                                                            if plugin_param.index == automation_type_value &&
+                                                                                plugin_param.plugin_uuid.to_string() == selected_effect_plugin_uuid {
+                                                                                selected.push(plugin_param.id());
+                                                                            }
+                                                                        }
+                                                                        _ => (),
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                        AutomationViewMode::NoteExpression => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::NoteExpression(note_expression) => {
+                                                                        if note_expression_type as i32 == *(note_expression.expression_type()) as i32 &&
+                                                                            note_expression_note_id == note_expression.note_id() {
+                                                                            selected.push(note_expression.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            None => ()
+                                        }
+                                    },
+                                None => debug!("Main - rx_ui processing loop - AutomationSelectAll - problem getting selected track number"),
+                            }
+
+                            let mut state = state;
+                            state.selected_automation_mut().clear();
+
+                            if !selected.is_empty() {
+                                state.selected_automation_mut().append(&mut selected);
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - AutomationSelectAll - could not get lock on state"),
+                    };
+                    gui.ui.track_drawing_area.queue_draw();
+                    gui.ui.automation_drawing_area.queue_draw();
+                }
+                TrackChangeType::AutomationDeselectAll => {
+                    match state.lock() {
+                        Ok(mut state) => {
+                            state.selected_automation_mut().clear();
+                            gui.ui.track_drawing_area.queue_draw();
+                            gui.ui.automation_drawing_area.queue_draw();
+                        }
+                        Err(_) => debug!("Main - rx_ui processing loop - AutomationSelectMultiple - could not get lock on state"),
+                    }
+                }
+                TrackChangeType::AutomationAdd(automation) => {
+                    for automation_item in automation.iter() {
+                        handle_automation_add(automation_item.0, automation_item.1, &state);
+                    }
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 }
@@ -3579,108 +4198,27 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 }
+                TrackChangeType::AutomationChange(change) => {
+                    debug!("TrackChangeType::AutomationChange");
+                    handle_automation_change(&state, change);
+                    gui.ui.track_drawing_area.queue_draw();
+                    gui.ui.automation_drawing_area.queue_draw();
+                }
                 TrackChangeType::AutomationQuantiseSelected => {
-                    match state.lock() {
-                        Ok(state) => {
-                            let selected = state.selected_automation().to_vec();
-                            let controller_view_mode = {
-                                match state.automation_view_mode() {
-                                    AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
-                                    AutomationViewMode::Controllers => AutomationViewMode::Controllers,
-                                    AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
-                                    AutomationViewMode::Instrument => AutomationViewMode::Instrument,
-                                    AutomationViewMode::Effect => AutomationViewMode::Effect,
-                                    AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
-                                }
-                            };
-                            let automation_type = state.automation_type();
-                            let mut state = state;
-                            let track_uuid = state.selected_track();
-
-                            let mut snap_in_beats = 1.0;
-                            match gui.automation_grid() {
-                                Some(controller_grid) => match controller_grid.lock() {
-                                    Ok(grid) => snap_in_beats = grid.snap_position_in_beats(),
-                                    Err(_) => (),
-                                },
-                                None => (),
+                    let mut snap_in_beats = 1.0;
+                    let mut quantise_strength = 1.0;
+                    match gui.automation_grid() {
+                        Some(grid) => match grid.lock() {
+                            Ok(grid) => {
+                                snap_in_beats = grid.snap_position_in_beats();
+                                quantise_strength = grid.snap_strength();
                             }
-
-                            match track_uuid {
-                                Some(track_uuid) =>
-                                    {
-                                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
-                                            Some(track_type) => {
-                                                match track_type {
-                                                    TrackType::InstrumentTrack(track) => {
-                                                        let automation = track.automation_mut();
-                                                        match controller_view_mode {
-                                                            AutomationViewMode::NoteVelocities => (),
-                                                            AutomationViewMode::Controllers => {
-                                                                if let Some(automation_type_value) = automation_type {
-                                                                    automation.events_mut().iter_mut().for_each(|event| {
-                                                                        match event {
-                                                                            TrackEvent::Controller(controller) => {
-                                                                                if controller.controller() == automation_type_value && selected.contains(&controller.id()) {
-                                                                                    let snap_delta = controller.position() % snap_in_beats;
-                                                                                    if (controller.position() - snap_delta) >= 0.0 {
-                                                                                        controller.set_position(controller.position() - snap_delta);
-                                                                                    }
-                                                                                }
-                                                                            },
-                                                                            _ => (),
-                                                                        }
-                                                                    })
-                                                                }
-                                                            }
-                                                            AutomationViewMode::PitchBend => {
-                                                                automation.events_mut().iter_mut().for_each(|event| {
-                                                                    match event {
-                                                                        TrackEvent::PitchBend(pitch_bend) => {
-                                                                            if selected.contains(&pitch_bend.id()) {
-                                                                                let snap_delta = pitch_bend.position() % snap_in_beats;
-                                                                                if (pitch_bend.position() - snap_delta) >= 0.0 {
-                                                                                    pitch_bend.set_position(pitch_bend.position() - snap_delta);
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        _ => (),
-                                                                    }
-                                                                })
-                                                            }
-                                                            AutomationViewMode::Instrument => {
-                                                                if let Some(automation_type_value) = automation_type {
-                                                                    automation.events_mut().iter_mut().for_each(|event| {
-                                                                        match event {
-                                                                            TrackEvent::AudioPluginParameter(plugin_param) => {
-                                                                                if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
-                                                                                    let snap_delta = plugin_param.position() % snap_in_beats;
-                                                                                    if (plugin_param.position() - snap_delta) >= 0.0 {
-                                                                                        plugin_param.set_position(plugin_param.position() - snap_delta);
-                                                                                    }
-                                                                                }
-                                                                            },
-                                                                            _ => (),
-                                                                        }
-                                                                    })
-                                                                }
-                                                            }
-                                                            AutomationViewMode::Effect => {}
-                                                            AutomationViewMode::NoteExpression => {}
-                                                        }
-                                                    },
-                                                    TrackType::AudioTrack(_) => (),
-                                                    TrackType::MidiTrack(_) => (),
-                                                }
-                                            },
-                                            None => ()
-                                        }
-                                    },
-                                None => debug!("Main - rx_ui processing loop - automation add - problem getting selected track number"),
-                            };
+                            Err(_) => (),
                         },
-                        Err(_) => debug!("Main - rx_ui processing loop - automation add - could not get lock on state"),
-                    };
+                        None => (),
+                    }
+
+                    handle_automation_quantise(&state, snap_in_beats, quantise_strength);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 }
@@ -4236,12 +4774,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     match state.lock() {
                         Ok(mut state) => {
                             let mut snap_position_in_beats = 1.0;
-                            let mut snap_length_in_beats = 1.0;
                             match gui.riff_grid() {
                                 Some(riff_grid) => match riff_grid.lock() {
                                     Ok(grid) => {
                                         snap_position_in_beats = grid.snap_position_in_beats();
-                                        snap_length_in_beats = grid.entity_length_in_beats();
                                     }
                                     Err(_) => (),
                                 },
@@ -4561,11 +5097,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if !selected.is_empty() {
                                 let mut state = state;
                                 if !add_to_select {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_track_grid_riff_references_mut().clear();
                                 }
-                                state.selected_riff_references_mut().append(&mut selected);
+                                state.selected_track_grid_riff_references_mut().append(&mut selected);
                             } else {
-                                state.selected_riff_references_mut().clear();
+                                state.selected_track_grid_riff_references_mut().clear();
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - riff references select multiple - could not get lock on state"),
@@ -4597,11 +5133,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if !selected.is_empty() {
                                 let mut state = state;
                                 if !add_to_select {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_track_grid_riff_references_mut().clear();
                                 }
-                                state.selected_riff_references_mut().append(&mut selected);
+                                state.selected_track_grid_riff_references_mut().append(&mut selected);
                             } else {
-                                state.selected_riff_references_mut().clear();
+                                state.selected_track_grid_riff_references_mut().clear();
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelectSingle - could not get lock on state"),
@@ -4634,9 +5170,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             if !selected.is_empty() {
                                 let mut state = state;
-                                state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                state.selected_track_grid_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
                             } else {
-                                state.selected_riff_references_mut().clear();
+                                state.selected_track_grid_riff_references_mut().clear();
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - RiffReferencesDeselectMultiple - could not get lock on state"),
@@ -4667,14 +5203,48 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             if !selected.is_empty() {
                                 let mut state = state;
-                                state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                state.selected_track_grid_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
                             } else {
-                                state.selected_riff_references_mut().clear();
+                                state.selected_track_grid_riff_references_mut().clear();
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesDeselectSingle - could not get lock on state"),
                     }
                     gui.ui.track_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffReferencesSelectAll => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesSelectAll");
+                    match state.lock() {
+                        Ok(mut state) => {
+                            let mut selected = Vec::new();
+                            for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                                for riff_ref in track.riff_refs_mut().iter_mut() {
+                                    selected.push(riff_ref.uuid().to_string());
+                                }
+                            }
+
+                            if !selected.is_empty() {
+                                let mut state = state;
+                                state.selected_track_grid_riff_references_mut().clear();
+                                state.selected_track_grid_riff_references_mut().append(&mut selected);
+                            } else {
+                                state.selected_track_grid_riff_references_mut().clear();
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffReferencesSelectAll - could not get lock on state"),
+                    }
+                    gui.ui.track_drawing_area.queue_draw();
+                }
+                TrackChangeType::RiffReferencesDeselectAll => {
+                    debug!("Main - rx_ui processing loop - TrackChangeType::RiffReferencesDeselectAll");
+                    match state.lock() {
+                        Ok(mut state) => {
+                            state.selected_track_grid_riff_references_mut().clear();
+                        }
+                        Err(_) => debug!("Main - rx_ui processing loop - RiffReferencesDeselectAll - could not get lock on state"),
+                    }
+                    gui.ui.track_drawing_area.queue_draw();
+
                 }
             }
             DAWEvents::TrackEffectParameterChange(_, _) => debug!("Event: TrackEffectParameterChange"),
@@ -4704,6 +5274,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.set_play_position_in_frames(play_position_in_frames as u32);
 
                         gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
+
+                        let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                        let minutes = time_in_secs as i32 / 60;
+                        let seconds = time_in_secs as i32 % 60;
+                        let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
+                        gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
+
                         if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                             match piano_roll_grid.lock() {
                                 Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
@@ -4773,8 +5350,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
                         let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
                         let current_beat_in_bar = play_position_in_beats as i32 % time_signature_numerator as i32 + 1;
-
                         gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
+
+                        let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                        let minutes = time_in_secs as i32 / 60;
+                        let seconds = time_in_secs as i32 % 60;
+                        let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
+                        gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
+
                         if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                             match piano_roll_grid.lock() {
                                 Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
@@ -4976,8 +5559,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
                         let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
                         let current_beat_in_bar = play_position_in_beats as i32 % time_signature_numerator as i32 + 1;
-
                         gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
+
+                        let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                        let minutes = time_in_secs as i32 / 60;
+                        let seconds = time_in_secs as i32 % 60;
+                        let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
+                        gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
+
                         if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                             match piano_roll_grid.lock() {
                                 Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
@@ -5753,7 +6342,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     RiffGridChangeType::RiffReferenceCutSelected => {
                         match state.lock() {
                             Ok(mut state) => {
-                                let selected_riff_references = state.selected_riff_references().clone();
+                                let selected_riff_references = state.selected_riff_grid_riff_references().clone();
                                 let selected_riff_grid_uuid = if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                                     selected_riff_grid_uuid.clone()
                                 }
@@ -5791,9 +6380,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.ui.riff_grid_drawing_area.queue_draw();
                                 }
 
-                                state.riff_references_copy_buffer_mut().clear();
+                                state.riff_grid_riff_references_copy_buffer_mut().clear();
                                 for riff_ref in copy_buffer.iter() {
-                                    state.riff_references_copy_buffer_mut().push(riff_ref.clone());
+                                    state.riff_grid_riff_references_copy_buffer_mut().push(riff_ref.clone());
                                 }
                             }
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff reference cut - could not get lock on state"),
@@ -5802,7 +6391,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     RiffGridChangeType::RiffReferenceCopySelected => {
                         match state.lock() {
                             Ok(mut state) => {
-                                let selected_riff_references = state.selected_riff_references().clone();
+                                let selected_riff_references = state.selected_riff_grid_riff_references().clone();
                                 let selected_riff_grid_uuid = if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                                     selected_riff_grid_uuid.clone()
                                 }
@@ -5837,9 +6426,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.ui.riff_grid_drawing_area.queue_draw();
                                 }
 
-                                state.riff_references_copy_buffer_mut().clear();
+                                state.riff_grid_riff_references_copy_buffer_mut().clear();
                                 for riff_ref in copy_buffer.iter() {
-                                    state.riff_references_copy_buffer_mut().push(riff_ref.clone());
+                                    state.riff_grid_riff_references_copy_buffer_mut().push(riff_ref.clone());
                                 }
                             }
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff reference copy - could not get lock on state"),
@@ -5865,7 +6454,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     0.0
                                 };
                                 let mut copy_buffer: Vec<RiffReference> = vec![];
-                                state.riff_references_copy_buffer().iter().for_each(|riff_ref| copy_buffer.push(riff_ref.clone()));
+                                state.riff_grid_riff_references_copy_buffer().iter().for_each(|riff_ref| copy_buffer.push(riff_ref.clone()));
                                 let mut state = state;
 
                                 if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
@@ -6020,12 +6609,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 if !selected.is_empty() {
                                     let mut state = state;
                                     if !add_to_select {
-                                        state.selected_riff_references_mut().clear();
+                                        state.selected_riff_grid_riff_references_mut().clear();
                                     }
-                                    state.selected_riff_references_mut().append(&mut selected);
+                                    state.selected_riff_grid_riff_references_mut().append(&mut selected);
                                 }
                                 else {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_riff_grid_riff_references_mut().clear();
                                 }
                             },
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references select multiple - could not get lock on state"),
@@ -6069,12 +6658,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 if !selected.is_empty() {
                                     let mut state = state;
                                     if !add_to_select {
-                                        state.selected_riff_references_mut().clear();
+                                        state.selected_riff_grid_riff_references_mut().clear();
                                     }
-                                    state.selected_riff_references_mut().append(&mut selected);
+                                    state.selected_riff_grid_riff_references_mut().append(&mut selected);
                                 }
                                 else {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_riff_grid_riff_references_mut().clear();
                                 }
                             },
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references select single - could not get lock on state"),
@@ -6119,10 +6708,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                 if !selected.is_empty() {
                                     let mut state = state;
-                                    state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                    state.selected_riff_grid_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
                                 }
                                 else {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_riff_grid_riff_references_mut().clear();
                                 }
                             },
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect multiple - could not get lock on state"),
@@ -6164,13 +6753,54 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                 if !selected.is_empty() {
                                     let mut state = state;
-                                    state.selected_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
+                                    state.selected_riff_grid_riff_references_mut().retain(|riff_ref_id| !selected.contains(riff_ref_id));
                                 }
                                 else {
-                                    state.selected_riff_references_mut().clear();
+                                    state.selected_riff_grid_riff_references_mut().clear();
                                 }
                             }
                             Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect single - could not get lock on state"),
+                        }
+                        gui.ui.riff_grid_drawing_area.queue_draw();
+                    }
+                    RiffGridChangeType::RiffReferencesSelectAll => {
+                        debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesSelectAll");
+                        let mut selected = Vec::new();
+                        match state.lock() {
+                            Ok(state) => {
+                                let mut state = state;
+                                // get the selected riff grid
+                                if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid().clone() {
+                                    let mut riff_lengths = HashMap::new();
+                                    let mut track_uuids = vec![];
+                                    for track in state.project().song().tracks().iter() {
+                                        track_uuids.push(track.uuid().to_string());
+                                        for riff in track.riffs().iter() {
+                                            riff_lengths.insert(riff.uuid().to_string(), riff.length());
+                                        }
+                                    }
+
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
+                                        for track_uuid in track_uuids.iter() {
+                                            if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
+                                                for riff_ref in riff_references.iter_mut() {
+                                                    selected.push(riff_ref.uuid().to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !selected.is_empty() {
+                                    let mut state = state;
+                                    state.selected_riff_grid_riff_references_mut().clear();
+                                    state.selected_riff_grid_riff_references_mut().append(&mut selected);
+                                }
+                                else {
+                                    state.selected_riff_grid_riff_references_mut().clear();
+                                }
+                            },
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references select all - could not get lock on state"),
                         }
                         gui.ui.riff_grid_drawing_area.queue_draw();
                     }
@@ -6178,10 +6808,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         debug!("Main - rx_ui processing loop - RiffGridChangeType::RiffReferencesDeselectAll");
                         match state.lock() {
                             Ok(mut state) => {
-                                state.selected_riff_references_mut().clear();
+                                state.selected_riff_grid_riff_references_mut().clear();
                                 gui.ui.riff_grid_drawing_area.queue_draw();
                             }
-                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect single - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - riff grid riff references deselect all - could not get lock on state"),
                         }
                     }
                 }
@@ -6917,6 +7547,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
@@ -6931,11 +7562,57 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
                             riff_arrangement.add_track_automation(track_uuid.clone());
-                            Some(riff_arrangement.automation_mut(&track_uuid).unwrap().events_mut())
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -6946,7 +7623,53 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -6973,6 +7696,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
                 };
                 if let Some(events) = events {
                     events.push(TrackEvent::AudioPluginParameter(parameter));
+                    events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                 }
             }
         }
@@ -6981,6 +7705,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
 
 fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWState) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
     }
@@ -6994,6 +7719,7 @@ fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWS
     let note_expression_port_index = state.note_expression_port_index() as i16;
     let note_expression_channel = state.note_expression_channel() as i16;
     let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -7007,10 +7733,65 @@ fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWS
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                                *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -7021,7 +7802,61 @@ fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWS
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7048,6 +7883,7 @@ fn handle_automation_note_expression_add(time: f64, value: i32, state: &mut DAWS
             );
             if let Some(events) = events {
                 events.push(TrackEvent::NoteExpression(note_expression));
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -7070,7 +7906,8 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
     else {
         None
     };
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
             TrackType::InstrumentTrack(_) => true,
@@ -7089,11 +7926,57 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
                                 riff_arrangement.add_track_automation(track_uuid.clone());
-                                Some(riff_arrangement.automation_mut(&track_uuid).unwrap().events_mut())
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -7104,7 +7987,53 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7131,6 +8060,7 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                     };
                     if let Some(events) = events {
                         events.push(TrackEvent::AudioPluginParameter(parameter));
+                        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                     }
                 }
             }
@@ -7149,6 +8079,7 @@ fn handle_automation_controller_add(time: f64, value: i32, state: &mut DAWState)
         None
     };
     let current_view = state.current_view().clone();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -7161,10 +8092,50 @@ fn handle_automation_controller_add(time: f64, value: i32, state: &mut DAWState)
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -7175,7 +8146,46 @@ fn handle_automation_controller_add(time: f64, value: i32, state: &mut DAWState)
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7195,6 +8205,7 @@ fn handle_automation_controller_add(time: f64, value: i32, state: &mut DAWState)
             if let Some(events) = events {
                 let controller = Controller::new(time, automation_type_value, value);
                 events.push(TrackEvent::Controller(controller));
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -7210,6 +8221,7 @@ fn handle_automation_pitch_bend_add(time: f64, value: i32, state: &mut DAWState)
         None
     };
     let current_view = state.current_view().clone();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -7222,10 +8234,41 @@ fn handle_automation_pitch_bend_add(time: f64, value: i32, state: &mut DAWState)
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -7236,7 +8279,37 @@ fn handle_automation_pitch_bend_add(time: f64, value: i32, state: &mut DAWState)
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7255,6 +8328,7 @@ fn handle_automation_pitch_bend_add(time: f64, value: i32, state: &mut DAWState)
         if let Some(events) = events {
             let pitch_bend = PitchBend::new(time, (value as f32 / 127.0 * 16384.0 - 8192.0) as i32);
             events.push(TrackEvent::PitchBend(pitch_bend));
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         }
     }
 }
@@ -7288,7 +8362,8 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
             let plugin_uuid = instrument_track.instrument().uuid();
@@ -7302,11 +8377,27 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
-                        } else {
-                            None
-                        }
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
                     } else {
                         None
                     }
@@ -7316,7 +8407,53 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7355,6 +8492,7 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
 
 fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
     let note_expression_type = state.note_expression_type_mut().clone();
+    let automation_type = state.automation_type();
     let note_expression_note_id = state.note_expression_id();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -7365,6 +8503,12 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -7378,10 +8522,65 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -7392,7 +8591,61 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7422,6 +8675,7 @@ fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
                         _ => true,
                     }
                 });
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -7444,7 +8698,8 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
     else {
         None
     };
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
             TrackType::InstrumentTrack(_) => true,
@@ -7463,10 +8718,57 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -7477,7 +8779,53 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7526,7 +8874,8 @@ fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
             let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
@@ -7538,10 +8887,50 @@ fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -7552,7 +8941,46 @@ fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7578,6 +9006,7 @@ fn handle_automation_controller_delete(time: f64, state: &mut DAWState) {
                         _ => true,
                     }
                 });
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -7593,6 +9022,7 @@ fn handle_automation_pitch_bend_delete(time: f64, state: &mut DAWState) {
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -7605,10 +9035,41 @@ fn handle_automation_pitch_bend_delete(time: f64, state: &mut DAWState) {
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -7619,7 +9080,37 @@ fn handle_automation_pitch_bend_delete(time: f64, state: &mut DAWState) {
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7644,6 +9135,7 @@ fn handle_automation_pitch_bend_delete(time: f64, state: &mut DAWState) {
                     _ => true,
                 }
             });
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         }
     }
 }
@@ -7679,7 +9171,8 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
             let plugin_uuid = instrument_track.instrument().uuid();
@@ -7693,11 +9186,27 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
-                        } else {
-                            None
-                        }
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
                     } else {
                         None
                     }
@@ -7707,7 +9216,53 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7727,7 +9282,7 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
                 if let Some(events) = events {
                     for event in events.iter().filter(|event| selected.contains(&event.id())) {
                         if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                            if plugin_param.index == automation_type_value {
+                            if plugin_param.plugin_uuid().to_string() == plugin_uuid.to_string() && plugin_param.index == automation_type_value {
                                 let mut track_event = event.clone();
                                 // adjust the position to be relative to the edit cursor
                                 track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -7758,6 +9313,7 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
 
 fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let automation_type = state.automation_type();
     let mut events_to_copy: Vec<TrackEvent> = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -7768,6 +9324,12 @@ fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -7781,10 +9343,65 @@ fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -7795,7 +9412,61 @@ fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7859,7 +9530,8 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
     else {
         None
     };
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
             TrackType::InstrumentTrack(_) => true,
@@ -7878,10 +9550,57 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -7892,7 +9611,53 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -7912,7 +9677,7 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                     if let Some(events) = events {
                         for event in events.iter().filter(|event| selected.contains(&event.id())) {
                             if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                                if plugin_param.index == automation_type_value {
+                                if plugin_param.plugin_uuid().to_string() == selected_effect_uuid && plugin_param.index == automation_type_value {
                                     let mut track_event = event.clone();
                                     // adjust the position to be relative to the edit cursor
                                     track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -7924,7 +9689,7 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                         events.retain(|event| {
                             match event {
                                 TrackEvent::AudioPluginParameter(plugin_param) => {
-                                    !(plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()))
+                                    !(plugin_param.plugin_uuid().to_string() == selected_effect_uuid && plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()))
                                 },
                                 _ => true,
                             }
@@ -7956,7 +9721,8 @@ fn handle_automation_controller_cut(state: &mut DAWState, edit_cursor_time_in_be
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
-    
+    let automation_discrete = state.automation_discrete();
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
             let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
@@ -7968,10 +9734,50 @@ fn handle_automation_controller_cut(state: &mut DAWState, edit_cursor_time_in_be
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -7982,7 +9788,46 @@ fn handle_automation_controller_cut(state: &mut DAWState, edit_cursor_time_in_be
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8043,6 +9888,7 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_be
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -8055,10 +9901,41 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_be
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -8069,7 +9946,37 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_be
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8143,6 +10050,7 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
@@ -8157,11 +10065,27 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
-                        } else {
-                            None
-                        }
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
                     } else {
                         None
                     }
@@ -8171,7 +10095,53 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8219,6 +10189,7 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
                             _ => (),
                         }
                     });
+                    events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                 }
             }
         }
@@ -8227,6 +10198,7 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
 
 fn handle_automation_note_expression_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let automation_type = state.automation_type();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
@@ -8236,6 +10208,12 @@ fn handle_automation_note_expression_translate_selected(state: &mut DAWState, tr
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -8249,10 +10227,65 @@ fn handle_automation_note_expression_translate_selected(state: &mut DAWState, tr
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -8263,7 +10296,61 @@ fn handle_automation_note_expression_translate_selected(state: &mut DAWState, tr
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8305,6 +10392,7 @@ fn handle_automation_note_expression_translate_selected(state: &mut DAWState, tr
                         }
                     }
                 }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -8328,6 +10416,7 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
     else {
         None
     };
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
@@ -8347,10 +10436,57 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -8361,7 +10497,53 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8408,7 +10590,8 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                                 }
                                 _ => (),
                             }
-                        })
+                        });
+                        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                     }
                 }
             }
@@ -8428,6 +10611,7 @@ fn handle_automation_controller_translate_selected(state: &mut DAWState, transla
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -8440,10 +10624,50 @@ fn handle_automation_controller_translate_selected(state: &mut DAWState, transla
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -8454,7 +10678,46 @@ fn handle_automation_controller_translate_selected(state: &mut DAWState, transla
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8502,6 +10765,7 @@ fn handle_automation_controller_translate_selected(state: &mut DAWState, transla
                         _ => (),
                     }
                 });
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -8603,6 +10867,7 @@ fn handle_automation_pitch_bend_translate_selected(state: &mut DAWState, transla
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -8615,10 +10880,41 @@ fn handle_automation_pitch_bend_translate_selected(state: &mut DAWState, transla
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -8629,7 +10925,37 @@ fn handle_automation_pitch_bend_translate_selected(state: &mut DAWState, transla
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8676,6 +11002,7 @@ fn handle_automation_pitch_bend_translate_selected(state: &mut DAWState, transla
                     _ => (),
                 }
             });
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         }
     }
 }
@@ -8712,6 +11039,7 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
@@ -8726,21 +11054,79 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
+                    } else { None }
+                } else { None }
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8760,7 +11146,7 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
                 if let Some(events) = events {
                     for event in events.iter().filter(|event| selected.contains(&event.id())) {
                         if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                            if plugin_param.index == automation_type_value {
+                            if plugin_param.plugin_uuid().to_string() == plugin_uuid.to_string() && plugin_param.index == automation_type_value {
                                 let mut track_event = event.clone();
                                 // adjust the position to be relative to the edit cursor
                                 track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -8783,6 +11169,7 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
 
 fn handle_automation_note_expression_copy(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let selected = state.selected_automation().to_vec();
+    let automation_type = state.automation_type();
     let mut events_to_copy = vec![];
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -8793,6 +11180,12 @@ fn handle_automation_note_expression_copy(state: &mut DAWState, edit_cursor_time
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -8806,10 +11199,65 @@ fn handle_automation_note_expression_copy(state: &mut DAWState, edit_cursor_time
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -8820,7 +11268,61 @@ fn handle_automation_note_expression_copy(state: &mut DAWState, edit_cursor_time
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8876,6 +11378,7 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
     else {
         None
     };
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
@@ -8895,10 +11398,57 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -8909,7 +11459,53 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -8929,7 +11525,7 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
                     if let Some(events) = events {
                         for event in events.iter().filter(|event| selected.contains(&event.id())) {
                             if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                                if plugin_param.index == automation_type_value {
+                                if plugin_param.plugin_uuid().to_string() == selected_effect_uuid && plugin_param.index == automation_type_value {
                                     let mut track_event = event.clone();
                                     // adjust the position to be relative to the edit cursor
                                     track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -8964,6 +11560,7 @@ fn handle_automation_controller_copy(state: &mut DAWState, edit_cursor_time_in_b
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -8976,10 +11573,50 @@ fn handle_automation_controller_copy(state: &mut DAWState, edit_cursor_time_in_b
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -8990,7 +11627,46 @@ fn handle_automation_controller_copy(state: &mut DAWState, edit_cursor_time_in_b
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9042,6 +11718,7 @@ fn handle_automation_pitch_bend_copy(state: &mut DAWState, edit_cursor_time_in_b
     };
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -9054,10 +11731,41 @@ fn handle_automation_pitch_bend_copy(state: &mut DAWState, edit_cursor_time_in_b
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -9068,7 +11776,37 @@ fn handle_automation_pitch_bend_copy(state: &mut DAWState, edit_cursor_time_in_b
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9134,6 +11872,7 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
@@ -9148,11 +11887,27 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
-                        } else {
-                            None
-                        }
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
                     } else {
                         None
                     }
@@ -9162,7 +11917,53 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9182,7 +11983,7 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
                 if let Some(events) = events {
                     for event in automation_event_copy_buffer {
                         if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                            if plugin_param.index == automation_type_value {
+                            if plugin_param.plugin_uuid().to_string() == plugin_uuid.to_string() && plugin_param.index == automation_type_value {
                                 let mut track_event = event.clone();
 
                                 track_event.set_id(Uuid::new_v4().to_string());
@@ -9193,6 +11994,7 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
                             }
                         }
                     }
+                    events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                 }
             }
         }
@@ -9201,6 +12003,7 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
 
 fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_time_in_beats: f64) {
     let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
     }
@@ -9210,6 +12013,12 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(_instrument_track) = track_type {
@@ -9223,10 +12032,65 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
                 // get the arrangement
                 if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                     if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                        if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                            Some(riff_arr_automation.events_mut())
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
                         } else {
-                            None
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
                         }
                     } else {
                         None
@@ -9237,7 +12101,61 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
             } else {
                 match automation_edit_type {
                     AutomationEditType::Track => {
-                        Some(track_type.automation_mut().events_mut())
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                     AutomationEditType::Riff => {
                         if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9265,6 +12183,7 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
                         events.push(track_event);
                     }
                 }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -9288,6 +12207,7 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
         None
     };
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let appropriate_track_type = match track_type {
@@ -9307,10 +12227,57 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                     // get the arrangement
                     if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                         if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                            if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                                Some(riff_arr_automation.events_mut())
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
                             } else {
-                                None
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
                             }
                         } else {
                             None
@@ -9321,7 +12288,53 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                 } else {
                     match automation_edit_type {
                         AutomationEditType::Track => {
-                            Some(track_type.automation_mut().events_mut())
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
                         }
                         AutomationEditType::Riff => {
                             if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9341,7 +12354,7 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                     if let Some(events) = events {
                         for event in automation_event_copy_buffer {
                             if let TrackEvent::AudioPluginParameter(plugin_param) = event {
-                                if plugin_param.index == automation_type_value {
+                                if plugin_param.plugin_uuid().to_string() == selected_effect_uuid && plugin_param.index == automation_type_value {
                                     let mut track_event = event.clone();
 
                                     track_event.set_id(Uuid::new_v4().to_string());
@@ -9352,6 +12365,7 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                                 }
                             }
                         }
+                        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
                     }
                 }
             }
@@ -9371,6 +12385,7 @@ fn handle_automation_controller_paste(state: &mut DAWState, edit_cursor_time_in_
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -9383,10 +12398,50 @@ fn handle_automation_controller_paste(state: &mut DAWState, edit_cursor_time_in_
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
                     }
                 } else {
                     None
@@ -9397,7 +12452,46 @@ fn handle_automation_controller_paste(state: &mut DAWState, edit_cursor_time_in_
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9428,6 +12522,7 @@ fn handle_automation_controller_paste(state: &mut DAWState, edit_cursor_time_in_
                         }
                     }
                 }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
             }
         }
     }
@@ -9444,6 +12539,7 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
     let current_view = state.current_view().clone();
     let automation_edit_type = state.automation_edit_type();
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+    let automation_discrete = state.automation_discrete();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         let events = if let CurrentView::RiffArrangement = current_view {
@@ -9456,10 +12552,41 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
             // get the arrangement
             if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
                 if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
                     } else {
-                        None
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
                     }
                 } else {
                     None
@@ -9470,7 +12597,37 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
         } else {
             match automation_edit_type {
                 AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
                 }
                 AutomationEditType::Riff => {
                     if let Some(selected_riff_uuid) = selected_riff_uuid {
@@ -9498,9 +12655,1652 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
                     events.push(track_event);
                 }
             }
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         }
     }
 }
+
+
+fn handle_automation_quantise(state: &Arc<Mutex<DAWState>>, snap_in_beats: f64, quantise_strength: f64) {
+    match state.lock() {
+        Ok(mut state) => {
+            match state.automation_view_mode() {
+                AutomationViewMode::Controllers => handle_automation_controller_quantise(&mut state, snap_in_beats, quantise_strength),
+                AutomationViewMode::PitchBend => handle_automation_pitch_bend_quantise(&mut state, snap_in_beats, quantise_strength),
+                AutomationViewMode::Instrument => handle_automation_instrument_quantise(&mut state, snap_in_beats, quantise_strength),
+                AutomationViewMode::Effect => handle_automation_effect_quantise(&mut state, snap_in_beats, quantise_strength),
+                AutomationViewMode::NoteExpression => handle_automation_note_expression_quantise(&mut state, snap_in_beats, quantise_strength),
+                _ => (),
+            }
+        }
+        Err(_) => {
+
+        }
+    }
+}
+
+fn handle_automation_instrument_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(instrument_track) = track_type {
+            let plugin_uuid = instrument_track.instrument().uuid();
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(automation_type_value) = automation_type {
+                if let Some(events) = events {
+                    for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                        if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                            if plugin_param.plugin_uuid() == plugin_uuid.to_string() && plugin_param.index == automation_type_value {
+                                let calculated_snap = DAWUtils::quantise(plugin_param.position(), snap_in_beats, quantise_strength, false);
+
+                                if calculated_snap.snapped {
+                                    plugin_param.set_position(calculated_snap.snapped_value);
+                                }
+                            }
+                        }
+                    }
+                    events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_note_expression_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64) {
+    let selected = state.selected_automation().to_vec();
+    let automation_type = state.automation_type();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(_instrument_track) = track_type {
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
+                        } else {
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(events) = events {
+                for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                    if let TrackEvent::NoteExpression(note_expression) = event {
+                        let calculated_snap = DAWUtils::quantise(note_expression.position(), snap_in_beats, quantise_strength, false);
+
+                        if calculated_snap.snapped {
+                            note_expression.set_position(calculated_snap.snapped_value);
+                        }
+                    }
+                }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+            }
+        }
+    }
+}
+
+fn handle_automation_effect_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let selected_effect_uuid = if let Some(selected_effect_uuid) = state.selected_effect_plugin_uuid() {
+        Some(selected_effect_uuid.clone())
+    }
+    else {
+        None
+    };
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let appropriate_track_type = match track_type {
+            TrackType::InstrumentTrack(_) => true,
+            TrackType::AudioTrack(_) => true,
+            TrackType::MidiTrack(_) => false,
+        };
+        if appropriate_track_type {
+            if let Some(selected_effect_uuid) = selected_effect_uuid {
+                let events = if let CurrentView::RiffArrangement = current_view {
+                    let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                        Some(selected_arrangement_uuid.clone())
+                    } else {
+                        None
+                    };
+
+                    // get the arrangement
+                    if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
+                            } else {
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    match automation_edit_type {
+                        AutomationEditType::Track => {
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        AutomationEditType::Riff => {
+                            if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                    Some(riff.events_mut())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                };
+
+                if let Some(automation_type_value) = automation_type {
+                    if let Some(events) = events {
+                        for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                            if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                                if plugin_param.plugin_uuid().to_string() == selected_effect_uuid && plugin_param.index == automation_type_value {
+                                    let calculated_snap = DAWUtils::quantise(plugin_param.position(), snap_in_beats, quantise_strength, false);
+
+                                    if calculated_snap.snapped {
+                                        plugin_param.set_position(calculated_snap.snapped_value);
+                                    }
+                                }
+                            }
+                        }
+                        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_controller_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
+                    } else {
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(automation_type_value) = automation_type {
+            if let Some(events) = events {
+                for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                    if let TrackEvent::Controller(controller) = event {
+                        if controller.controller() == automation_type_value {
+                            let calculated_snap = DAWUtils::quantise(controller.position(), snap_in_beats, quantise_strength, false);
+
+                            if calculated_snap.snapped {
+                                controller.set_position(calculated_snap.snapped_value);
+                            }
+                        }
+                    }
+                }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+            }
+        }
+    }
+}
+
+fn handle_automation_pitch_bend_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
+                    } else {
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(events) = events {
+            for event in events.iter_mut().filter(|event| selected.contains(&event.id())) {
+                if let TrackEvent::PitchBend(pitch_bend) = event {
+                    let calculated_snap = DAWUtils::quantise(pitch_bend.position(), snap_in_beats, quantise_strength, false);
+
+                    if calculated_snap.snapped {
+                        pitch_bend.set_position(calculated_snap.snapped_value);
+                    }
+                }
+            }
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+fn handle_automation_change(state: &Arc<Mutex<DAWState>>, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    match state.lock() {
+        Ok(mut state) => {
+            match state.automation_view_mode() {
+                AutomationViewMode::Controllers => handle_automation_controller_change(&mut state, changed_events),
+                AutomationViewMode::PitchBend => handle_automation_pitch_bend_change(&mut state, changed_events),
+                AutomationViewMode::Instrument => handle_automation_instrument_change(&mut state, changed_events),
+                AutomationViewMode::Effect => handle_automation_effect_change(&mut state, changed_events),
+                AutomationViewMode::NoteExpression => handle_automation_note_expression_change(&mut state, changed_events),
+                _ => (),
+            }
+        }
+        Err(_) => {
+
+        }
+    }
+}
+
+fn handle_automation_instrument_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(instrument_track) = track_type {
+            let plugin_uuid = instrument_track.instrument().uuid();
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else { None }
+                                }
+                                else { None }
+                            }
+                        } else { None }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                        if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+                                    let event_details = PluginParameter {
+                                        id: Uuid::new_v4(),
+                                        plugin_uuid: plugin_uuid,
+                                        instrument: true,
+                                        position: 0.0,
+                                        index: automation_type_value,
+                                        value: 0.0,
+                                    };
+                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid.to_string() {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(events) = events {
+                for (_, changed) in changed_events.iter() {
+                    if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                        if let TrackEvent::AudioPluginParameter(change) = changed {
+                            if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                                plugin_param.set_position(change.position());
+                                plugin_param.set_value(change.value());
+                            }
+                        }
+                    }
+                }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+            }
+        }
+    }
+}
+
+fn handle_automation_note_expression_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    let selected = state.selected_automation().to_vec();
+    let automation_type = state.automation_type();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let note_expression_type = state.note_expression_type().clone();
+    let note_expression_id = state.note_expression_id();
+    let note_expression_port_index = state.note_expression_port_index() as i16;
+    let note_expression_channel = state.note_expression_channel() as i16;
+    let note_expression_key = state.note_expression_key();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let TrackType::InstrumentTrack(_instrument_track) = track_type {
+            let events = if let CurrentView::RiffArrangement = current_view {
+                let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                    Some(selected_arrangement_uuid.clone())
+                } else {
+                    None
+                };
+
+                // get the arrangement
+                if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                        let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                            riff_arr_automation
+                        } else {
+                            riff_arrangement.add_track_automation(track_uuid.clone());
+                            riff_arrangement.automation_mut(&track_uuid).unwrap()
+                        };
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                match automation_edit_type {
+                    AutomationEditType::Track => {
+                        let automation = track_type.automation_mut();
+                        if automation_discrete {
+                            Some(automation.events_mut())
+                        }
+                        else {
+                            if let Some(automation_type_value) = automation_type {
+                                if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                        if *(note_expression.expression_type()) as i32 == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(automation_envelope.events_mut())
+                                } else {
+
+                                    let event_details = NoteExpression::new_with_params(
+                                        note_expression_type,
+                                        note_expression_port_index,
+                                        note_expression_channel,
+                                        0.0,
+                                        note_expression_id,
+                                        note_expression_key,
+                                        0.0
+                                    );
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::NoteExpression(event_details));
+                                    automation.envelopes_mut().push(new_envelope);
+                                    if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::NoteExpression(note_expression) = envelope.event_details() {
+                                            if
+                                            *(note_expression.expression_type()) == note_expression_type &&
+                                                note_expression.port() ==  note_expression_port_index &&
+                                                note_expression.channel() ==  note_expression_channel &&
+                                                note_expression.note_id() ==  note_expression_id &&
+                                                note_expression.key() ==  note_expression_key
+                                            {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(envelope.events_mut())
+                                    }
+                                    else {
+                                        None
+                                    }
+                                }
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                    AutomationEditType::Riff => {
+                        if let Some(selected_riff_uuid) = selected_riff_uuid {
+                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                Some(riff.events_mut())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(events) = events {
+                for (_, changed) in changed_events.iter() {
+                    if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                        if let TrackEvent::AudioPluginParameter(change) = changed {
+                            if let TrackEvent::NoteExpression(note_expression) = event {
+                                note_expression.set_position(change.position());
+                                note_expression.set_value(change.value() as f64);
+                            }
+                        }
+                    }
+                }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+            }
+        }
+    }
+}
+
+fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let selected_effect_uuid = if let Some(selected_effect_uuid) = state.selected_effect_plugin_uuid() {
+        Some(selected_effect_uuid.clone())
+    }
+    else {
+        None
+    };
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let appropriate_track_type = match track_type {
+            TrackType::InstrumentTrack(_) => true,
+            TrackType::AudioTrack(_) => true,
+            TrackType::MidiTrack(_) => false,
+        };
+        if appropriate_track_type {
+            if let Some(selected_effect_uuid) = selected_effect_uuid {
+                let events = if let CurrentView::RiffArrangement = current_view {
+                    let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                        Some(selected_arrangement_uuid.clone())
+                    } else {
+                        None
+                    };
+
+                    // get the arrangement
+                    if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                        if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                            let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                                riff_arr_automation
+                            } else {
+                                riff_arrangement.add_track_automation(track_uuid.clone());
+                                riff_arrangement.automation_mut(&track_uuid).unwrap()
+                            };
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    match automation_edit_type {
+                        AutomationEditType::Track => {
+                            let automation = track_type.automation_mut();
+                            if automation_discrete {
+                                Some(automation.events_mut())
+                            }
+                            else {
+                                if let Some(automation_type_value) = automation_type {
+                                    if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                        let mut found = false;
+                                        if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                            if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                found = true;
+                                            }
+                                        }
+                                        return found;
+                                    }) {
+                                        Some(automation_envelope.events_mut())
+                                    } else {
+                                        let event_details = PluginParameter {
+                                            id: Uuid::new_v4(),
+                                            plugin_uuid: Uuid::parse_str(selected_effect_uuid.as_str()).unwrap(),
+                                            instrument: true,
+                                            position: 0.0,
+                                            index: automation_type_value,
+                                            value: 0.0,
+                                        };
+                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        automation.envelopes_mut().push(new_envelope);
+                                        if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                            let mut found = false;
+                                            if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
+                                                if param.index == automation_type_value && param.plugin_uuid() == selected_effect_uuid {
+                                                    found = true;
+                                                }
+                                            }
+                                            return found;
+                                        }) {
+                                            Some(envelope.events_mut())
+                                        }
+                                        else {
+                                            None
+                                        }
+                                    }
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        AutomationEditType::Riff => {
+                            if let Some(selected_riff_uuid) = selected_riff_uuid {
+                                if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                                    Some(riff.events_mut())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                };
+
+                if let Some(automation_type_value) = automation_type {
+                    if let Some(events) = events {
+                        for (_, changed) in changed_events.iter() {
+                            if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                                if let TrackEvent::AudioPluginParameter(change) = changed {
+                                    if let TrackEvent::AudioPluginParameter(plugin_param) = event {
+                                        plugin_param.set_position(change.position());
+                                        plugin_param.set_value(change.value());
+                                    }
+                                }
+                            }
+                        }
+                        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_automation_controller_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let automation_type = state.automation_type();
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
+                    } else {
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_type_value) = automation_type {
+                            if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                    if controller.controller() == automation_type_value {
+                                        found = true;
+                                    }
+                                }
+                                return found;
+                            }) {
+                                Some(automation_envelope.events_mut())
+                            } else {
+                                let event_details = Controller::new(0.0, automation_type_value, 0);
+                                let new_envelope = AutomationEnvelope::new(TrackEvent::Controller(event_details));
+                                automation.envelopes_mut().push(new_envelope);
+                                if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                    let mut found = false;
+                                    if let TrackEvent::Controller(controller) = envelope.event_details() {
+                                        if controller.controller() == automation_type_value {
+                                            found = true;
+                                        }
+                                    }
+                                    return found;
+                                }) {
+                                    Some(envelope.events_mut())
+                                }
+                                else {
+                                    None
+                                }
+                            }
+                        }
+                        else {
+                            None
+                        }
+                    }
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(automation_type_value) = automation_type {
+            if let Some(events) = events {
+                for (_, changed) in changed_events.iter() {
+                    if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                        if let TrackEvent::AudioPluginParameter(change) = changed {
+                            if let TrackEvent::Controller(controller) = event {
+                                controller.set_position(change.position());
+                                controller.set_value(change.value() as i32);
+                            }
+                        }
+                    }
+                }
+                events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+            }
+        }
+    }
+}
+
+fn handle_automation_pitch_bend_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
+    let selected = state.selected_automation().to_vec();
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let events = if let CurrentView::RiffArrangement = current_view {
+            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                Some(selected_arrangement_uuid.clone())
+            } else {
+                None
+            };
+
+            // get the arrangement
+            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
+                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
+                    let automation = if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
+                        riff_arr_automation
+                    } else {
+                        riff_arrangement.add_track_automation(track_uuid.clone());
+                        riff_arrangement.automation_mut(&track_uuid).unwrap()
+                    };
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            match automation_edit_type {
+                AutomationEditType::Track => {
+                    let automation = track_type.automation_mut();
+                    if automation_discrete {
+                        Some(automation.events_mut())
+                    }
+                    else {
+                        if let Some(automation_envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                            let mut found = false;
+                            if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                found = true;
+                            }
+                            return found;
+                        }) {
+                            Some(automation_envelope.events_mut())
+                        } else {
+                            let event_details = PitchBend::new(0.0, 0);
+                            let new_envelope = AutomationEnvelope::new(TrackEvent::PitchBend(event_details));
+                            automation.envelopes_mut().push(new_envelope);
+                            if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
+                                let mut found = false;
+                                if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                    found = true;
+                                }
+                                return found;
+                            }) {
+                                Some(envelope.events_mut())
+                            }
+                            else {
+                                None
+                            }
+                        }
+                    }
+                }
+                AutomationEditType::Riff => {
+                    if let Some(selected_riff_uuid) = selected_riff_uuid {
+                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                            Some(riff.events_mut())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        if let Some(events) = events {
+            for (_, changed) in changed_events.iter() {
+                if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                    if let TrackEvent::AudioPluginParameter(change) = changed {
+                        if let TrackEvent::PitchBend(pitch_bend) = event {
+                            pitch_bend.set_position(change.position());
+                            pitch_bend.set_value(change.value() as i32);
+                        }
+                    }
+                }
+            }
+            events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+        }
+    }
+}
+
 
 fn do_progress_dialogue_pulse(gui: &mut MainWindow, progress_bar_pulse_delay_count: &mut i32) {
     if gui.ui.progress_dialogue.is_visible() {
@@ -9812,8 +14612,13 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
 
                             let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
                             let current_beat_in_bar = play_position_in_beats as i32 % time_signature_numerator as i32 + 1;
-
                             gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
+
+                            let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                            let minutes = time_in_secs as i32 / 60;
+                            let seconds = time_in_secs as i32 % 60;
+                            let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
+                            gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
 
                             // debug!("Play position in frames: {}", play_position_in_frames);
                             state.set_play_position_in_frames(play_position_in_frames);

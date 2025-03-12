@@ -626,6 +626,12 @@
     <property name="step-increment">1</property>
     <property name="page-increment">100</property>
   </object>
+  <object class="GtkAdjustment" id="piano_roll_quantise_strength_adjustment">
+    <property name="upper">100</property>
+    <property name="value">100</property>
+    <property name="step-increment">1</property>
+    <property name="page-increment">10</property>
+  </object>
   <object class="GtkAdjustment" id="piano_roll_vertical_adjustment">
     <property name="upper">3000</property>
     <property name="step-increment">1</property>
@@ -1619,6 +1625,20 @@
                           </packing>
                         </child>
                         <child>
+                          <object class="GtkRadioToolButton" id="track_grid_windowed_zoom_mode_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">z</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-find</property>
+                            <property name="group">track_grid_select_mode_btn</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkSeparatorToolItem">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
@@ -1664,6 +1684,32 @@
                             <property name="label" translatable="yes">__glade_unnamed_62</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">edit-paste</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkToolButton" id="track_grid_select_all_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">__glade_unnamed_293</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-select-all</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkToolButton" id="track_grid_unselect_all_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">__glade_unnamed_293</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-leave-fullscreen</property>
                           </object>
                           <packing>
                             <property name="expand">False</property>
@@ -1751,114 +1797,59 @@
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
                             <child>
-                              <object class="GtkBox">
+                              <object class="GtkLabel">
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Snap: Start</property>
-                                  </object>
-                                  <packing>
-                                    <property name="expand">False</property>
-                                    <property name="fill">True</property>
-                                    <property name="position">0</property>
-                                  </packing>
-                                </child>
-                                <child>
-                                  <object class="GtkComboBoxText" id="track_grid_quantise_start_choice">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="active">10</property>
-                                    <property name="active-id">1</property>
-                                    <items>
-                                      <item id="10" translatable="yes">10</item>
-                                      <item id="9" translatable="yes">9</item>
-                                      <item id="8" translatable="yes">8</item>
-                                      <item id="7" translatable="yes">7</item>
-                                      <item id="6" translatable="yes">6</item>
-                                      <item id="5" translatable="yes">5</item>
-                                      <item id="4" translatable="yes">4</item>
-                                      <item id="3" translatable="yes">3</item>
-                                      <item id="2" translatable="yes">2</item>
-                                      <item id="1_5" translatable="yes">1.5</item>
-                                      <item id="1" translatable="yes">1</item>
-                                      <item id="1_2_dot" translatable="yes">1/2.</item>
-                                      <item id="1_2" translatable="yes">1/2</item>
-                                      <item id="1_4_dot" translatable="yes">1/4.</item>
-                                      <item id="1_4" translatable="yes">1/4</item>
-                                      <item id="1_8_dot" translatable="yes">1/8.</item>
-                                      <item id="1_8" translatable="yes">1/8</item>
-                                      <item id="1_16_dot" translatable="yes">1/16.</item>
-                                      <item id="1_16" translatable="yes">1/16</item>
-                                      <item id="1_32_dot" translatable="yes">1/32.</item>
-                                      <item id="1_32" translatable="yes">1/32</item>
-                                      <item id="1_64_dot" translatable="yes">1/64.</item>
-                                      <item id="1_64" translatable="yes">1/64</item>
-                                    </items>
-                                  </object>
-                                  <packing>
-                                    <property name="expand">False</property>
-                                    <property name="fill">True</property>
-                                    <property name="position">1</property>
-                                  </packing>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Length</property>
-                                  </object>
-                                  <packing>
-                                    <property name="expand">False</property>
-                                    <property name="fill">True</property>
-                                    <property name="position">2</property>
-                                  </packing>
-                                </child>
-                                <child>
-                                  <object class="GtkComboBoxText" id="track_grid_quantise_length_choice">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="active-id">1_4</property>
-                                    <items>
-                                      <item id="10" translatable="yes">10</item>
-                                      <item id="9" translatable="yes">9</item>
-                                      <item id="8" translatable="yes">8</item>
-                                      <item id="7" translatable="yes">7</item>
-                                      <item id="6" translatable="yes">6</item>
-                                      <item id="5" translatable="yes">5</item>
-                                      <item id="4" translatable="yes">4</item>
-                                      <item id="3" translatable="yes">3</item>
-                                      <item id="2" translatable="yes">2</item>
-                                      <item id="1_5" translatable="yes">1.5</item>
-                                      <item id="1" translatable="yes">1</item>
-                                      <item id="1_2_dot" translatable="yes">1/2.</item>
-                                      <item id="1_2" translatable="yes">1/2</item>
-                                      <item id="1_4_dot" translatable="yes">1/4.</item>
-                                      <item id="1_4" translatable="yes">1/4</item>
-                                      <item id="1_8_dot" translatable="yes">1/8.</item>
-                                      <item id="1_8" translatable="yes">1/8</item>
-                                      <item id="1_16_dot" translatable="yes">1/16.</item>
-                                      <item id="1_16" translatable="yes">1/16</item>
-                                      <item id="1_32_dot" translatable="yes">1/32.</item>
-                                      <item id="1_32" translatable="yes">1/32</item>
-                                      <item id="1_64_dot" translatable="yes">1/64.</item>
-                                      <item id="1_64" translatable="yes">1/64</item>
-                                    </items>
-                                  </object>
-                                  <packing>
-                                    <property name="expand">False</property>
-                                    <property name="fill">True</property>
-                                    <property name="position">3</property>
-                                  </packing>
-                                </child>
+                                <property name="label" translatable="yes">Snap: </property>
                               </object>
                             </child>
                           </object>
                           <packing>
                             <property name="expand">False</property>
-                            <property name="homogeneous">True</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkToolItem">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <child>
+                              <object class="GtkComboBoxText" id="track_grid_quantise_start_choice">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="active">10</property>
+                                <property name="active-id">1</property>
+                                <items>
+                                  <item id="10" translatable="yes">10</item>
+                                  <item id="9" translatable="yes">9</item>
+                                  <item id="8" translatable="yes">8</item>
+                                  <item id="7" translatable="yes">7</item>
+                                  <item id="6" translatable="yes">6</item>
+                                  <item id="5" translatable="yes">5</item>
+                                  <item id="4" translatable="yes">4</item>
+                                  <item id="3" translatable="yes">3</item>
+                                  <item id="2" translatable="yes">2</item>
+                                  <item id="1_5" translatable="yes">1.5</item>
+                                  <item id="1" translatable="yes">1</item>
+                                  <item id="1_2_dot" translatable="yes">1/2.</item>
+                                  <item id="1_2" translatable="yes">1/2</item>
+                                  <item id="1_4_dot" translatable="yes">1/4.</item>
+                                  <item id="1_4" translatable="yes">1/4</item>
+                                  <item id="1_8_dot" translatable="yes">1/8.</item>
+                                  <item id="1_8" translatable="yes">1/8</item>
+                                  <item id="1_16_dot" translatable="yes">1/16.</item>
+                                  <item id="1_16" translatable="yes">1/16</item>
+                                  <item id="1_32_dot" translatable="yes">1/32.</item>
+                                  <item id="1_32" translatable="yes">1/32</item>
+                                  <item id="1_64_dot" translatable="yes">1/64.</item>
+                                  <item id="1_64" translatable="yes">1/64</item>
+                                </items>
+                              </object>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
                           </packing>
                         </child>
                         <child>
@@ -13671,6 +13662,20 @@
                                       </packing>
                                     </child>
                                     <child>
+                                      <object class="GtkRadioToolButton" id="riff_grid_windowed_zoom_mode_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="label" translatable="yes">z</property>
+                                        <property name="use-underline">True</property>
+                                        <property name="stock-id">gtk-find</property>
+                                        <property name="group">riff_grid_select_mode_btn</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="homogeneous">False</property>
+                                      </packing>
+                                    </child>
+                                    <child>
                                       <object class="GtkSeparatorToolItem">
                                         <property name="visible">True</property>
                                         <property name="can-focus">False</property>
@@ -13720,6 +13725,32 @@
                                       <packing>
                                         <property name="expand">False</property>
                                         <property name="homogeneous">False</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkToolButton" id="riff_grid_select_all_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="label" translatable="yes">__glade_unnamed_293</property>
+                                        <property name="use-underline">True</property>
+                                        <property name="stock-id">gtk-select-all</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="homogeneous">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkToolButton" id="riff_grid_unselect_all_btn">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <property name="label" translatable="yes">__glade_unnamed_294</property>
+                                        <property name="use-underline">True</property>
+                                        <property name="stock-id">gtk-leave-fullscreen</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="homogeneous">True</property>
                                       </packing>
                                     </child>
                                     <child>
@@ -17794,6 +17825,20 @@
                               </packing>
                             </child>
                             <child>
+                              <object class="GtkRadioToolButton" id="piano_roll_windowed_zoom_mode_btn">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="label" translatable="yes">z</property>
+                                <property name="use-underline">True</property>
+                                <property name="stock-id">gtk-find</property>
+                                <property name="group">piano_roll_select_mode_btn</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
                               <object class="GtkSeparatorToolItem">
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
@@ -17839,6 +17884,32 @@
                                 <property name="label" translatable="yes">piano roll paste</property>
                                 <property name="use-underline">True</property>
                                 <property name="icon-name">edit-paste</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolButton" id="piano_roll_select_all_btn">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="label" translatable="yes">__glade_unnamed_293</property>
+                                <property name="use-underline">True</property>
+                                <property name="stock-id">gtk-select-all</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolButton" id="piano_roll_unselect_all_btn">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <property name="label" translatable="yes">__glade_unnamed_293</property>
+                                <property name="use-underline">True</property>
+                                <property name="stock-id">gtk-leave-fullscreen</property>
                               </object>
                               <packing>
                                 <property name="expand">False</property>
@@ -17929,7 +18000,95 @@
                                   <object class="GtkLabel">
                                     <property name="visible">True</property>
                                     <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Quantize and Snap: </property>
+                                    <property name="label" translatable="yes">Subdivision: </property>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkComboBoxText" id="piano_roll_subdivision_mode_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="active-id">normal</property>
+                                    <items>
+                                      <item id="normal" translatable="yes">Normal</item>
+                                      <item id="triplet" translatable="yes">Triplet</item>
+                                    </items>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes"> Triplet Type: </property>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkComboBoxText" id="piano_roll_triplet_type_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="tooltip-text" translatable="yes">Select the triplet type to add in the piano roll</property>
+                                    <property name="active-id">1_4_triplet</property>
+                                    <items>
+                                      <item id="1_4_triplet" translatable="yes">1/4 triplet</item>
+                                      <item id="1_8_triplet" translatable="yes">1/8 triplet</item>
+                                      <item id="1_16_triplet" translatable="yes">1/16 triplet</item>
+                                    </items>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkSeparatorToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">New Note Length: </property>
                                   </object>
                                 </child>
                               </object>
@@ -17943,10 +18102,66 @@
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
                                 <child>
+                                  <object class="GtkComboBoxText" id="piano_roll_quantise_length_choice">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="tooltip-text" translatable="yes">Set the add note length and the note end quantize in the piano roll</property>
+                                    <property name="active-id">1_4</property>
+                                    <items>
+                                      <item id="10" translatable="yes">10</item>
+                                      <item id="9" translatable="yes">9</item>
+                                      <item id="8" translatable="yes">8</item>
+                                      <item id="7" translatable="yes">7</item>
+                                      <item id="6" translatable="yes">6</item>
+                                      <item id="5" translatable="yes">5</item>
+                                      <item id="4" translatable="yes">4</item>
+                                      <item id="3" translatable="yes">3</item>
+                                      <item id="2" translatable="yes">2</item>
+                                      <item id="1_5" translatable="yes">1.5</item>
+                                      <item id="1" translatable="yes">1</item>
+                                      <item id="1_2_dot" translatable="yes">1/2.</item>
+                                      <item id="1_2" translatable="yes">1/2</item>
+                                      <item id="1_4_dot" translatable="yes">1/4.</item>
+                                      <item id="1_4_triplet" translatable="yes">1/4 triplet</item>
+                                      <item id="1_4" translatable="yes">1/4</item>
+                                      <item id="1_8_dot" translatable="yes">1/8.</item>
+                                      <item id="1_8_triplet" translatable="yes">1/8 triplet</item>
+                                      <item id="1_8" translatable="yes">1/8</item>
+                                      <item id="1_16_dot" translatable="yes">1/16.</item>
+                                      <item id="1_16_triplet" translatable="yes">1/16 triplet</item>
+                                      <item id="1_16" translatable="yes">1/16</item>
+                                      <item id="1_32_dot" translatable="yes">1/32.</item>
+                                      <item id="1_32" translatable="yes">1/32</item>
+                                      <item id="1_64_dot" translatable="yes">1/64.</item>
+                                      <item id="1_64" translatable="yes">1/64</item>
+                                    </items>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkSeparatorToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
                                   <object class="GtkLabel">
                                     <property name="visible">True</property>
                                     <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Start</property>
+                                    <property name="label" translatable="yes">Quantize and Snap: </property>
                                   </object>
                                 </child>
                               </object>
@@ -18002,70 +18217,7 @@
                               </packing>
                             </child>
                             <child>
-                              <object class="GtkToolItem">
-                                <property name="visible">True</property>
-                                <property name="can-focus">False</property>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Length</property>
-                                  </object>
-                                </child>
-                              </object>
-                              <packing>
-                                <property name="expand">False</property>
-                                <property name="homogeneous">True</property>
-                              </packing>
-                            </child>
-                            <child>
-                              <object class="GtkToolItem">
-                                <property name="visible">True</property>
-                                <property name="can-focus">False</property>
-                                <child>
-                                  <object class="GtkComboBoxText" id="piano_roll_quantise_length_choice">
-                                    <property name="visible">True</property>
-                                    <property name="can-focus">False</property>
-                                    <property name="tooltip-text" translatable="yes">Set the add note length and the note end quantize in the piano roll</property>
-                                    <property name="active-id">1_4</property>
-                                    <items>
-                                      <item id="10" translatable="yes">10</item>
-                                      <item id="9" translatable="yes">9</item>
-                                      <item id="8" translatable="yes">8</item>
-                                      <item id="7" translatable="yes">7</item>
-                                      <item id="6" translatable="yes">6</item>
-                                      <item id="5" translatable="yes">5</item>
-                                      <item id="4" translatable="yes">4</item>
-                                      <item id="3" translatable="yes">3</item>
-                                      <item id="2" translatable="yes">2</item>
-                                      <item id="1_5" translatable="yes">1.5</item>
-                                      <item id="1" translatable="yes">1</item>
-                                      <item id="1_2_dot" translatable="yes">1/2.</item>
-                                      <item id="1_2" translatable="yes">1/2</item>
-                                      <item id="1_4_dot" translatable="yes">1/4.</item>
-                                      <item id="1_4_triplet" translatable="yes">1/4 triplet</item>
-                                      <item id="1_4" translatable="yes">1/4</item>
-                                      <item id="1_8_dot" translatable="yes">1/8.</item>
-                                      <item id="1_8_triplet" translatable="yes">1/8 triplet</item>
-                                      <item id="1_8" translatable="yes">1/8</item>
-                                      <item id="1_16_dot" translatable="yes">1/16.</item>
-                                      <item id="1_16_triplet" translatable="yes">1/16 triplet</item>
-                                      <item id="1_16" translatable="yes">1/16</item>
-                                      <item id="1_32_dot" translatable="yes">1/32.</item>
-                                      <item id="1_32" translatable="yes">1/32</item>
-                                      <item id="1_64_dot" translatable="yes">1/64.</item>
-                                      <item id="1_64" translatable="yes">1/64</item>
-                                    </items>
-                                  </object>
-                                </child>
-                              </object>
-                              <packing>
-                                <property name="expand">False</property>
-                                <property name="homogeneous">True</property>
-                              </packing>
-                            </child>
-                            <child>
-                              <object class="GtkRadioToolButton" id="piano_roll_quantise_start_checkbox">
+                              <object class="GtkToggleToolButton" id="piano_roll_quantise_start_checkbox">
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
                                 <property name="tooltip-text" translatable="yes">Turn on or off note start quantising</property>
@@ -18079,17 +18231,50 @@
                               </packing>
                             </child>
                             <child>
-                              <object class="GtkRadioToolButton" id="piano_roll_quantise_end_checkbox">
+                              <object class="GtkToggleToolButton" id="piano_roll_quantise_end_checkbox">
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
                                 <property name="tooltip-text" translatable="yes">Turn on or off note end quantising</property>
                                 <property name="label" translatable="yes">End</property>
                                 <property name="use-underline">True</property>
-                                <property name="active">True</property>
                               </object>
                               <packing>
                                 <property name="expand">False</property>
                                 <property name="homogeneous">True</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">False</property>
+                                    <property name="label" translatable="yes">Strength: </property>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkToolItem">
+                                <property name="visible">True</property>
+                                <property name="can-focus">False</property>
+                                <child>
+                                  <object class="GtkSpinButton" id="piano_roll_quantise_strength_spinner">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="adjustment">piano_roll_quantise_strength_adjustment</property>
+                                  </object>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="homogeneous">False</property>
                               </packing>
                             </child>
                             <child>
@@ -18123,7 +18308,7 @@
                                   <object class="GtkLabel">
                                     <property name="visible">True</property>
                                     <property name="can-focus">False</property>
-                                    <property name="label" translatable="yes">Note Length</property>
+                                    <property name="label" translatable="yes">Note Length Adjustment: </property>
                                   </object>
                                 </child>
                               </object>
@@ -18920,6 +19105,21 @@
                           </packing>
                         </child>
                         <child>
+                          <object class="GtkRadioToolButton" id="automation_zoom_window_mode_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">z</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-find</property>
+                            <property name="active">True</property>
+                            <property name="group">automation_select_mode_btn</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkSeparatorToolItem">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
@@ -18933,7 +19133,7 @@
                           <object class="GtkToolButton" id="automation_cut_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll cut</property>
+                            <property name="label" translatable="yes">automation cut</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">edit-cut</property>
                           </object>
@@ -18946,7 +19146,7 @@
                           <object class="GtkToolButton" id="automation_copy_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll copy</property>
+                            <property name="label" translatable="yes">automation copy</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">edit-copy</property>
                           </object>
@@ -18959,9 +19159,35 @@
                           <object class="GtkToolButton" id="automation_paste_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll paste</property>
+                            <property name="label" translatable="yes">automation paste</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">edit-paste</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkToolButton" id="automation_select_all_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">__glade_unnamed_293</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-select-all</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkToolButton" id="automation_unselect_all_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">__glade_unnamed_293</property>
+                            <property name="use-underline">True</property>
+                            <property name="stock-id">gtk-leave-fullscreen</property>
                           </object>
                           <packing>
                             <property name="expand">False</property>
@@ -19057,7 +19283,7 @@
                           <object class="GtkToolButton" id="automation_translate_left_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll translate_left</property>
+                            <property name="label" translatable="yes">automation translate_left</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">go-previous</property>
                           </object>
@@ -19070,7 +19296,7 @@
                           <object class="GtkToolButton" id="automation_translate_right_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll translate_right</property>
+                            <property name="label" translatable="yes">automation translate_right</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">go-next</property>
                           </object>
@@ -19083,7 +19309,7 @@
                           <object class="GtkToolButton" id="automation_translate_up_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll translate up</property>
+                            <property name="label" translatable="yes">automation translate up</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">go-up</property>
                           </object>
@@ -19096,7 +19322,7 @@
                           <object class="GtkToolButton" id="automation_translate_down_btn">
                             <property name="visible">True</property>
                             <property name="can-focus">False</property>
-                            <property name="label" translatable="yes">piano roll translate_down</property>
+                            <property name="label" translatable="yes">automation translate_down</property>
                             <property name="use-underline">True</property>
                             <property name="icon-name">go-down</property>
                           </object>
@@ -19124,23 +19350,6 @@
                                 <property name="visible">True</property>
                                 <property name="can-focus">False</property>
                                 <property name="label" translatable="yes">Quantize and Snap: </property>
-                              </object>
-                            </child>
-                          </object>
-                          <packing>
-                            <property name="expand">False</property>
-                            <property name="homogeneous">True</property>
-                          </packing>
-                        </child>
-                        <child>
-                          <object class="GtkToolItem">
-                            <property name="visible">True</property>
-                            <property name="can-focus">False</property>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="visible">True</property>
-                                <property name="can-focus">False</property>
-                                <property name="label" translatable="yes">Start</property>
                               </object>
                             </child>
                           </object>
@@ -19387,6 +19596,42 @@
                             <property name="use-underline">True</property>
                             <property name="active">True</property>
                             <property name="group">automation_grid_mode_point</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">True</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkSeparatorToolItem">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">False</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkRadioToolButton" id="automation_grid_discrete_events_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">Discrete</property>
+                            <property name="use-underline">True</property>
+                            <property name="active">True</property>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="homogeneous">True</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkRadioToolButton" id="automation_grid_continuous_events_btn">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="label" translatable="yes">Continuous</property>
+                            <property name="use-underline">True</property>
+                            <property name="group">automation_grid_discrete_events_btn</property>
                           </object>
                           <packing>
                             <property name="expand">False</property>
@@ -20080,6 +20325,7 @@
                       <object class="GtkScrolledWindow">
                         <property name="visible">True</property>
                         <property name="can-focus">True</property>
+                        <property name="events">GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK | GDK_STRUCTURE_MASK</property>
                         <property name="hadjustment">automation_grid_horizontal_adjustment</property>
                         <property name="shadow-type">in</property>
                         <child>
@@ -20091,8 +20337,10 @@
                                 <property name="width-request">60000</property>
                                 <property name="height-request">384</property>
                                 <property name="visible">True</property>
-                                <property name="can-focus">False</property>
-                                <property name="events">GDK_POINTER_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_STRUCTURE_MASK</property>
+                                <property name="can-focus">True</property>
+                                <property name="events">GDK_POINTER_MOTION_MASK | GDK_BUTTON1_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK | GDK_STRUCTURE_MASK | GDK_SCROLL_MASK</property>
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
                               </object>
                             </child>
                           </object>
@@ -22882,7 +23130,7 @@
           </packing>
         </child>
         <child>
-          <!-- n-columns=9 n-rows=1 -->
+          <!-- n-columns=10 n-rows=1 -->
           <object class="GtkGrid">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
@@ -22892,10 +23140,11 @@
               <object class="GtkLabel" id="song_position_txt_ctrl">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
+                <property name="halign">start</property>
                 <property name="label" translatable="yes">001:001:000</property>
               </object>
               <packing>
-                <property name="left-attach">1</property>
+                <property name="left-attach">3</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -22903,7 +23152,9 @@
               <object class="GtkLabel">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="hexpand">True</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">Time</property>
+                <property name="justify">right</property>
               </object>
               <packing>
                 <property name="left-attach">0</property>
@@ -22914,7 +23165,9 @@
               <object class="GtkLabel">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="label" translatable="yes">     </property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">     Position</property>
               </object>
               <packing>
                 <property name="left-attach">2</property>
@@ -23053,7 +23306,7 @@
                 </child>
               </object>
               <packing>
-                <property name="left-attach">3</property>
+                <property name="left-attach">4</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23064,7 +23317,7 @@
                 <property name="hexpand">True</property>
               </object>
               <packing>
-                <property name="left-attach">4</property>
+                <property name="left-attach">5</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23078,7 +23331,7 @@
                 <property name="value">140</property>
               </object>
               <packing>
-                <property name="left-attach">5</property>
+                <property name="left-attach">6</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23089,7 +23342,7 @@
                 <property name="hexpand">True</property>
               </object>
               <packing>
-                <property name="left-attach">6</property>
+                <property name="left-attach">7</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23100,7 +23353,7 @@
                 <property name="stack">sub_panel_stack</property>
               </object>
               <packing>
-                <property name="left-attach">7</property>
+                <property name="left-attach">8</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23113,7 +23366,19 @@
                 <property name="receives-default">True</property>
               </object>
               <packing>
-                <property name="left-attach">8</property>
+                <property name="left-attach">9</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="song_time_txt_ctrl">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="label" translatable="yes">000:00:000</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>

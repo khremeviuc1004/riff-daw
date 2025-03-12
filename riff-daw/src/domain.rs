@@ -178,6 +178,34 @@ impl DAWItemLength for TrackEvent {
     }
 }
 
+impl TrackEvent {
+    pub fn value(&self) -> f64 {
+        match self {
+            TrackEvent::Note(event) => event.note() as f64,
+            TrackEvent::NoteOn(event) => event.note() as f64,
+            TrackEvent::NoteOff(event) => event.note() as f64,
+            TrackEvent::NoteExpression(event) => event.value(),
+            TrackEvent::Controller(event) => event.value() as f64,
+            TrackEvent::PitchBend(event) => event.value() as f64,
+            TrackEvent::AudioPluginParameter(event) => event.value() as f64,
+            _ => 0.0,
+        }
+    }
+
+    pub fn set_value(&mut self, value: f64) {
+        match self {
+            TrackEvent::Note(event) => event.set_note(value as i32),
+            TrackEvent::NoteOn(event) => event.set_note(value as i32),
+            TrackEvent::NoteOff(event) => event.set_note(value as i32),
+            TrackEvent::NoteExpression(event) => event.set_value(value),
+            TrackEvent::Controller(event) => event.set_value(value as i32),
+            TrackEvent::PitchBend(event) => event.set_value(value as i32),
+            TrackEvent::AudioPluginParameter(event) => event.set_value(value as f32),
+            _ => (),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum TrackType {
     InstrumentTrack(InstrumentTrack),
@@ -469,7 +497,7 @@ impl Measure {
 	}
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Default, EnumString)]
+#[derive(Clone, Copy, Serialize, Deserialize, Default, EnumString, PartialEq)]
 pub enum NoteExpressionType {
     #[default]
     Volume = 0,
@@ -752,6 +780,12 @@ impl NoteOn {
     pub fn note(&self) -> i32 {
         self.note
     }
+
+    /// Set the note's note.
+    pub fn set_note(&mut self, note: i32) {
+        self.note = note;
+    }
+
     pub fn velocity(&self) -> i32 {
         self.velocity
     }
@@ -816,6 +850,12 @@ impl NoteOff {
     pub fn note(&self) -> i32 {
         self.note
     }
+
+    /// Set the note's note.
+    pub fn set_note(&mut self, note: i32) {
+        self.note = note;
+    }
+
     pub fn velocity(&self) -> i32 {
         self.velocity
     }
@@ -1765,14 +1805,54 @@ impl RiffArrangement {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct AutomationEnvelope {
+    event_details: TrackEvent,
+    events: Vec<TrackEvent>,
+}
+
+impl AutomationEnvelope {
+    pub fn new(event_details: TrackEvent) -> Self {
+        AutomationEnvelope {
+            event_details,
+            events: vec![],
+        }
+    }
+
+    /// Get a reference to the envelope's events.
+    #[must_use]
+    pub fn events(&self) -> &Vec<TrackEvent> {
+        self.events.as_ref()
+    }
+
+    /// Get a mutable reference to the envelope's events.
+    #[must_use]
+    pub fn events_mut(&mut self) -> &mut Vec<TrackEvent> {
+        &mut self.events
+    }
+
+    /// Set the envelope's events.
+    pub fn set_events(&mut self, events: Vec<TrackEvent>) {
+        self.events = events;
+    }
+
+    pub fn event_details(&self) -> TrackEvent {
+        self.event_details
+    }
+}
+
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Automation {
-	events: Vec<TrackEvent>,
+	events: Vec<TrackEvent>, // discrete events
+    #[serde(default = "Vec::new")]
+    envelopes: Vec<AutomationEnvelope>, // continuous events
 }
 
 impl Automation {
 	pub fn new() -> Automation {
 		Automation {
             events: vec![],
+            envelopes: vec![],
 		}
 	}
 
@@ -1791,6 +1871,23 @@ impl Automation {
     /// Set the automation's events.
     pub fn set_events(&mut self, events: Vec<TrackEvent>) {
         self.events = events;
+    }
+
+    /// Get a reference to the automation's envelopes.
+    #[must_use]
+    pub fn envelopes(&self) -> &Vec<AutomationEnvelope> {
+        self.envelopes.as_ref()
+    }
+
+    /// Get a mutable reference to the automation's envelopes.
+    #[must_use]
+    pub fn envelopes_mut(&mut self) -> &mut Vec<AutomationEnvelope> {
+        &mut self.envelopes
+    }
+
+    /// Set the automation's envelopes.
+    pub fn set_envelopes(&mut self, envelopes: Vec<AutomationEnvelope>) {
+        self.envelopes = envelopes;
     }
 }
 
@@ -2083,7 +2180,7 @@ impl PluginParameterDetail {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PluginParameter {
-    #[serde(skip_serializing, skip_deserializing)]
+    #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
     pub id: Uuid,
     pub index: i32,
 	pub position: f64,
@@ -7647,10 +7744,10 @@ mod tests {
         let (tx_from_vst, _rx_from_vst) = channel::<TrackBackgroundProcessorOutwardEvent>();
         let track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>> = Arc::new(Mutex::new(TrackBackgroundProcessorMode::AudioOut));
         let _track_uuid = Uuid::new_v4();
-        let automation: Vec<TrackEvent> = vec![];
+        let automation = Automation::new();
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
-        let transition_automation: Vec<TrackEvent> = vec![];
+        let transition_automation = Automation::new();
         let mut transition_riffs: Vec<Riff> = vec![];
         let mut transition_riff_refs: Vec<RiffReference> = vec![];
         let vst_host_time_info = Arc::new(parking_lot::RwLock::new(TimeInfo {
@@ -7706,11 +7803,11 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
 
         // do the transition conversion
         let (transition_event_blocks, _transition_param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0);
+            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
 
         track_helper.event_processor.set_track_event_blocks(Some(event_blocks.clone()));
         track_helper.event_processor.set_play(true);

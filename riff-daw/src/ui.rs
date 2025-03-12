@@ -10778,7 +10778,7 @@ impl MainWindow {
                 }
                 else { // advance the riff arrangement scroll window cursor by the width of the just passed riff item
                     if let RiffItemType::RiffSequence = riff_item.item_type() {
-                        playing_riff_set_pixel_position += (69.0 * (riff_set_data.len() as f64));
+                        playing_riff_set_pixel_position += 69.0 * (riff_set_data.len() as f64);
                     }
                     if let RiffItemType::RiffGrid = riff_item.item_type() {
                         playing_riff_set_pixel_position += 300.0;

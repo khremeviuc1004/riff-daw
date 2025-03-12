@@ -82,15 +82,15 @@ impl DAWItemID for TrackEvent {
             TrackEvent::AfterTouch => Uuid::nil().to_string(),
             TrackEvent::ProgramChange => Uuid::nil().to_string(),
             TrackEvent::Note(note) => note.id(),
-            TrackEvent::NoteOn(note_on) => Uuid::nil().to_string(),
-            TrackEvent::NoteOff(note_off) => Uuid::nil().to_string(),
+            TrackEvent::NoteOn(_) => Uuid::nil().to_string(),
+            TrackEvent::NoteOff(_) => Uuid::nil().to_string(),
             TrackEvent::Controller(controller) => controller.id(),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
             TrackEvent::KeyPressure => Uuid::nil().to_string(),
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
-            TrackEvent::Sample(sample_reference) => Uuid::nil().to_string(),
-            TrackEvent::Measure(measure) => Uuid::nil().to_string(),
-            TrackEvent::NoteExpression(note_expression) => Uuid::nil().to_string(),
+            TrackEvent::Sample(_) => Uuid::nil().to_string(),
+            TrackEvent::Measure(_) => Uuid::nil().to_string(),
+            TrackEvent::NoteExpression(note_expression) => note_expression.id(),
         }
     }
 
@@ -100,15 +100,15 @@ impl DAWItemID for TrackEvent {
             TrackEvent::AfterTouch => Uuid::nil().to_string(),
             TrackEvent::ProgramChange => Uuid::nil().to_string(),
             TrackEvent::Note(note) => note.id(),
-            TrackEvent::NoteOn(note_on) => Uuid::nil().to_string(),
-            TrackEvent::NoteOff(note_off) => Uuid::nil().to_string(),
+            TrackEvent::NoteOn(_) => Uuid::nil().to_string(),
+            TrackEvent::NoteOff(_) => Uuid::nil().to_string(),
             TrackEvent::Controller(controller) => controller.id(),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
             TrackEvent::KeyPressure => Uuid::nil().to_string(),
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
-            TrackEvent::Sample(sample_reference) => Uuid::nil().to_string(),
-            TrackEvent::Measure(measure) => Uuid::nil().to_string(),
-            TrackEvent::NoteExpression(note_expression) => Uuid::nil().to_string(),
+            TrackEvent::Sample(_) => Uuid::nil().to_string(),
+            TrackEvent::Measure(_) => Uuid::nil().to_string(),
+            TrackEvent::NoteExpression(note_expression) => note_expression.id(),
         }
     }
 
@@ -364,7 +364,7 @@ impl Track for TrackType {
                                    track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                    volume: f32,
                                    pan: f32,
-                                   vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         match self {
             TrackType::InstrumentTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info),
@@ -1146,7 +1146,7 @@ impl SampleData {
     }
 
     pub fn load_data(wav_file_name: String, sample_rate: i32) -> (i32, Vec<f32>) {
-        if let Ok(mut wav_file) = sndfile::OpenOptions::ReadOnly(ReadOptions::Auto).from_path(wav_file_name.as_str()) {
+        if let Ok(mut wav_file) = OpenOptions::ReadOnly(ReadOptions::Auto).from_path(wav_file_name.as_str()) {
             if let Ok(wav_data) = wav_file.read_all_to_vec() {
                 if wav_file.get_samplerate() != sample_rate as usize {
                     let resampled_data = convert(wav_file.get_samplerate() as u32, sample_rate as u32, 1, ConverterType::SincBestQuality, &wav_data).unwrap();
@@ -1897,7 +1897,7 @@ pub struct VstHost {
     plugin_uuid: String,
     instrument: bool,
     sender: Sender<AudioPluginHostOutwardEvent>,
-    vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+    vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ppq_pos: f64,
     sample_position: f64,
     tempo: f64,
@@ -1914,7 +1914,7 @@ impl VstHost {
         sender: Sender<AudioPluginHostOutwardEvent>,
         plugin_uuid: String,
         instrument: bool,
-        vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) -> VstHost {
         VstHost {
             shell_id,
@@ -2042,7 +2042,7 @@ impl Host for VstHost {
         }
     }
 
-    fn get_time_info(&self, _mask: i32) -> Option<vst::api::TimeInfo> {
+    fn get_time_info(&self, _mask: i32) -> Option<TimeInfo> {
         // debug!("Vst plugin asked host for time info.");
         let mut flags = 0;
         
@@ -2523,7 +2523,7 @@ pub struct BackgroundProcessorVst24AudioPlugin {
     xid: Option<u32>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
     editor: Option<Box<dyn Editor>>,
-    vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+    vst_host_time_info: Arc<RwLock<TimeInfo>>,
     sample_rate: f64,
 }
 
@@ -2637,7 +2637,7 @@ impl BackgroundProcessorVst24AudioPlugin {
         uuid: Uuid,
         sub_plugin_id: Option<String>,
         library_path: String,
-        vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) -> Self {
         let (tx_from_vst_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (host, mut vst_plugin_instance) = create_vst24_audio_plugin(
@@ -2934,7 +2934,7 @@ impl BackgroundProcessorClapAudioPlugin {
         }
     }
 
-    pub fn process_param_events(&self, events: &Vec<&PluginParameter>, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) {
+    pub fn process_param_events(&self, events: &Vec<&PluginParameter>, param_info: &ParamInfo) {
         let track_clap_events = DAWUtils::convert_param_events_with_timing_in_frames_to_clap(events, 0, param_info);
         let mut clap_input_events = self.process_data.input_events.events.lock();
         for event in track_clap_events {
@@ -3088,7 +3088,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
         self.xid = xid;
         if let Some(xid) = self.xid.as_ref() {
             let vst3host = Box::new(Vst3Host(self.track_uuid.clone(), self.daw_plugin_uuid.to_string(), self.instrument, self.tx_from_host.clone()));
-            ffi::showPluginEditor(
+            showPluginEditor(
                 self.daw_plugin_uuid.to_string(),
                 *xid,
                 vst3host,
@@ -3111,7 +3111,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
 
     fn get_window_size(&self) -> (i32, i32) {
         (
-            ffi::vst3_plugin_get_window_width(self.daw_plugin_uuid.to_string()) as i32,
+            vst3_plugin_get_window_width(self.daw_plugin_uuid.to_string()) as i32,
             ffi::vst3_plugin_get_window_height(self.daw_plugin_uuid.to_string()) as i32
         )
     }
@@ -3147,7 +3147,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
         let data_length = data.len() as u32;
         let bytes_written = ffi::vst3_plugin_get_preset(self.daw_plugin_uuid.to_string(), &mut data, data_length);
 
-        if (bytes_written > 0) {
+        if bytes_written > 0 {
             return base64::encode(&data[0..bytes_written as usize]);
         }
         "".to_string()
@@ -3244,12 +3244,12 @@ impl BackgroundProcessorVst3AudioPlugin {
     }
 
     pub fn process(&mut self, background_processor_buffer: &mut AudioBuffer<f32>) {
-        let (inputBuffer, mut outputBuffer) = background_processor_buffer.split();
-        let channel1InputBuffer = inputBuffer.get(0);
-        let channel2InputBuffer = inputBuffer.get(1);
-        let channel1OutputBuffer = outputBuffer.get_mut(0);
-        let channel2OutputBuffer = outputBuffer.get_mut(1);
-        ffi::vst3_plugin_process(self.daw_plugin_uuid.to_string(), channel1InputBuffer, channel2InputBuffer, channel1OutputBuffer, channel2OutputBuffer);
+        let (input_buffer, mut output_buffer) = background_processor_buffer.split();
+        let channel1input_buffer = input_buffer.get(0);
+        let channel2input_buffer = input_buffer.get(1);
+        let channel1output_buffer = output_buffer.get_mut(0);
+        let channel2output_buffer = output_buffer.get_mut(1);
+        ffi::vst3_plugin_process(self.daw_plugin_uuid.to_string(), channel1input_buffer, channel2input_buffer, channel1output_buffer, channel2output_buffer);
     }
 
     pub fn get_parameter_count(&self) -> i32 {
@@ -3481,7 +3481,7 @@ pub struct TrackBackgroundProcessorHelper {
     pub sample_current_frame: i32,
     pub sample_is_playing: bool,
     pub track_type: GeneralTrackType,
-    pub vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+    pub vst_host_time_info: Arc<RwLock<TimeInfo>>,
     pub track_events_inward_routings: HashMap<String, TrackEventRouting>,
     pub track_events_inward_consumers: HashMap<String, Consumer<TrackEvent>>,
     pub track_events_outward_routings: HashMap<String, TrackEventRouting>,
@@ -3506,7 +3506,7 @@ impl TrackBackgroundProcessorHelper {
                volume: f32,
                pan: f32,
                track_type: GeneralTrackType,
-               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+               vst_host_time_info: Arc<RwLock<TimeInfo>>,
                event_processor: Box<dyn TrackEventProcessor>,
     ) -> Self {
         Self {
@@ -4920,7 +4920,7 @@ impl InstrumentTrackBackgroundProcessor {
                             track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                             volume: f32,
                             pan: f32,
-                            vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("InstrumentTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -4996,7 +4996,7 @@ impl InstrumentTrackBackgroundProcessor {
                     track_background_processor_helper.process_plugin_events();
                     // track_background_processor_helper.process_plugin_audio(); - having problems with life times
 
-                    // couldn't push the following into a member method because of life time issues
+                    // couldn't push the following into a member method because of lifetime issues
                     let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * 1024) as f64  * 140.0 / (60.0 * 44100.0)) + 1.0;
                     let sample_position = (track_background_processor_helper.event_processor.block_index() * 1024) as f64;
 
@@ -5211,7 +5211,7 @@ impl AudioTrackBackgroundProcessor {
                             track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                             volume: f32,
                             pan: f32,
-                            vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("AudioTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5423,7 +5423,7 @@ impl MidiTrackBackgroundProcessor {
                             track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                             volume: f32,
                             pan: f32,
-                            vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("MidiTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5498,7 +5498,7 @@ pub trait Track {
                                    track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                    volume: f32,
                                    pan: f32,
-                                   vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>);
+                                   vst_host_time_info: Arc<RwLock<TimeInfo>>);
     fn volume(&self) -> f32;
     fn volume_mut(&mut self) -> f32;
     fn set_volume(&mut self, volume: f32); // 0.0 to 1.0
@@ -5702,7 +5702,7 @@ impl Track for InstrumentTrack {
                                    track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                    volume: f32,
                                    pan: f32,
-                                   vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         self.track_background_processor().start_processing(
             self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info);
@@ -5965,7 +5965,7 @@ impl Track for MidiTrack {
                                    track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                    volume: f32,
                                    pan: f32,
-                                   vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         self.track_background_processor().start_processing(
             self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info);
@@ -6165,7 +6165,7 @@ impl Track for AudioTrack {
         _track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
         _volume: f32,
         _pan: f32,
-        _vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+        _vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         // TODO implement
     }
@@ -7207,7 +7207,7 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
                                             if let Some(transistion_to_event_block) = transistion_to_event_blocks.get(self.block_index as usize) {
                                                 let mut start_processing = false;
                                                 for transition_event in transistion_to_event_block.iter() {
-                                                    // fast forward within block to measure boundary
+                                                    // fast-forward within block to measure boundary
                                                     if let TrackEvent::Measure(measure) = transition_event {
                                                         start_processing = true;
 
@@ -7750,7 +7750,7 @@ mod tests {
         let transition_automation = Automation::new();
         let mut transition_riffs: Vec<Riff> = vec![];
         let mut transition_riff_refs: Vec<RiffReference> = vec![];
-        let vst_host_time_info = Arc::new(parking_lot::RwLock::new(TimeInfo {
+        let vst_host_time_info = Arc::new(RwLock::new(TimeInfo {
             sample_pos: 0.0,
             sample_rate: 44100.0,
             nanoseconds: 0.0,

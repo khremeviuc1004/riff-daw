@@ -1,6 +1,7 @@
 use std::{sync::{Arc, Mutex}, vec::Vec};
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::MutexGuard;
 use cairo::{Context};
 use crossbeam_channel::Sender;
 use gtk::{DrawingArea, prelude::*};
@@ -1250,7 +1251,7 @@ impl MouseHandler for BeatGrid {
                         }
                     },
                     OperationModeType::Change => {
-                        if (control_key) {
+                        if control_key {
                             self.edit_drag_cycle = DragCycle::CtrlMouseReleased;
                             debug!("Mouse release: changed to EditDragCycle::CtrlMouseReleased");
                         }
@@ -2707,7 +2708,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                 }
                 // draw right length adjust handle if required
                 else if self.can_change_end &&
-                    mouse_pointer_x as f64 <= (x + width) &&
+                    mouse_pointer_x <= (x + width) &&
                     mouse_pointer_x >= (x + width - 5.0) &&
                     width >= 10.0 &&
                     mouse_pointer_y >= y &&
@@ -4297,7 +4298,7 @@ impl CustomPainter for TrackGridCustomPainter {
 
                                                 context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                 context.move_to(x_position, y_start);
-                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64) as f64));
+                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64)));
                                                 let _ = context.stroke();
                                             },
                                             TrackEvent::PitchBend(_pitch_bend) => (),
@@ -4333,7 +4334,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                         context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                         let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                         context.move_to(x_position, y_start);
-                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64) as f64));
+                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64)));
                                         let _ = context.stroke();
                                     },
                                     TrackEvent::PitchBend(_pitch_bend) => (),
@@ -4664,7 +4665,7 @@ impl CustomPainter for RiffGridCustomPainter {
 
                                                     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                                                     context.move_to(x_position, y_start);
-                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64) as f64));
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (controller.value() as f64)));
                                                     let _ = context.stroke();
                                                 },
                                                 TrackEvent::PitchBend(_pitch_bend) => (),
@@ -4873,6 +4874,52 @@ impl AutomationCustomPainter {
         if !automation_discrete {
             *previous_point_x = x;
             *previous_point_y = y;
+        }
+    }
+
+    fn draw_riff_set_riff_refs(
+        context: &Context, height: f64,
+        entity_height_in_pixels: f64,
+        beat_width_in_pixels: f64,
+        zoom_horizontal: f64,
+        state: &MutexGuard<DAWState>,
+        adjusted_beat_width_in_pixels: f64,
+        track_uuid: &String,
+        track: &&TrackType,
+        running_position: &mut f64,
+        riff_set_uuid: String
+    ) {
+        if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
+            let mut riff_lengths = vec![];
+            let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, 4.0, None);
+
+            // get the number of repeats
+            for track in state.project().song().tracks().iter() {
+                // get the riff_ref
+                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                    // get the riff
+                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                        riff_lengths.push(riff.length() as i32);
+
+                        if track_uuid.to_string() == track.uuid().to_string() {
+                            riff_to_draw = riff.clone();
+                        }
+                    }
+                }
+            }
+
+            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+
+            let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
+
+            // draw the riff reference x number of times
+            for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
+                riff_to_draw.set_position(*running_position);
+                if riff_to_draw.name() != "empty" {
+                    Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
+                }
+                *running_position += riff_to_draw.length();
+            }
         }
     }
 }
@@ -5177,44 +5224,68 @@ impl CustomPainter for AutomationCustomPainter {
                                             // instantiate and pack new riffs to represent the riff ref and the underlying riff all packed into one.
                                             match item.item_type() {
                                                 RiffItemType::RiffSet => {
-                                                    if let Some(riff_set) = state.project().song().riff_set(item.item_uuid().to_string()) {
-                                                        let mut riff_lengths = vec![];
-                                                        let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, 4.0, None);
-
-                                                        // get the number of repeats
-                                                        for track in state.project().song().tracks().iter() {
-                                                            // get the riff_ref
-                                                            if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                                                                // get the riff
-                                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                                                                    riff_lengths.push(riff.length() as i32);
-
-                                                                    if track_uuid == track.uuid().to_string() {
-                                                                        riff_to_draw = riff.clone();
+                                                    Self::draw_riff_set_riff_refs(
+                                                        context,
+                                                        height,
+                                                        entity_height_in_pixels,
+                                                        beat_width_in_pixels,
+                                                        zoom_horizontal,
+                                                        &state,
+                                                        adjusted_beat_width_in_pixels,
+                                                        &track_uuid,
+                                                        &track,
+                                                        &mut running_position,
+                                                        item.item_uuid().to_string());
+                                                }
+                                                RiffItemType::RiffSequence => {
+                                                    if let Some(riff_sequence) = state.project().song().riff_sequence(item.item_uuid().to_string()) {
+                                                        for riff_set in riff_sequence.riff_sets().iter() {
+                                                            Self::draw_riff_set_riff_refs(
+                                                                context,
+                                                                height,
+                                                                entity_height_in_pixels,
+                                                                beat_width_in_pixels,
+                                                                zoom_horizontal,
+                                                                &state,
+                                                                adjusted_beat_width_in_pixels,
+                                                                &track_uuid,
+                                                                &track,
+                                                                &mut running_position,
+                                                                riff_set.item_uuid().to_string());
+                                                        }
+                                                    }
+                                                }
+                                                RiffItemType::RiffGrid => {
+                                                    if let Some(riff_grid) = state.project().song().riff_grid(item.item_uuid().to_string()) {
+                                                        let mut riff_grid_length = 0.0;
+                                                        for track_uuid in riff_grid.tracks() {
+                                                            if let Some(track) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
+                                                                if let Some(riff_refs) = riff_grid.track_riff_references(track_uuid.clone()) {
+                                                                    for riff_ref in riff_refs.iter() {
+                                                                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                                            let max_rightward_position = riff_ref.position() + riff.length();
+                                                                            if max_rightward_position > riff_grid_length {
+                                                                                riff_grid_length = max_rightward_position;
+                                                                            }
+                                                                        }
                                                                     }
                                                                 }
                                                             }
                                                         }
-
-                                                        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-
-                                                        let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
-
-                                                        // draw the riff reference x number of times
-                                                        for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
-                                                            riff_to_draw.set_position(running_position);
-                                                            if riff_to_draw.name() != "empty" {
-                                                                Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
+                                                        if let Some(riff_refs) = riff_grid.track_riff_references(track_uuid.clone()) {
+                                                            for riff_ref in riff_refs.iter() {
+                                                                // get the riff
+                                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                                    let mut riff_to_draw = riff.clone();
+                                                                    riff_to_draw.set_position(running_position + riff_ref.position());
+                                                                    if riff_to_draw.name() != "empty" {
+                                                                        Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
+                                                                    }
+                                                                }
                                                             }
-                                                            running_position += riff_to_draw.length();
                                                         }
+                                                        running_position += riff_grid_length;
                                                     }
-                                                }
-                                                RiffItemType::RiffSequence => {
-
-                                                }
-                                                RiffItemType::RiffGrid => {
-
                                                 }
                                             }
                                         }
@@ -5405,7 +5476,7 @@ impl CustomPainter for AutomationCustomPainter {
                                             if let TrackEvent::NoteExpression(note_expression) = track_event {
                                                 if note_expression_type as i32 == *(note_expression.expression_type()) as i32 && (note_expression_note_id == -1 || note_expression_note_id == note_expression.note_id())  {
                                                     let note_expression_value = note_expression.value();
-                                                    let note_y_pos_inverted = note_expression_value as f64 * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                    let note_y_pos_inverted = note_expression_value * 127.0 *  adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
                                                     let x = note_expression.position() * adjusted_beat_width_in_pixels;
                                                     let y = height - note_y_pos_inverted;
 

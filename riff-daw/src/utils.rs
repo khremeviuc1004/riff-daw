@@ -620,7 +620,7 @@ impl DAWUtils {
         for event in daw_events.iter() {
             match event {
                 TrackEvent::Note(_note) => {
-                    // can't use notes in the background processor because the duration may be outside of the block
+                    // can't use notes in the background processor because the duration may be outside the block
                 }
                 TrackEvent::NoteOn(note_on) => {
                     let note_on = MidiEvent {
@@ -708,7 +708,7 @@ impl DAWUtils {
         for event in daw_events.iter() {
             match event {
                 TrackEvent::Note(_note) => {
-                    // can't use notes in the background processor because the duration may be outside of the block
+                    // can't use notes in the background processor because the duration may be outside the block
                 }
                 TrackEvent::NoteOn(note_on) => {
                     let note_on_clap_event = clap_event_note {

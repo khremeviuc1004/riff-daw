@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::{AsyncClient, Client, ClientOptions, PortFlags};
 use log::*;
+use parking_lot::RwLock;
 use rb::{RB, RbConsumer, SpscRb};
 use serde::{Deserialize, Serialize};
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
@@ -191,7 +192,7 @@ impl DAWState {
                             path: &str,
                             tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                             track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                            vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         self.current_file_path = Some(path.to_string());
         let json_text = std::fs::read_to_string(path).unwrap();
@@ -307,7 +308,7 @@ impl DAWState {
         track_type: &mut TrackType,
         sample_references: Option<&HashMap<String, String>>,
         samples_data: Option<&HashMap<String, SampleData>>,
-        vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         let (tx_to_vst, rx_to_vst) = channel::<TrackBackgroundProcessorInwardEvent>();
         let tx_to_vst_ref = tx_to_vst.clone();
@@ -464,7 +465,7 @@ impl DAWState {
                                                      tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                                                      track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                                      track_uuid: String,
-                                                     vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                                                     vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         let (tx_to_vst, rx_to_vst) = channel::<TrackBackgroundProcessorInwardEvent>();
         let (tx_from_vst, rx_from_vst) = channel::<TrackBackgroundProcessorOutwardEvent>();
@@ -2183,7 +2184,7 @@ impl DAWState {
         jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
         jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-        vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
@@ -2206,7 +2207,7 @@ impl DAWState {
                         jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                         jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                        vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
         if self.jack_client.len() == 1 {
             let async_client = self.jack_client.remove(0_usize);
@@ -2311,13 +2312,13 @@ impl DAWState {
                         for (_track_uuid, track_audio_consumer_details) in track_render_audio_consumers.iter() {
                             if let Some(blocks_read) = track_audio_consumer_details.consumer().read_blocking(&mut audio_blocks) {
                                 // debug!("State.export_to_wave_file: track_uuid={}, channel=left, byes_read={}", track_uuid.as_str(), left_bytes_read);
-                                // copy the track channel data to the the master channels
+                                // copy the track channel data to the master channels
                                 if blocks_read == 1 {
                                     let audio_block = audio_blocks.get(0).unwrap();
-                                    for index in 0..1024_usize as usize {
+                                    for index in 0..1024_usize {
                                         master_left_channel_data[index] += audio_block.audio_data_left[index] / number_of_audio_type_tracks;
                                     }
-                                    for index in 0..1024_usize as usize {
+                                    for index in 0..1024_usize {
                                         master_right_channel_data[index] += audio_block.audio_data_right[index] / number_of_audio_type_tracks;
                                     }
                                 }

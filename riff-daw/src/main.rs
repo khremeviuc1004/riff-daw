@@ -91,7 +91,7 @@ fn main() {
     };
 
     // VST2 timing
-    let vst_host_time_info = Arc::new(parking_lot::RwLock::new(TimeInfo {
+    let vst_host_time_info = Arc::new(RwLock::new(TimeInfo {
         sample_pos: 0.0,
         sample_rate: 44100.0,
         nanoseconds: 0.0,
@@ -337,7 +337,7 @@ fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
                                 gui_ref: &mut MainWindow,
                                 tx_from_ui: Sender<DAWEvents>,
                                 state_arc: Arc<Mutex<DAWState>>,
-                                vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                                vst_host_time_info: Arc<RwLock<TimeInfo>>,
 ) {
     match state_arc.lock() {
         Ok(state) => {
@@ -384,7 +384,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                               rx_from_ui: Receiver<DAWEvents>,
                               state: &mut Arc<Mutex<DAWState>>,
                               tx_to_audio: Sender<AudioLayerInwardEvent>,
-                              vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                              vst_host_time_info: Arc<RwLock<TimeInfo>>,
 ) {
     match rx_from_ui.try_recv() {
         Ok(event) => match event {
@@ -1657,7 +1657,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     gui.ui.track_drawing_area.queue_draw();
                                     gui.ui.piano_roll_drawing_area.queue_draw();
                                     gui.ui.automation_drawing_area.queue_draw();
-                                    for _ in 0..(daw_events_to_propagate.len()) {
+                                    for _ in 0..daw_events_to_propagate.len() {
                                         let event = daw_events_to_propagate.remove(0);
                                         let _ = tx_from_ui.send(event);
                                     }
@@ -1860,7 +1860,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let action = RiffDelete::new(riff_uuid, track_uuid);
                                 match history.apply(&mut state, Box::new(action)) {
                                     Ok(mut daw_events_to_propagate) => {
-                                        for _ in 0..(daw_events_to_propagate.len()) {
+                                        for _ in 0..daw_events_to_propagate.len() {
                                             let event = daw_events_to_propagate.remove(0);
                                             let _ = tx_from_ui.send(event);
                                         }
@@ -5275,7 +5275,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
 
-                        let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                        let time_in_secs = play_position_in_frames / sample_rate;
                         let minutes = time_in_secs as i32 / 60;
                         let seconds = time_in_secs as i32 % 60;
                         let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
@@ -9494,7 +9494,7 @@ fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_
                 events.retain(|event| {
                     match event {
                         TrackEvent::NoteExpression(note_expression) => {
-                            !(selected.contains(&note_expression.id()))
+                            !selected.contains(&note_expression.id())
                         },
                         _ => true,
                     }
@@ -10004,7 +10004,7 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_be
             events.retain(|event| {
                 match event {
                     TrackEvent::PitchBend(pitch_bend) => {
-                        !(selected.contains(&pitch_bend.id()))
+                        !selected.contains(&pitch_bend.id())
                     }
                     _ => true,
                 }
@@ -14597,7 +14597,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        jack_time_critical_midi_sender: &Sender<AudioLayerTimeCriticalOutwardEvent>,
                        jack_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                        gui: &mut MainWindow,
-                       vst_host_time_info: &Arc<parking_lot::RwLock<TimeInfo>>,
+                       vst_host_time_info: &Arc<RwLock<TimeInfo>>,
 ) {
     match jack_midi_receiver.try_recv() {
         Ok(audio_layer_outward_event) => {

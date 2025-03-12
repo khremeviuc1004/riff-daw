@@ -9,7 +9,7 @@ use vst::api::{TimeInfo, TimeInfoFlags};
 use vst::event::MidiEvent;
 
 use log::*;
-
+use parking_lot::RwLock;
 use crate::domain::{AudioBlock, TRANSPORT};
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 use crate::event::AudioLayerTimeCriticalOutwardEvent;
@@ -240,7 +240,7 @@ pub struct Audio {
     keep_alive: bool,
     preview_sample: Option<SampleData>,
     preview_sample_current_frame: i32,
-    vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+    vst_host_time_info: Arc<RwLock<TimeInfo>>,
 }
 
 impl Audio {
@@ -250,7 +250,7 @@ impl Audio {
                jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-               vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+               vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
         let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
@@ -305,7 +305,7 @@ impl Audio {
                               coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                               audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
-                              vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+                              vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
         let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();

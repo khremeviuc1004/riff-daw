@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, RiffReference, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost};
 use crate::state::{MidiPolyphonicExpressionNoteId};
 
 #[derive(Clone)]

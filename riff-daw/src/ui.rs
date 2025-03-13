@@ -8685,16 +8685,16 @@ impl MainWindow {
         // populate the riff_sequence_combobox
         if let Some(combobox_riff_sequences_data) = riff_sequences_data {
             let riff_sequence_combobox: ComboBoxText = riff_arrangement_blade.riff_sequence_combobox.clone();
-            for (riff_sequence_uuid, riff_sequence_name) in combobox_riff_sequences_data {
-                riff_sequence_combobox.append(Some(riff_sequence_uuid.as_str()), riff_sequence_name.as_str());
+            for (index, (riff_sequence_uuid, riff_sequence_name)) in combobox_riff_sequences_data.iter().enumerate() {
+                riff_sequence_combobox.append(Some(riff_sequence_uuid.as_str()), format!("{}. {}", index + 1, riff_sequence_name.as_str()).as_str());
             }
         }
         else {
             match state_arc.lock() {
                 Ok(state) => {
                     let riff_sequence_combobox: ComboBoxText = riff_arrangement_blade.riff_sequence_combobox.clone();
-                    for riff_sequence in state.project().song().riff_sequences().iter() {
-                        riff_sequence_combobox.append(Some(riff_sequence.uuid().as_str()), riff_sequence.name());
+                    for (index, riff_sequence) in state.project().song().riff_sequences().iter().enumerate() {
+                        riff_sequence_combobox.append(Some(riff_sequence.uuid().as_str()), format!("{}. {}", index + 1, riff_sequence.name()).as_str());
                     }
                 }
                 Err(error) => {
@@ -8706,16 +8706,16 @@ impl MainWindow {
         // populate the riff_grid_combobox
         if let Some(combobox_riff_grids_data) = riff_grids_data {
             let riff_grid_combobox: ComboBoxText = riff_arrangement_blade.riff_grid_combobox.clone();
-            for (riff_grid_uuid, riff_grid_name) in combobox_riff_grids_data {
-                riff_grid_combobox.append(Some(riff_grid_uuid.as_str()), riff_grid_name.as_str());
+            for (index, (riff_grid_uuid, riff_grid_name)) in combobox_riff_grids_data.iter().enumerate() {
+                riff_grid_combobox.append(Some(riff_grid_uuid.as_str()), format!("{}. {}", index + 1, riff_grid_name.as_str()).as_str());
             }
         }
         else {
             match state_arc.lock() {
                 Ok(state) => {
                     let riff_grid_combobox: ComboBoxText = riff_arrangement_blade.riff_grid_combobox.clone();
-                    for riff_grid in state.project().song().riff_grids().iter() {
-                        riff_grid_combobox.append(Some(riff_grid.uuid().as_str()), riff_grid.name());
+                    for (index, riff_grid) in state.project().song().riff_grids().iter().enumerate() {
+                        riff_grid_combobox.append(Some(riff_grid.uuid().as_str()), format!("{}. {}", index + 1, riff_grid.name()).as_str());
                     }
                 }
                 Err(error) => {
@@ -10165,14 +10165,22 @@ impl MainWindow {
         if let Some(blade_child) = blade.child() {
             if let Some(blade_box) = blade_child.dynamic_cast_ref::<Box>() {
                 if let Some(blade_box_child) = blade_box.children().get(0) {
-                    if let Some(blade_box_grid) = blade_box_child.dynamic_cast_ref::<Grid>() {
-                        for child in blade_box_grid.children().iter() {
-                            if child.widget_name() == combo_box_widget_name {
-                                if let Some(item_combobox) = child.dynamic_cast_ref::<ComboBoxText>() {
-                                    let item_combobox: &ComboBoxText = item_combobox;
-                                    item_combobox.remove_all();
-                                    for (index, (uuid, name)) in items.iter().enumerate() {
-                                        item_combobox.append(Some(uuid), format!("{} {}", index + 1, name).as_str());
+                    if let Some(blade_top_scrolled_window) = blade_box_child.dynamic_cast_ref::<ScrolledWindow>() {
+                        if let Some(blade_top_scrolled_window_view_port_widget) = blade_top_scrolled_window.child() {
+                            if let Some(blade_top_scrolled_window_view_port) = blade_top_scrolled_window_view_port_widget.dynamic_cast_ref::<Viewport>() {
+                                if let Some(blade_box_grid_widget) = blade_top_scrolled_window_view_port.child() {
+                                    if let Some(blade_box_grid) = blade_box_grid_widget.dynamic_cast_ref::<Grid>() {
+                                        for child in blade_box_grid.children().iter() {
+                                            if child.widget_name() == combo_box_widget_name {
+                                                if let Some(item_combobox) = child.dynamic_cast_ref::<ComboBoxText>() {
+                                                    let item_combobox: &ComboBoxText = item_combobox;
+                                                    item_combobox.remove_all();
+                                                    for (index, (uuid, name)) in items.iter().enumerate() {
+                                                        item_combobox.append(Some(uuid), format!("{}. {}", index + 1, name).as_str());
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

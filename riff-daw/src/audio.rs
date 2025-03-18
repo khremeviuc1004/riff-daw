@@ -202,8 +202,6 @@ impl NotificationHandler for JackNotificationHandler {
 }
 
 pub struct Audio {
-    audio_buffer_right: [f32; 1024],
-    audio_buffer_left: [f32; 1024],
     audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
     audio_block_pool: Vec<AudioBlock>,
     block_number_buffer: BTreeMap<i32, BTreeMap<i32, AudioBlock>>,
@@ -251,12 +249,14 @@ impl Audio {
                jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
                coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                vst_host_time_info: Arc<RwLock<TimeInfo>>,
+               sample_rate_in_frames: i32,
+               block_size: i32,
+               tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
         let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
+
         Audio {
-            audio_buffer_right: [0.0f32; 1024],
-            audio_buffer_left: [0.0f32; 1024],
             audio_blocks: vec![],
             audio_block_pool,
             block_number_buffer: BTreeMap::new(),
@@ -275,10 +275,10 @@ impl Audio {
             block: -1,
             blocks_total: 0,
             play_position_in_frames: 0,
-            sample_rate_in_frames: 44100.0,
-            tempo: 140.0,
-            block_size: 1024.0,
-            frames_per_beat: Audio::frames_per_beat_calc(44100.0, 140.0),
+            sample_rate_in_frames: sample_rate_in_frames as f64,
+            tempo,
+            block_size: block_size as f64,
+            frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
             low_priority_processing_delay_counter: 0,
             process_producers: true,
             master_volume: 1.0,
@@ -306,12 +306,14 @@ impl Audio {
                               audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
                               midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
                               vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                              sample_rate_in_frames: i32,
+                              block_size: i32,
+                              tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
         let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
+
         Audio {
-            audio_buffer_right: [0.0f32; 1024],
-            audio_buffer_left: [0.0f32; 1024],
             audio_blocks: vec![],
             audio_block_pool,
             block_number_buffer: BTreeMap::new(),
@@ -330,10 +332,10 @@ impl Audio {
             block: -1,
             blocks_total: 0,
             play_position_in_frames: 0,
-            sample_rate_in_frames: 44100.0,
-            tempo: 140.0,
-            block_size: 1024.0,
-            frames_per_beat: Audio::frames_per_beat_calc(44100.0, 140.0),
+            sample_rate_in_frames: sample_rate_in_frames as f64,
+            tempo,
+            block_size: block_size as f64,
+            frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
             low_priority_processing_delay_counter: 0,
             process_producers: true,
             master_volume: 1.0,

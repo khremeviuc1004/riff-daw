@@ -365,11 +365,28 @@ impl Track for TrackType {
                                    volume: f32,
                                    pan: f32,
                                    vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                                   sample_rate: f64,
+                                   block_size: f64,
+                                   tempo: f64,
+                                   time_signature_numerator: i32,
+                                   time_signature_denominator: i32,
     ) {
         match self {
-            TrackType::InstrumentTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info),
-            TrackType::AudioTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info),
-            TrackType::MidiTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info),
+            TrackType::InstrumentTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+                                                                                   block_size,
+                                                                                   tempo,
+                                                                                   time_signature_numerator,
+                                                                                   time_signature_denominator),
+            TrackType::AudioTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+                                                                              block_size,
+                                                                              tempo,
+                                                                              time_signature_numerator,
+                                                                              time_signature_denominator),
+            TrackType::MidiTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+                                                                             block_size,
+                                                                             tempo,
+                                                                             time_signature_numerator,
+                                                                             time_signature_denominator),
         }
     }
 
@@ -1901,6 +1918,8 @@ pub struct VstHost {
     ppq_pos: f64,
     sample_position: f64,
     tempo: f64,
+    time_signature_numerator: u32,
+    time_signature_denominator: u32,
     track_event_outward_routings: HashMap<String, TrackEventRouting>,
     track_event_outward_ring_buffers: HashMap<String, SpscRb<TrackEvent>>,
     track_event_outward_producers: HashMap<String, Producer<TrackEvent>>,
@@ -1915,6 +1934,9 @@ impl VstHost {
         plugin_uuid: String,
         instrument: bool,
         vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        tempo: f64,
+        time_signature_numerator: u32,
+        time_signature_denominator: u32,
     ) -> VstHost {
         VstHost {
             shell_id,
@@ -1925,7 +1947,9 @@ impl VstHost {
             vst_host_time_info,
             ppq_pos: 0.0,
             sample_position: 0.0,
-            tempo: 140.0,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
             track_event_outward_routings: HashMap::new(),
             track_event_outward_ring_buffers: HashMap::new(),
             track_event_outward_producers: HashMap::new(),
@@ -1986,6 +2010,14 @@ impl VstHost {
 
     pub fn tempo(&self) -> f64 {
         self.tempo
+    }
+
+    pub fn set_time_signature_numerator(&mut self, time_signature_numerator: u32) {
+        self.time_signature_numerator = time_signature_numerator;
+    }
+
+    pub fn set_time_signature_denominator(&mut self, time_signature_denominator: u32) {
+        self.time_signature_denominator = time_signature_denominator;
     }
 }
 
@@ -2058,15 +2090,15 @@ impl Host for VstHost {
 
         let time_info = TimeInfo {
             sample_pos: self.sample_position,
-            sample_rate: 44100.0,
+            sample_rate: self.vst_host_time_info.read().sample_rate,
             nanoseconds: 0.0,
             ppq_pos: self.ppq_pos,
-            tempo: self.tempo,
+            tempo: self.vst_host_time_info.read().tempo,
             bar_start_pos: bar as f64 + beat_in_bar as f64,
             cycle_start_pos: 0.0,
             cycle_end_pos: 0.0,
-            time_sig_numerator: 4,
-            time_sig_denominator: 4,
+            time_sig_numerator: self.vst_host_time_info.read().time_sig_numerator,
+            time_sig_denominator: self.vst_host_time_info.read().time_sig_denominator,
             smpte_offset: 0,
             smpte_frame_rate: vst::api::SmpteFrameRate::Smpte24fps,
             samples_to_next_clock: 0,
@@ -2267,6 +2299,7 @@ pub trait BackgroundProcessorAudioPlugin {
 
     fn sample_rate(&self) -> f64;
     fn set_sample_rate(&mut self, sample_rate: f64);
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32);
 }
 pub enum BackgroundProcessorAudioPluginType {
     Vst24(BackgroundProcessorVst24AudioPlugin),
@@ -2512,6 +2545,20 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             }
         }
     }
+
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                vst24_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
+            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
+            }
+        }
+    }
 }
 
 #[derive()]
@@ -2628,6 +2675,13 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
         self.sample_rate = sample_rate;
         self.vst_plugin_instance_mut().set_sample_rate(sample_rate as f32);
     }
+
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        if let Ok(mut host) = self.host().lock() {
+            host.set_time_signature_numerator(time_signature_numerator);
+            host.set_time_signature_denominator(time_signature_denominator);
+        }
+    }
 }
 
 impl BackgroundProcessorVst24AudioPlugin {
@@ -2638,6 +2692,11 @@ impl BackgroundProcessorVst24AudioPlugin {
         sub_plugin_id: Option<String>,
         library_path: String,
         vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        sample_rate: f64,
+        block_size: i64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
     ) -> Self {
         let (tx_from_vst_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (host, mut vst_plugin_instance) = create_vst24_audio_plugin(
@@ -2649,10 +2708,15 @@ impl BackgroundProcessorVst24AudioPlugin {
             tx_from_vst_host,
             false,
             vst_host_time_info.clone(),
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
         );
         let midi_sender = SendEventBuffer::new(1);
-        vst_plugin_instance.set_sample_rate(44100.0);
-        vst_plugin_instance.set_block_size(1024);
+        vst_plugin_instance.set_sample_rate(sample_rate as f32);
+        vst_plugin_instance.set_block_size(block_size);
         // let vst_editor = vst_plugin_instance.get_editor();
         Self {
             uuid,
@@ -2841,11 +2905,11 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 
     fn set_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
+        self.process_data.config.tempo = tempo;
+        self.process_data.transport_info.tempo = tempo;
     }
 
     fn preset_data(&mut self) -> String {
-        
-        
         use simple_clap_host_helper_lib::plugin::ext::state::State;
         if let Some(plugin_state) = self.plugin.get_extension::<State>() {
             if let Ok(preset_data) = plugin_state.save(&self.plugin) {
@@ -2890,6 +2954,11 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
     }
+
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        self.process_data.config.time_sig_numerator = time_signature_numerator as u16;
+        self.process_data.config.time_sig_denominator = time_signature_denominator as u16;
+    }
 }
 
 impl BackgroundProcessorClapAudioPlugin {
@@ -2899,6 +2968,11 @@ impl BackgroundProcessorClapAudioPlugin {
         uuid: Uuid,
         sub_plugin_id: Option<String>,
         library_path: String,
+        sample_rate: f64,
+        block_size: i64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
     ) -> Self {
         let (tx_from_clap_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (plugin, process_data, host_receiver) = create_clap_audio_plugin(
@@ -2909,6 +2983,11 @@ impl BackgroundProcessorClapAudioPlugin {
             sub_plugin_id, 
             tx_from_clap_host.clone(),
             false,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
         );
         Self {
             track_uuid,
@@ -2919,8 +2998,8 @@ impl BackgroundProcessorClapAudioPlugin {
             plugin, 
             process_data,
             host_receiver,
-            tempo: 140.0,
-            sample_rate: 44100.0,
+            tempo,
+            sample_rate,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
         }
@@ -3125,7 +3204,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
     }
 
     fn set_tempo(&mut self, tempo: f64) {
-        // todo!()
+        ffi::vst3_plugin_change_tempo(self.daw_plugin_uuid.to_string(), tempo);
     }
 
     fn tempo(&self) -> f64 {
@@ -3167,6 +3246,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
     fn set_sample_rate(&mut self, sample_rate: f64) {
         // todo!()
     }
+
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        ffi::vst3_plugin_change_time_signature(self.daw_plugin_uuid.to_string(), time_signature_numerator, time_signature_denominator);
+    }
 }
 
 impl BackgroundProcessorVst3AudioPlugin {
@@ -3176,6 +3259,11 @@ impl BackgroundProcessorVst3AudioPlugin {
         vst3_plugin_uid: String,
         library_path: String,
         instrument: bool,
+        sample_rate: f64,
+        block_size: i64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
     ) -> Self {
         let (tx_from_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let vst3host = Box::new(Vst3Host(track_uuid.clone(), daw_plugin_uuid.to_string(), instrument, tx_from_host.clone()));
@@ -3184,6 +3272,11 @@ impl BackgroundProcessorVst3AudioPlugin {
             daw_plugin_uuid.to_string(),
             vst3_plugin_uid.clone(),
             vst3host,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
         );
         Self {
             track_uuid: track_uuid.clone(),
@@ -3495,6 +3588,12 @@ pub struct TrackBackgroundProcessorHelper {
     pub audio_outward_producers: HashMap<String, (Producer<f32>, Producer<f32>)>,
 
     pub event_processor: Box<dyn TrackEventProcessor>,
+
+    pub sample_rate: f64,
+    pub block_size: f64,
+    pub tempo: f64,
+    pub time_signature_numerator: i32,
+    pub time_signature_denominator: i32,
 }
 
 impl TrackBackgroundProcessorHelper {
@@ -3508,6 +3607,11 @@ impl TrackBackgroundProcessorHelper {
                track_type: GeneralTrackType,
                vst_host_time_info: Arc<RwLock<TimeInfo>>,
                event_processor: Box<dyn TrackEventProcessor>,
+               sample_rate: f64,
+               block_size: f64,
+               tempo: f64,
+               time_signature_numerator: i32,
+               time_signature_denominator: i32,
     ) -> Self {
         Self {
             track_uuid,
@@ -3548,7 +3652,13 @@ impl TrackBackgroundProcessorHelper {
             audio_outward_ring_buffers: HashMap::new(),
             audio_outward_producers: HashMap::new(),
 
-            event_processor
+            event_processor,
+
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
         }
     }
 
@@ -3671,6 +3781,11 @@ impl TrackBackgroundProcessorHelper {
                             sub_plugin_id,
                             library_path,
                             self.vst_host_time_info.clone(),
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
 
                         BackgroundProcessorAudioPluginType::Vst24(vst_plugin_instance)
@@ -3681,7 +3796,12 @@ impl TrackBackgroundProcessorHelper {
                             self.track_uuid.clone(), 
                             uuid, 
                             sub_plugin_id, 
-                            library_path
+                            library_path,
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
@@ -3698,6 +3818,11 @@ impl TrackBackgroundProcessorHelper {
                             vst_plugin_uid,
                             library_path,
                             false,
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
                         BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
                     };
@@ -3746,6 +3871,11 @@ impl TrackBackgroundProcessorHelper {
                             sub_plugin_id,
                             library_path,
                             self.vst_host_time_info.clone(),
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
                         let instrument_name = vst_plugin_instance.vst_plugin_instance.get_info().name;
                         match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
@@ -3761,7 +3891,12 @@ impl TrackBackgroundProcessorHelper {
                             self.track_uuid.clone(), 
                             uuid, 
                             sub_plugin_id, 
-                            library_path
+                            library_path,
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
@@ -3778,6 +3913,11 @@ impl TrackBackgroundProcessorHelper {
                             vst_plugin_uid,
                             library_path,
                             true,
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
                         );
                         let instrument_name = vst3_plugin.name();
                         match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
@@ -3974,6 +4114,14 @@ impl TrackBackgroundProcessorHelper {
                     }
                     for effect in self.effect_plugin_instances.iter_mut() {
                         effect.set_tempo(tempo);
+                    }
+                }
+                TrackBackgroundProcessorInwardEvent::TimeSignatureChange(numerator, denominator) => {
+                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.set_time_signature(numerator, denominator);
+                    }
+                    for effect in self.effect_plugin_instances.iter_mut() {
+                        effect.set_time_signature(numerator, denominator);
                     }
                 }
                 TrackBackgroundProcessorInwardEvent::AddTrackEventSendRouting(track_event_routing, ring_buffer, producer) => {
@@ -4901,26 +5049,49 @@ impl Default for AudioBlock {
     }
 }
 
+pub trait TrackBackgroundProcessor {
+    fn start_processing(&self,
+                        track_uuid: String,
+                        tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                        rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+                        tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        volume: f32,
+                        pan: f32,
+                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                        sample_rate: f64,
+                        block_size: f64,
+                        tempo: f64,
+                        time_signature_numerator: i32,
+                        time_signature_denominator: i32,
+    );
+}
+
 #[derive(Default)]
-pub struct InstrumentTrackBackgroundProcessor{
+pub struct InstrumentTrackBackgroundProcessor {
 }
 
 impl InstrumentTrackBackgroundProcessor {
-
     pub fn new() -> Self {
-        InstrumentTrackBackgroundProcessor {
-        }
+        InstrumentTrackBackgroundProcessor {}
     }
+}
 
-    pub fn start_processing(&self,
-                            track_uuid: String,
-                            tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                            rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                            tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                            track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                            volume: f32,
-                            pan: f32,
-                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
+impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
+    fn start_processing(&self,
+                        track_uuid: String,
+                        tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                        rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+                        tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        volume: f32,
+                        pan: f32,
+                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                        sample_rate: f64,
+                        block_size: f64,
+                        tempo: f64,
+                        time_signature_numerator: i32,
+                        time_signature_denominator: i32,
     ) {
         match ThreadBuilder::default()
             .name(format!("InstrumentTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -4931,6 +5102,8 @@ impl InstrumentTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
+                let mut sample_rate = sample_rate;
+                let mut tempo = tempo;
                 const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
@@ -4959,14 +5132,19 @@ impl InstrumentTrackBackgroundProcessor {
                     TrackBackgroundProcessorHelper::new(
                         track_uuid.clone(),
                         tx_audio.clone(),
-                        rx_vst_thread,
-                        tx_vst_thread.clone(),
+                        rx_track_background_thread,
+                        tx_track_background_thread.clone(),
                         track_thread_coast.clone(),
                         volume,
                         pan,
                         GeneralTrackType::InstrumentTrack,
                         vst_host_time_info,
-                        Box::new(RiffBufferTrackEventProcessor::new(BLOCK_SIZE as f64))
+                        Box::new(RiffBufferTrackEventProcessor::new(block_size as f64)),
+                        sample_rate,
+                        block_size,
+                        tempo,
+                        time_signature_numerator,
+                        time_signature_denominator,
                     );
 
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
@@ -4997,8 +5175,8 @@ impl InstrumentTrackBackgroundProcessor {
                     // track_background_processor_helper.process_plugin_audio(); - having problems with life times
 
                     // couldn't push the following into a member method because of lifetime issues
-                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * 1024) as f64  * 140.0 / (60.0 * 44100.0)) + 1.0;
-                    let sample_position = (track_background_processor_helper.event_processor.block_index() * 1024) as f64;
+                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (BLOCK_SIZE as i32)) as f64  * tempo / (60.0 * sample_rate)) + 1.0;
+                    let sample_position = (track_background_processor_helper.event_processor.block_index() * (BLOCK_SIZE as i32)) as f64;
 
                     if let Some(instrument_plugin) = track_background_processor_helper.instrument_plugin_instances.get_mut(0) {
                         match instrument_plugin {
@@ -5177,7 +5355,7 @@ impl InstrumentTrackBackgroundProcessor {
                         }
 
                         // might be a good idea to do this every x number of blocks
-                        let _ = tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
+                        let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
                     else if mode == TrackBackgroundProcessorMode::Coast {
                         thread::sleep(Duration::from_millis(100));
@@ -5202,16 +5380,23 @@ impl AudioTrackBackgroundProcessor {
         Self {
         }
     }
+}
 
-    pub fn start_processing(&self,
-                            track_uuid: String,
-                            tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                            rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                            tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                            track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                            volume: f32,
-                            pan: f32,
-                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
+impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
+    fn start_processing(&self,
+                        track_uuid: String,
+                        tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                        rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+                        tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        volume: f32,
+                        pan: f32,
+                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                        sample_rate: f64,
+                        block_size: f64,
+                        tempo: f64,
+                        time_signature_numerator: i32,
+                        time_signature_denominator: i32,
     ) {
         match ThreadBuilder::default()
             .name(format!("AudioTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5246,14 +5431,19 @@ impl AudioTrackBackgroundProcessor {
                     TrackBackgroundProcessorHelper::new(
                         track_uuid.clone(),
                         tx_audio.clone(),
-                        rx_vst_thread,
-                        tx_vst_thread.clone(),
+                        rx_track_background_thread,
+                        tx_track_background_thread.clone(),
                         track_thread_coast.clone(),
                         volume,
                         pan,
                         GeneralTrackType::AudioTrack,
                         vst_host_time_info,
-                        Box::new(RiffBufferTrackEventProcessor::new(BLOCK_SIZE as f64))
+                        Box::new(RiffBufferTrackEventProcessor::new(BLOCK_SIZE as f64)),
+                        sample_rate,
+                        block_size,
+                        tempo,
+                        time_signature_numerator,
+                        time_signature_denominator,
                     );
 
                 let mut use_sample_audio = true;
@@ -5384,7 +5574,7 @@ impl AudioTrackBackgroundProcessor {
 
                         producer_ring_buffer_block.write_blocking(&audio_block_buffer);
 
-                        let _ = tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
+                        let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
                     else if mode == TrackBackgroundProcessorMode::Coast {
                         thread::sleep(Duration::from_millis(100));
@@ -5414,16 +5604,23 @@ impl MidiTrackBackgroundProcessor {
         MidiTrackBackgroundProcessor {
         }
     }
+}
 
-    pub fn start_processing(&self,
-                            track_uuid: String,
-                            tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                            rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                            tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                            track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                            volume: f32,
-                            pan: f32,
-                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
+impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
+    fn start_processing(&self,
+                        track_uuid: String,
+                        tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                        rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+                        tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        volume: f32,
+                        pan: f32,
+                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                        sample_rate: f64,
+                        block_size: f64,
+                        tempo: f64,
+                        time_signature_numerator: i32,
+                        time_signature_denominator: i32,
     ) {
         match ThreadBuilder::default()
             .name(format!("MidiTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5444,14 +5641,19 @@ impl MidiTrackBackgroundProcessor {
                     TrackBackgroundProcessorHelper::new(
                         track_uuid.clone(),
                         tx_audio.clone(),
-                        rx_vst_thread,
-                        tx_vst_thread,
+                        rx_track_background_thread,
+                        tx_track_background_thread,
                         track_thread_coast.clone(),
                         volume,
                         pan,
                         GeneralTrackType::MidiTrack,
                         vst_host_time_info,
-                        Box::new(BlockBufferTrackEventProcessor::new())
+                        Box::new(BlockBufferTrackEventProcessor::new()),
+                        sample_rate,
+                        block_size,
+                        tempo,
+                        time_signature_numerator,
+                        time_signature_denominator,
                     );
 
                 track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
@@ -5498,7 +5700,12 @@ pub trait Track {
                                    track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
                                    volume: f32,
                                    pan: f32,
-                                   vst_host_time_info: Arc<RwLock<TimeInfo>>);
+                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                                   sample_rate: f64,
+                                   block_size: f64,
+                                   tempo: f64,
+                                   time_signature_numerator: i32,
+                                   time_signature_denominator: i32);
     fn volume(&self) -> f32;
     fn volume_mut(&mut self) -> f32;
     fn set_volume(&mut self, volume: f32); // 0.0 to 1.0
@@ -5703,9 +5910,20 @@ impl Track for InstrumentTrack {
                                    volume: f32,
                                    pan: f32,
                                    vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                                   sample_rate: f64,
+                                   block_size: f64,
+                                   tempo: f64,
+                                   time_signature_numerator: i32,
+                                   time_signature_denominator: i32,
     ) {
         self.track_background_processor().start_processing(
-            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info);
+            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
+        );
     }
 
     fn volume(&self) -> f32 {
@@ -5966,9 +6184,20 @@ impl Track for MidiTrack {
                                    volume: f32,
                                    pan: f32,
                                    vst_host_time_info: Arc<RwLock<TimeInfo>>,
+                                   sample_rate: f64,
+                                   block_size: f64,
+                                   tempo: f64,
+                                   time_signature_numerator: i32,
+                                   time_signature_denominator: i32,
     ) {
         self.track_background_processor().start_processing(
-            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info);
+            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
+        );
     }
 
     fn volume(&self) -> f32 {
@@ -6166,6 +6395,11 @@ impl Track for AudioTrack {
         _volume: f32,
         _pan: f32,
         _vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        sample_rate: f64,
+        block_size: f64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
     ) {
         // TODO implement
     }
@@ -6318,8 +6552,6 @@ impl Loop {
 #[derive(Serialize, Deserialize)]
 pub struct Song {
 	name: String,
-    sample_rate: f64,
-    block_size: f64,
 	tempo: f64,
 	time_signature_numerator: f64,
 	time_signature_denominator: f64,
@@ -6338,8 +6570,6 @@ impl Song {
 	pub fn new() -> Song {
 		Song {
 			name: String::from("unknown"),
-            sample_rate: 44100.0,
-            block_size: 1024.0,
 			tempo: 140.0,
             time_signature_numerator: 4.0,
             time_signature_denominator: 4.0,
@@ -6442,30 +6672,6 @@ impl Song {
     /// Set the song's name.
     pub fn set_name(&mut self, name: String) {
         self.name = name;
-    }
-
-    pub fn sample_rate(&self) -> f64 {
-        self.sample_rate
-    }
-
-    pub fn sample_rate_mut(&mut self) -> &mut f64 {
-        &mut self.sample_rate
-    }
-
-    pub fn set_sample_rate(&mut self, sample_rate: f64) {
-        self.sample_rate = sample_rate;
-    }
-
-    pub fn block_size(&self) -> f64 {
-        self.block_size
-    }
-
-    pub fn block_size_mut(&mut self) -> &mut f64 {
-        &mut self.block_size
-    }
-
-    pub fn set_block_size(&mut self, block_size: f64) {
-        self.block_size = block_size;
     }
 
     pub fn add_riff_set(&mut self, riff_set: RiffSet) {

@@ -472,7 +472,10 @@ public:
         double sampleRate,
         int32_t blockSize,
         rust::Box<Vst3Host> vst3Host,
-        rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange
+        rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange,
+        double tempo,
+        int32_t timeSignatureNumerator,
+        int32_t timeSignatureDenominator
         );
 
     bool createView(
@@ -508,6 +511,13 @@ public:
         }
         return simplePlugFrame.get();
     }
+    Steinberg::Vst::ProcessContext& getProcessContext() {
+        return processContext;
+    }
+    Steinberg::Vst::ProcessData& getProcessData() {
+        return processData;
+    }
+
 
 private:
     VST3::Hosting::Module::Ptr module = nullptr;
@@ -552,7 +562,11 @@ bool Vst3PluginHandler::initialise(
     double sampleRate,
     int32_t blockSize,
     rust::Box<Vst3Host> vst3Host,
-    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange)
+    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange,
+    double tempo,
+    int32_t timeSignatureNumerator,
+    int32_t timeSignatureDenominator
+)
 {
     std::string path(vst3_plugin_path);
     std::cout << "Path: " << path << std::endl;
@@ -650,9 +664,9 @@ bool Vst3PluginHandler::initialise(
                 processContext.barPositionMusic = 0.0;
                 processContext.cycleStartMusic = 0.0;
                 processContext.cycleEndMusic = 0.0;
-                processContext.tempo = 140.0;
-                processContext.timeSigNumerator = 4;
-                processContext.timeSigDenominator = 4;
+                processContext.tempo = tempo;
+                processContext.timeSigNumerator = timeSignatureNumerator;
+                processContext.timeSigDenominator = timeSignatureDenominator;
                 processContext.smpteOffsetSubframes = 0;
                 processContext.frameRate = Steinberg::Vst::FrameRate {
                     sampleRate,
@@ -981,14 +995,16 @@ bool createPlugin(
     double sampleRate,
     int32_t blockSize,
     rust::Box<Vst3Host> vst3Host,
-    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange
-)
+    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange,
+    double tempo,
+    int32_t timeSignatureNumerator,
+    int32_t timeSignatureDenominator)
 {
     Vst3PluginHandler vst3Plugin;
     std::string daw_plugin_uuid(riff_daw_plugin_uuid);
     std::cout << "createPlugin called for plugin uuid: " << daw_plugin_uuid << std::endl;
 
-    if (!vst3Plugin.initialise(daw_plugin_uuid, std::string(vst3_plugin_path), std::string(vst3_plugin_uid), sampleRate, blockSize, std::move(vst3Host), std::move(sendParameterChange)))
+    if (!vst3Plugin.initialise(daw_plugin_uuid, std::string(vst3_plugin_path), std::string(vst3_plugin_uid), sampleRate, blockSize, std::move(vst3Host), std::move(sendParameterChange), tempo, timeSignatureNumerator, timeSignatureDenominator))
     {
         std::cout << "Failed to create functional vst3 plugin." << std::endl;
         return false;
@@ -1294,6 +1310,40 @@ void vst3_plugin_remove(rust::String riff_daw_plugin_uuid)
         std::cout << "Exception: " << e.what() << std::endl;
     }
 }
+
+void vst3_plugin_change_tempo(rust::String riff_daw_plugin_uuid, double tempo)
+{
+    try
+    {
+        Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
+        Steinberg::Vst::IEditController* editController = vst3PluginHandler.getEditControllerPtr();
+
+        Steinberg::Vst::ProcessContext& processContext = vst3PluginHandler.getProcessContext();
+        processContext.tempo = tempo;
+    }
+    catch(const std::out_of_range& ex)
+    {
+        std::cout << "vst3_plugin_change_tempo: Can't find plugin." << std::endl;
+    }
+}
+
+void vst3_plugin_change_time_signature(rust::String riff_daw_plugin_uuid, uint32_t timeSignatureNumerator, uint32_t timeSignatureDenominator)
+{
+    try
+    {
+        Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
+        Steinberg::Vst::IEditController* editController = vst3PluginHandler.getEditControllerPtr();
+
+        Steinberg::Vst::ProcessContext& processContext = vst3PluginHandler.getProcessContext();
+        processContext.timeSigNumerator = timeSignatureNumerator;
+        processContext.timeSigDenominator = timeSignatureDenominator;
+    }
+    catch(const std::out_of_range& ex)
+    {
+        std::cout << "vst3_plugin_change_time_signature: Can't find plugin." << std::endl;
+    }
+}
+
 
 } // namespace hremeviuc
 } // namespace org

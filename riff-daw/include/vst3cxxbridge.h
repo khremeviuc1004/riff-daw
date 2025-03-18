@@ -16,7 +16,10 @@ bool createPlugin(
     double sampleRate,
     int32_t blockSize,
     rust::Box<Vst3Host> vst3Host,
-    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange
+    rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t param_id, float param_value)> sendParameterChange,
+    double tempo,
+    int32_t timeSignatureNumerator,
+    int32_t timeSignatureDenominator
 );
 
 bool showPluginEditor(
@@ -25,6 +28,8 @@ bool showPluginEditor(
     rust::Box<Vst3Host> vst3Host,
     rust::Fn<rust::Box<Vst3Host>(rust::Box<Vst3Host> context, int32_t new_window_width, int32_t new_window_height)> sendPluginWindowResize
 );
+void vst3_plugin_change_tempo(rust::String riff_daw_plugin_uuid, double tempo);
+void vst3_plugin_change_time_signature(rust::String riff_daw_plugin_uuid, uint32_t timeSignatureNumerator, uint32_t timeSignatureDenominator);
 uint32_t vst3_plugin_get_window_height(rust::String riff_daw_plugin_uuid);
 uint32_t vst3_plugin_get_window_width(rust::String riff_daw_plugin_uuid);
 void vst3_plugin_get_window_refresh(rust::String riff_daw_plugin_uuid);

@@ -60,18 +60,6 @@ pub enum LoopChangeType {
     NameChanged(String), // new loop name
 }
 
-#[derive(Clone)]
-pub enum ProjectEvent {
-    Closed,
-    Opened,
-    Changed,
-    SongMode,
-    AuditionMode,
-    RiffSetMode,
-    Loading,
-    BPM,
-}
-
 #[derive(Debug, Clone)]
 pub enum OperationModeType {
     Add,
@@ -312,7 +300,6 @@ pub enum DAWEvents {
     AutomationEditTypeChange(AutomationEditType),
 
     LoopChange(LoopChangeType, Uuid), // type, loop number
-    ProjectChange(ProjectEvent),
     TrackChange(TrackChangeType, Option<String>), // change type, track uuid
     TrackEffectParameterChange(i32, i32),         // effect number, effect param number
     TrackInstrumentParameterChange(i32),          // instr param num
@@ -345,6 +332,8 @@ pub enum DAWEvents {
     PlayPositionInBeats(f64),
 
     TempoChange(f64),
+    TimeSignatureNumeratorChange(f64),
+    TimeSignatureDenominatorChange(f64),
 
     Panic,
     TrimAllNoteDurations,
@@ -433,6 +422,8 @@ pub enum DAWEvents {
     RepaintRiffArrangementBox,
     RepaintRiffSetsBox,
     RepaintRiffSequencesBox,
+
+    AudioConfigurationChanged(i32, i32),
 }
 
 pub enum TrackBackgroundProcessorInwardEvent {
@@ -495,6 +486,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
     Pan(f32),    // pan
     
     Tempo(f64),
+    TimeSignatureChange(u32, u32),
 
     AddTrackEventSendRouting(TrackEventRouting, SpscRb<TrackEvent>, Producer<TrackEvent>), // track event routing, ring buffer, producer
     RemoveTrackEventSendRouting(String), // route uuid

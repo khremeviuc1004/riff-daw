@@ -34,7 +34,7 @@ indexmap = "1.9.1"
 dirs = "4.0.0"
 rust-lzma = "0.5.1"
 chrono = "0.4.23"
-parking_lot = "0.12.1"
+parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
 clap-sys = { git = "https://github.com/robbert-vdh/clap-sys.git", rev = "f217cca4f41d4997bf23b06477765a809fa07c34" }
 strum = "0.24.1"
 strum_macros = "0.24.1"

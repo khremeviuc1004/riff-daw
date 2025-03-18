@@ -66,6 +66,8 @@ pub struct Ui {
     pub riff_name_entry: Entry,
 
     pub configuration_dialogue: Dialog,
+    pub sample_rate_combobox: ComboBoxText,
+    pub block_size_combobox: ComboBoxText,
 
     pub about_dialogue: AboutDialog,
 
@@ -447,6 +449,8 @@ pub struct Ui {
     pub transport_goto_end_button: RadioToolButton,
 
     pub song_tempo_spinner: SpinButton,
+    pub time_signature_numerator_spinner: SpinButton,
+    pub time_signature_denominator_spinner: SpinButton,
 
     pub loop_combobox_text: ComboBoxText,
     pub delete_loop_btn: ToolButton,
@@ -904,10 +908,7 @@ impl MainWindow {
             midi_file_import_file_chooser,
         };
 
-        main_window.ui.configuration_dialogue.add_button("Cancel", gtk::ResponseType::Cancel);
-        main_window.ui.configuration_dialogue.add_button("Ok", gtk::ResponseType::Ok);
-
-        main_window.setup_menus(tx_from_ui.clone());
+        main_window.setup_menus(tx_from_ui.clone(), state.clone());
         main_window.setup_main_tool_bar(tx_from_ui.clone());
         main_window.setup_track_grid(tx_from_ui.clone(), state.clone());
         main_window.setup_riff_grid(tx_from_ui.clone(), state.clone());
@@ -1008,13 +1009,39 @@ impl MainWindow {
         MainWindow::setup_transport(&mut main_window, tx_from_ui.clone());
 
         {
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             ui.song_tempo_spinner.connect_value_changed(move |tempo_spinner| {
                 let tempo_value = tempo_spinner.value();
                 if let Ok(tempo) = tempo_value.to_value().get() {
                     match tx_from_ui.send(DAWEvents::TempoChange(tempo)) {
                         Ok(_) => debug!(""),
                         Err(_) => debug!("Couldn't send tempo change from ui - failed to send with sender."),
+                    }
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            ui.time_signature_numerator_spinner.connect_value_changed(move |time_signature_numerator_spinner| {
+                let time_signature_numerator = time_signature_numerator_spinner.value();
+                if let Ok(time_signature_numerator) = time_signature_numerator.to_value().get() {
+                    match tx_from_ui.send(DAWEvents::TimeSignatureNumeratorChange(time_signature_numerator)) {
+                        Ok(_) => debug!(""),
+                        Err(_) => debug!("Couldn't send time_signature_numerator change from ui - failed to send with sender."),
+                    }
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui;
+            ui.time_signature_denominator_spinner.connect_value_changed(move |time_signature_denominator_spinner| {
+                let time_signature_denominator = time_signature_denominator_spinner.value();
+                if let Ok(time_signature_denominator) = time_signature_denominator.to_value().get() {
+                    match tx_from_ui.send(DAWEvents::TimeSignatureDenominatorChange(time_signature_denominator)) {
+                        Ok(_) => debug!(""),
+                        Err(_) => debug!("Couldn't send time_signature_denominator from ui - failed to send with sender."),
                     }
                 }
             });
@@ -3224,6 +3251,7 @@ impl MainWindow {
     pub fn setup_menus(
         &mut self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        state: Arc<Mutex<DAWState>>,
     ) {
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -3431,8 +3459,27 @@ impl MainWindow {
 
         {
             let configuration_dialogue = self.ui.configuration_dialogue.clone();
+            let sample_rate_combobox = self.ui.sample_rate_combobox.clone();
+            let block_size_combobox = self.ui.block_size_combobox.clone();
+            let state = state.clone();
+            if let Ok(state) = state.lock() {
+                self.ui.sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
+                self.ui.block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
+            }
+            let tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_preferences.connect_button_press_event(move |_menu_item, _btn|{
-                configuration_dialogue.run();
+                if configuration_dialogue.run() == ResponseType::Ok {
+                    debug!("***************************************---------------------------");
+                    if let Ok(state) = state.lock() {
+                        let possible_new_sample_rate = sample_rate_combobox.active_id().unwrap().to_string();
+                        let possible_new_block_size = block_size_combobox.active_id().unwrap().to_string();
+                        if format!("{}", state.configuration.audio.sample_rate) != possible_new_sample_rate ||
+                            format!("{}", state.configuration.audio.block_size) != possible_new_block_size {
+                            let _ = tx_from_ui.send(DAWEvents::AudioConfigurationChanged(
+                                possible_new_sample_rate.parse().expect("Not a number"), possible_new_block_size.parse().expect("Not a number")));
+                        }
+                    }
+                }
                 configuration_dialogue.hide();
 
                 Inhibit(true)

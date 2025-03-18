@@ -205,7 +205,7 @@ impl DAWState {
         // let mut song_length_in_beats: u64 = 0;
 
         // load all the samples - create the sample data objects
-        let sample_rate = self.get_project().song_mut().sample_rate();
+        let sample_rate = self.configuration.audio.sample_rate;
         let mut sample_references = HashMap::new();
         let mut samples_data = HashMap::new();
         for (_sample_uuid, sample) in self.get_project().song_mut().samples_mut().iter_mut() {
@@ -223,6 +223,11 @@ impl DAWState {
         debug!("state.load_from_file() - number of riff sequences={}", self.project().song().riff_sequences().len());
 
         {
+            let sample_rate = self.configuration.audio.sample_rate as f64;
+            let block_size = self.configuration.audio.block_size as f64;
+            let tempo = self.project().song().tempo();
+            let time_signature_numerator = self.project().song().time_signature_numerator();
+            let time_signature_denominator = self.project().song().time_signature_denominator();
             for track in self.get_project().song_mut().tracks_mut().iter_mut() {
                 // Self::add_track(vst_plugin_loaders.clone(), tx_audio.clone(), track_audio_coast.clone(), &mut instrument_track_senders2, &mut instrument_track_receivers2, track_type)
                 Self::init_track(
@@ -236,6 +241,11 @@ impl DAWState {
                     Some(&sample_references),
                     Some(&samples_data),
                     vst_host_time_info.clone(),
+                    sample_rate,
+                    block_size,
+                    tempo,
+                    time_signature_numerator as i32,
+                    time_signature_denominator as i32,
                 );
             }
         }
@@ -309,6 +319,11 @@ impl DAWState {
         sample_references: Option<&HashMap<String, String>>,
         samples_data: Option<&HashMap<String, SampleData>>,
         vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        sample_rate: f64,
+        block_size: f64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
     ) {
         let (tx_to_vst, rx_to_vst) = channel::<TrackBackgroundProcessorInwardEvent>();
         let tx_to_vst_ref = tx_to_vst.clone();
@@ -334,6 +349,11 @@ impl DAWState {
                         volume,
                         pan,
                         vst_host_time_info,
+                        sample_rate,
+                        block_size,
+                        tempo,
+                        time_signature_numerator,
+                        time_signature_denominator,
                     );
 
                     let mut effect_presets = vec![];
@@ -439,6 +459,11 @@ impl DAWState {
                     volume,
                     pan,
                     vst_host_time_info,
+                    sample_rate,
+                    block_size,
+                    tempo,
+                    time_signature_numerator,
+                    time_signature_denominator,
                 );
             },
             TrackType::MidiTrack(track) => {
@@ -456,6 +481,11 @@ impl DAWState {
                     volume,
                     pan,
                     vst_host_time_info,
+                    sample_rate,
+                    block_size,
+                    tempo,
+                    time_signature_numerator,
+                    time_signature_denominator,
                 );
             },
         }
@@ -471,13 +501,24 @@ impl DAWState {
         let (tx_from_vst, rx_from_vst) = channel::<TrackBackgroundProcessorOutwardEvent>();
         let mut instrument_track_senders2 = HashMap::new();
         let mut instrument_track_receivers2 = HashMap::new();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
+        let tempo = self.project().song().tempo();
+        let time_signature_numerator = self.project().song().time_signature_numerator();
+        let time_signature_denominator = self.project().song().time_signature_denominator();
 
         match self.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
             Some(track) => {
                 let track_uuid_string = track.uuid().to_string();
                 instrument_track_senders2.insert(track_uuid_string.clone(), tx_to_vst);
                 instrument_track_receivers2.insert(track_uuid_string, rx_from_vst);
-                track.start_background_processing(tx_audio, rx_to_vst, tx_from_vst, track_audio_coast, track.volume(), track.pan(), vst_host_time_info);
+                track.start_background_processing(tx_audio, rx_to_vst, tx_from_vst, track_audio_coast, track.volume(), track.pan(), vst_host_time_info,
+                                                  sample_rate,
+                                                  block_size,
+                                                  tempo,
+                                                  time_signature_numerator as i32,
+                                                  time_signature_denominator as i32,
+                );
             },
             None => {}
         }
@@ -1098,8 +1139,8 @@ impl DAWState {
 
         let song = self.project().song();
         bpm = song.tempo();
-        sample_rate = song.sample_rate();
-        block_size = song.block_size();
+        sample_rate = self.configuration.audio.sample_rate as f64;
+        block_size = self.configuration.audio.block_size as f64;
         let play_position_in_frames = self.play_position_in_frames();
         start_block = (play_position_in_frames as f64 / block_size) as i32;
 
@@ -1172,8 +1213,8 @@ impl DAWState {
         let play_position_in_frames = 0;
         let tracks = song.tracks();
         let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
-        let block_size = song.block_size();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
         let mut lowest_common_factor_in_beats = 400;
 
@@ -1262,8 +1303,8 @@ impl DAWState {
         let play_position_in_frames = 0;
         let tracks = song.tracks();
         let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
-        let block_size = song.block_size();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
         let number_of_blocks = i32::MAX;
 
@@ -1354,7 +1395,7 @@ impl DAWState {
     pub fn play_riff_set_update_track_as_riff(&self, riff_set_uuid: String, track_uuid: String) {
         let song = self.project().song();
         let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
         let number_of_blocks = i32::MAX;
 
 
@@ -1434,8 +1475,8 @@ impl DAWState {
     pub fn play_riff_set_update_track_in_blocks(&self, riff_set_uuid: String, track_uuid: String) {
         let song = self.project().song();
         let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
-        let block_size = song.block_size();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
         let mut lowest_common_factor_in_beats = 400;
 
 
@@ -1581,8 +1622,8 @@ impl DAWState {
         let song = self.project().song();
         let play_position_in_frames = 0;
         let bpm = song.tempo();
-        let sample_rate = song.sample_rate();
-        let block_size = song.block_size();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
 
         // get the riff sequence
@@ -1647,22 +1688,19 @@ impl DAWState {
 
 
     pub fn play_riff_grid(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_grid_uuid: String) -> i32 {
-        let mut bpm = 140.0;
-        let mut sample_rate = 44100.0;
-        let mut block_size = 1024.0;
-        let mut song_length_in_beats = 400.0;
+        let bpm = self.project().song().tempo();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
+        let mut song_length_in_beats = self.project().song().length_in_beats() as f64;
         let mut start_block = 0;
         let mut end_block = 0;
         let already_playing = self.playing();
 
-        song_length_in_beats = *self.get_project().song_mut().length_in_beats_mut() as f64;
         self.set_playing(true);
         self.set_play_mode(PlayMode::Song);
 
         let song = self.project().song();
-        bpm = song.tempo();
-        sample_rate = song.sample_rate();
-        block_size = song.block_size();
+
         let play_position_in_frames = self.play_position_in_frames();
         start_block = (play_position_in_frames as f64 / block_size) as i32;
 
@@ -1901,9 +1939,9 @@ impl DAWState {
         self.set_play_mode(PlayMode::RiffArrangement);
         // let song = self.project().song();
         let bpm = self.project().song().tempo();
-        let sample_rate = self.project().song().sample_rate();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
         let play_position_in_frames = play_position_in_beats / bpm * 60.0 * sample_rate;
-        let block_size = self.project().song().block_size();
+        let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames / block_size) as i32;
 
         // get the riff arrangement
@@ -2190,7 +2228,18 @@ impl DAWState {
     ) {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
-        let audio = Audio::new(&jack_client, rx_to_audio, jack_midi_sender, jack_midi_sender_ui.clone(), jack_time_critical_midi_sender, coast, vst_host_time_info);
+        let audio = Audio::new(
+            &jack_client,
+            rx_to_audio,
+            jack_midi_sender,
+            jack_midi_sender_ui.clone(),
+            jack_time_critical_midi_sender,
+            coast,
+            vst_host_time_info,
+            self.configuration.audio.sample_rate,
+            self.configuration.audio.block_size,
+            self.project().song().tempo(),
+        );
         let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
@@ -2201,6 +2250,15 @@ impl DAWState {
         let _ = jack_async_client.as_client().connect_ports_by_name("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in");
 
         self.set_jack_client(jack_async_client);
+    }
+
+    pub fn stop_jack(&mut self) {
+        if self.jack_client.len() == 1 {
+            let async_client = self.jack_client.remove(0_usize);
+            if let Err(err) =  async_client.deactivate() {
+                debug!("Problem stopping jack; {}", err);
+            }
+        }
     }
 
     pub fn restart_jack(&mut self,
@@ -2228,6 +2286,9 @@ impl DAWState {
                         consumers,
                         vec![],
                         vst_host_time_info,
+                        self.configuration.audio.sample_rate,
+                        self.configuration.audio.block_size,
+                        self.project().song().tempo(),
                     );
                     let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
                     let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();

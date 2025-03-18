@@ -145,10 +145,74 @@
                 <property name="can-focus">False</property>
                 <property name="orientation">vertical</property>
                 <child>
-                  <placeholder/>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="label" translatable="yes">Sample Rate</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
                 </child>
                 <child>
-                  <placeholder/>
+                  <object class="GtkComboBoxText" id="sample_rate_combobox">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                    <items>
+                      <item id="22050" translatable="yes">22050</item>
+                      <item id="44100" translatable="yes">44100</item>
+                      <item id="48000" translatable="yes">48000</item>
+                    </items>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                    <property name="position">1</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="label" translatable="yes">Block Size</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">2</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkComboBoxText" id="block_size_combobox">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                    <items>
+                      <item id="16" translatable="yes">16</item>
+                      <item id="32" translatable="yes">32</item>
+                      <item id="64" translatable="yes">64</item>
+                      <item id="128" translatable="yes">128</item>
+                      <item id="256" translatable="yes">256</item>
+                      <item id="512" translatable="yes">512</item>
+                      <item id="1024" translatable="yes">1024</item>
+                      <item id="2048" translatable="yes">2048</item>
+                      <item id="4096" translatable="yes">4096</item>
+                    </items>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                    <property name="position">3</property>
+                  </packing>
                 </child>
                 <child>
                   <placeholder/>
@@ -845,6 +909,20 @@
     <patterns>
       <pattern>*.lua</pattern>
     </patterns>
+  </object>
+  <object class="GtkAdjustment" id="time_signature_denominator_adjustment">
+    <property name="lower">1</property>
+    <property name="upper">100</property>
+    <property name="value">4</property>
+    <property name="step-increment">1</property>
+    <property name="page-increment">10</property>
+  </object>
+  <object class="GtkAdjustment" id="time_signature_numerator_adjustment">
+    <property name="lower">1</property>
+    <property name="upper">100</property>
+    <property name="value">4</property>
+    <property name="step-increment">1</property>
+    <property name="page-increment">10</property>
   </object>
   <object class="GtkAdjustment" id="track_grid_horizontal_adjustment">
     <property name="upper">60000</property>
@@ -23130,18 +23208,60 @@
           </packing>
         </child>
         <child>
-          <!-- n-columns=10 n-rows=1 -->
+          <!-- n-columns=15 n-rows=1 -->
           <object class="GtkGrid">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
             <property name="hexpand">True</property>
             <property name="border-width">3</property>
             <child>
-              <object class="GtkLabel" id="song_position_txt_ctrl">
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">9</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="halign">start</property>
-                <property name="label" translatable="yes">001:001:000</property>
+                <property name="valign">center</property>
+                <property name="margin-right">10</property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">Time Sig</property>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkSpinButton" id="time_signature_numerator_spinner">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="adjustment">time_signature_numerator_adjustment</property>
+                <property name="numeric">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkSpinButton" id="time_signature_denominator_spinner">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="adjustment">time_signature_denominator_adjustment</property>
               </object>
               <packing>
                 <property name="left-attach">3</property>
@@ -23152,22 +23272,15 @@
               <object class="GtkLabel">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="margin-end">10</property>
-                <property name="label" translatable="yes">Time</property>
-                <property name="justify">right</property>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="visible">True</property>
-                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="margin-right">10</property>
                 <property name="margin-start">10</property>
                 <property name="margin-end">10</property>
-                <property name="label" translatable="yes">     Position</property>
+                <property name="label" translatable="yes">/</property>
+                <attributes>
+                  <attribute name="weight" value="ultraheavy"/>
+                </attributes>
               </object>
               <packing>
                 <property name="left-attach">2</property>
@@ -23175,9 +23288,50 @@
               </packing>
             </child>
             <child>
+              <object class="GtkToggleButton" id="show_sub_panel_toggle_btn">
+                <property name="label" translatable="yes">^</property>
+                <property name="width-request">30</property>
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="receives-default">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">14</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">11</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkStackSwitcher" id="sub_panel_stack_switcher">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="hexpand">True</property>
+                <property name="homogeneous">True</property>
+                <property name="stack">sub_panel_stack</property>
+              </object>
+              <packing>
+                <property name="left-attach">13</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
               <object class="GtkToolbar">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="margin-right">10</property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
                 <property name="icon_size">2</property>
                 <child>
                   <object class="GtkRadioToolButton" id="transport_goto_start_button">
@@ -23186,6 +23340,7 @@
                     <property name="label" translatable="yes">__glade_unnamed_124</property>
                     <property name="use-underline">True</property>
                     <property name="icon-name">media-skip-backward</property>
+                    <property name="active">True</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -23213,7 +23368,6 @@
                     <property name="label" translatable="yes">__glade_unnamed_126</property>
                     <property name="use-underline">True</property>
                     <property name="icon-name">media-playback-stop</property>
-                    <property name="active">True</property>
                     <property name="group">transport_goto_start_button</property>
                   </object>
                   <packing>
@@ -23306,7 +23460,20 @@
                 </child>
               </object>
               <packing>
-                <property name="left-attach">4</property>
+                <property name="left-attach">12</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="song_position_txt_ctrl">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="label" translatable="yes">001:001:000</property>
+              </object>
+              <packing>
+                <property name="left-attach">10</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23314,59 +23481,16 @@
               <object class="GtkLabel">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">5</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkSpinButton" id="song_tempo_spinner">
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="text" translatable="yes">120.000</property>
-                <property name="adjustment">bpm_adjustment</property>
-                <property name="digits">3</property>
-                <property name="value">140</property>
-              </object>
-              <packing>
-                <property name="left-attach">6</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="visible">True</property>
-                <property name="can-focus">False</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">7</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkStackSwitcher" id="sub_panel_stack_switcher">
-                <property name="visible">True</property>
-                <property name="can-focus">False</property>
-                <property name="stack">sub_panel_stack</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="margin-left">10</property>
+                <property name="margin-right">10</property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">Position</property>
               </object>
               <packing>
                 <property name="left-attach">8</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkToggleButton" id="show_sub_panel_toggle_btn">
-                <property name="label" translatable="yes">^</property>
-                <property name="width-request">30</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">9</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>
@@ -23375,10 +23499,61 @@
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="halign">start</property>
+                <property name="valign">center</property>
                 <property name="label" translatable="yes">000:00:000</property>
               </object>
               <packing>
-                <property name="left-attach">1</property>
+                <property name="left-attach">7</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="margin-right">10</property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">Time</property>
+                <property name="justify">right</property>
+              </object>
+              <packing>
+                <property name="left-attach">6</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkSpinButton" id="song_tempo_spinner">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="text" translatable="yes">140.000</property>
+                <property name="adjustment">bpm_adjustment</property>
+                <property name="digits">3</property>
+                <property name="value">140</property>
+              </object>
+              <packing>
+                <property name="left-attach">5</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="margin-right">10</property>
+                <property name="margin-start">10</property>
+                <property name="margin-end">10</property>
+                <property name="label" translatable="yes">Tempo</property>
+                <property name="justify">right</property>
+              </object>
+              <packing>
+                <property name="left-attach">4</property>
                 <property name="top-attach">0</property>
               </packing>
             </child>

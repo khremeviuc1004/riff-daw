@@ -25,6 +25,11 @@ pub fn create_vst24_audio_plugin(
     sender: Sender<AudioPluginHostOutwardEvent>,
     instrument: bool,
     vst_host_time_info: Arc<parking_lot::RwLock<TimeInfo>>,
+    sample_rate: f64,
+    block_size: i64,
+    tempo: f64,
+    time_signature_numerator: i32,
+    time_signature_denominator: i32,
 ) -> (Arc<Mutex<VstHost>>, PluginInstance) {
     let mut path_buf = PathBuf::new();
     let mut path = Path::new(library_path.clone());
@@ -40,7 +45,11 @@ pub fn create_vst24_audio_plugin(
         sender, 
         vst_plugin_uuid, 
         instrument, 
-        vst_host_time_info)));
+        vst_host_time_info,
+        tempo,
+        time_signature_numerator as u32,
+        time_signature_denominator as u32,
+    )));
 
     if !path.exists() || !path.is_file() {
         if let Ok(vst_path) = std::env::var("VST_PATH") {
@@ -187,8 +196,8 @@ pub fn create_vst24_audio_plugin(
                 },
             }
 
-            instance.set_sample_rate(44100.0);
-            instance.set_block_size(1024);
+            instance.set_sample_rate(sample_rate as f32);
+            instance.set_block_size(block_size);
 
             let presets = instance.get_parameter_object();
             for index in 0..info.presets {
@@ -213,13 +222,18 @@ pub fn create_vst3_audio_plugin(
     daw_plugin_uuid: String,
     vst3_plugin_uid: String,
     vst3_host: Box<Vst3Host>,
+    sample_rate: f64,
+    block_size: i64,
+    tempo: f64,
+    time_signature_numerator: i32,
+    time_signature_denominator: i32,
 ) -> bool {
     return ffi::createPlugin(
         library_path,
         daw_plugin_uuid,
         vst3_plugin_uid,
-        44100.0,
-        1024,
+        sample_rate,
+        block_size as i32,
         vst3_host,
         |context: Box<Vst3Host>, param_id: i32, param_value: f32| {
             debug!("Vst3 plugin automation data.");
@@ -229,7 +243,10 @@ pub fn create_vst3_audio_plugin(
                 Err(_error) => debug!("Problem sending plugin param automation from vst3 plugin."),
             }
             context
-        }
+        },
+        tempo,
+        time_signature_numerator,
+        time_signature_denominator
     );
 }
 
@@ -240,7 +257,12 @@ pub fn create_vst3_audio_plugin(
     _plugin_uuid: String,
     clap_plugin_id: Option<String>,
     _sender: Sender<AudioPluginHostOutwardEvent>,
-    _instrument: bool,   
+    _instrument: bool,
+    sample_rate: f64,
+    block_size: i64,
+    tempo: f64,
+    time_signature_numerator: i32,
+    time_signature_denominator: i32,
  ) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
     let path = Path::new(audio_plugin_path.clone());
 
@@ -294,13 +316,13 @@ pub fn create_vst3_audio_plugin(
                 // // host.handle_callbacks_once();
             
                 let process_config = ProcessConfig {
-                    sample_rate: 44_100.0,
-                    tempo: 140.0,
-                    time_sig_numerator: 4,
-                    time_sig_denominator: 4,
+                    sample_rate,
+                    tempo,
+                    time_sig_numerator: time_signature_numerator as u16,
+                    time_sig_denominator: time_signature_denominator as u16,
                 };
             
-                let (input_buffers, output_buffers) = audio_ports_config.create_buffers(1024);
+                let (input_buffers, output_buffers) = audio_ports_config.create_buffers(block_size as usize);
                 let audio_buffers = if let Ok(buffers) = OutOfPlaceAudioBuffers::new(
                     input_buffers,
                     output_buffers,

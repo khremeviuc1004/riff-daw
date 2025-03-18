@@ -205,6 +205,11 @@ fn main() {
                     rx_from_ui.clone(),
                     &mut state,
                     tx_to_audio.clone(),
+                    &rx_to_audio,
+                    &jack_midi_sender,
+                    &jack_midi_sender_ui,
+                    &jack_time_critical_midi_sender,
+                    &track_audio_coast,
                     vst_host_time_info.clone(),
                 );
             }
@@ -384,6 +389,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                               rx_from_ui: Receiver<DAWEvents>,
                               state: &mut Arc<Mutex<DAWState>>,
                               tx_to_audio: Sender<AudioLayerInwardEvent>,
+                              rx_to_audio: &Receiver<AudioLayerInwardEvent>,
+                              jack_midi_sender: &Sender<AudioLayerOutwardEvent>,
+                              jack_midi_sender_ui: &Sender<AudioLayerOutwardEvent>,
+                              jack_time_critical_midi_sender: &Sender<AudioLayerTimeCriticalOutwardEvent>,
+                              jack_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                               vst_host_time_info: Arc<RwLock<TimeInfo>>,
 ) {
     match rx_from_ui.try_recv() {
@@ -398,13 +408,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.close_all_tracks(tx_to_audio.clone());
                         state.reset_state();
 
-                        let project = Project::new();
+                        let mut project = Project::new();
+
+                        project.song().set_tempo(gui.ui.song_tempo_spinner.value());
 
                         {
                             let mut time_info =  vst_host_time_info.write();
-                            time_info.tempo = project.song().tempo();
-                            time_info.sample_rate = project.song().sample_rate();
                             time_info.sample_pos = 0.0;
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;
+                            time_info.nanoseconds = 0.0;
+                            time_info.ppq_pos = 0.0;
+                            time_info.tempo = project.song().tempo();
+                            time_info.bar_start_pos = 0.0;
+                            time_info.cycle_start_pos = 0.0;
+                            time_info.cycle_end_pos = 0.0;
+                            time_info.time_sig_numerator = project.song().time_signature_numerator() as i32;
+                            time_info.time_sig_denominator = project.song().time_signature_denominator() as i32;
+                            time_info.smpte_offset = 0;
+                            time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                            time_info.samples_to_next_clock = 0;
+                            time_info.flags = 3;
                         }
 
                         state.set_project(project);
@@ -413,6 +436,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let mut instrument_track_receivers2 = HashMap::new();
                         let mut sample_references = HashMap::new();
                         let mut samples_data = HashMap::new();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
+                        let block_size = state.configuration.audio.block_size as f64;
+                        let tempo = state.project().song().tempo();
+                        let time_signature_numerator = state.project().song().time_signature_numerator();
+                        let time_signature_denominator = state.project().song().time_signature_denominator();
                         for track in state.get_project().song_mut().tracks_mut().iter_mut() {
                             DAWState::init_track(
                                 vst24_plugin_loaders.clone(),
@@ -425,12 +453,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 Some(&sample_references),
                                 Some(&samples_data),
                                 vst_host_time_info.clone(),
+                                sample_rate,
+                                block_size,
+                                tempo,
+                                time_signature_numerator as i32,
+                                time_signature_denominator as i32,
                             );
                         }
                         state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
 
                         gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
-                        match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.project().song().block_size())) {
+                        match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                         }
@@ -438,7 +471,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
                         }
-                        match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.project().song().sample_rate())) {
+                        match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send sample rate message to jack layer: {}", error),
                         }
@@ -478,9 +511,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                             {
                                 let mut time_info = vst_host_time_info.write();
-                                time_info.tempo = tempo;
-                                time_info.sample_rate = state.project().song().sample_rate();
                                 time_info.sample_pos = 0.0;
+                                time_info.sample_rate = state.configuration.audio.sample_rate as f64;; // FIXME is sample rate and block size part of a song or should it be part of configuration???
+                                time_info.nanoseconds = 0.0;
+                                time_info.ppq_pos = 0.0;
+                                time_info.tempo = tempo;
+                                time_info.bar_start_pos = 0.0;
+                                time_info.cycle_start_pos = 0.0;
+                                time_info.cycle_end_pos = 0.0;
+                                time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
+                                time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
+                                time_info.smpte_offset = 0;
+                                time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                                time_info.samples_to_next_clock = 0;
+                                time_info.flags = 3;
                             }
 
                             let mut audio_track_ids = vec![];
@@ -498,7 +542,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 state.send_to_track_background_processor(track_id.clone(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
                             }
 
-                            match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.project().song().block_size())) {
+                            match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
                                 Ok(_) => (),
                                 Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
@@ -506,7 +550,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 Ok(_) => (),
                                 Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
-                            match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.project().song().sample_rate())) {
+                            match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
                                 Ok(_) => (),
                                 Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
@@ -612,8 +656,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
                         match state.lock() {
-                            Ok(state) => {
-                                let mut state = state;
+                            Ok(mut state) => {
+                                let sample_rate = state.configuration.audio.sample_rate as f64;;
+                                let block_size = state.configuration.audio.block_size as f64;;
+                                let time_signature_numerator = state.project().song().time_signature_numerator();
+                                let time_signature_denominator = state.project().song().time_signature_denominator();
                                 let tracks = state.get_project().song_mut().tracks_mut();
 
                                 if let Some(file) = path.to_str() {
@@ -795,6 +842,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         None,
                                                         None,
                                                         vst_host_time_info.clone(),
+                                                        sample_rate,
+                                                        block_size,
+                                                        tempo as f64,
+                                                        time_signature_numerator as i32,
+                                                        time_signature_denominator as i32,
                                                     );
                                                 }
                                             }
@@ -1155,7 +1207,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     },
                 }
             },
-            DAWEvents::ProjectChange(_) => debug!("Event: ProjectChange"),
             DAWEvents::PianoRollSetTrackName(name) => {
                 gui.set_piano_roll_selected_track_name_label(name.as_str());
                 gui.ui.piano_roll_drawing_area.queue_draw();
@@ -1222,6 +1273,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             let tx_ui = tx_from_ui.clone();
                             let mut instrument_track_senders_local = HashMap::new();
                             let mut instrument_track_receivers_local = HashMap::new();
+                            let sample_rate = state.configuration.audio.sample_rate as f64;
+                            let block_size = state.configuration.audio.block_size as f64;;
+                            let tempo = state.project().song().tempo();
+                            let time_signature_numerator = state.project().song().time_signature_numerator();
+                            let time_signature_denominator = state.project().song().time_signature_denominator();
 
                             match track_change_track_type {
                                 GeneralTrackType::InstrumentTrack => {
@@ -1242,6 +1298,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None,
                                             None,
                                             vst_host_time_info,
+                                            sample_rate,
+                                            block_size,
+                                            tempo,
+                                            time_signature_numerator as i32,
+                                            time_signature_denominator as i32,
                                         );
                                     }
                                     debug!("Added an instrument track to the state.");
@@ -1265,6 +1326,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None,
                                             None,
                                             vst_host_time_info,
+                                            sample_rate,
+                                            block_size,
+                                            tempo,
+                                            time_signature_numerator as i32,
+                                            time_signature_denominator as i32,
                                         );
                                     }
                                 }
@@ -1288,6 +1354,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             None,
                                             None,
                                             vst_host_time_info,
+                                            sample_rate,
+                                            block_size,
+                                            tempo,
+                                            time_signature_numerator as i32,
+                                            time_signature_denominator as i32,
                                         );
                                     }
                                     thread::sleep(Duration::from_secs(1));
@@ -4377,7 +4448,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let recording = *state.recording_mut();
                                 let playing = *state.playing_mut();
                                 let play_position_in_frames = state.play_position_in_frames() as f64;
-                                let sample_rate = state.get_project().song_mut().sample_rate();
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let bpm = state.get_project().song_mut().tempo();
                                 let play_position_in_beats = play_position_in_frames / sample_rate * bpm / 60.0;
                                 let mut midi_channel = 0;
@@ -4415,7 +4486,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let recording = *state.recording_mut();
                                 let playing = *state.playing_mut();
                                 let play_position_in_frames = state.play_position_in_frames() as f64;
-                                let sample_rate = state.get_project().song_mut().sample_rate();
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let bpm = state.get_project().song_mut().tempo();
                                 let play_position_in_beats = play_position_in_frames / sample_rate * bpm / 60.0;
                                 let mut midi_channel = 0;
@@ -4499,7 +4570,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     let mut new_track = InstrumentTrack::new();
                                     let mut instrument_track_senders2 = HashMap::new();
                                     let mut instrument_track_receivers2 = HashMap::new();
-
+                                    let sample_rate = state.configuration.audio.sample_rate as f64;;
+                                    let block_size = state.configuration.audio.block_size as f64;;
+                                    let tempo = state.project().song().tempo();
+                                    let time_signature_numerator = state.project().song().time_signature_numerator();
+                                    let time_signature_denominator = state.project().song().time_signature_denominator();
 
                                     // copy what is needed from the originating track - a bit difficult to make this clone-able
                                     let mut new_name = "Copy of ".to_string();
@@ -4529,6 +4604,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         None,
                                         None,
                                         vst_host_time_info.clone(),
+                                        sample_rate,
+                                        block_size,
+                                        tempo,
+                                        time_signature_numerator as i32,
+                                        time_signature_denominator as i32,
                                     );
 
                                     state.get_project().song_mut().tracks_mut().push(new_track_type);
@@ -5265,7 +5345,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
                         let time_signature_numerator = state.get_project().song().time_signature_numerator();
-                        let sample_rate = state.get_project().song().sample_rate();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;;
                         let play_position_in_frames = 0.0;
                         let play_position_in_beats = play_position_in_frames / sample_rate * bpm / 60.0;
                         let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
@@ -5324,8 +5404,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
-                        let sample_rate = state.get_project().song().sample_rate();
-                        let block_size = state.get_project().song().block_size();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;;
+                        let block_size = state.configuration.audio.block_size as f64;
                         let time_signature_numerator = state.project().song().time_signature_numerator();
                         let beats_per_bar = time_signature_numerator;
                         let mut play_position_in_frames = state.play_position_in_frames();
@@ -5428,8 +5508,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let song = state.project().song();
                         let tracks = song.tracks();
                         bpm = song.tempo();
-                        sample_rate = song.sample_rate();
-                        block_size = song.block_size();
+                        sample_rate = state.configuration.audio.sample_rate as f64;
+                        block_size = state.configuration.audio.block_size as f64;
                         for track in tracks {
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Stop);
                         }
@@ -5539,8 +5619,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
-                        let sample_rate = state.get_project().song().sample_rate();
-                        let block_size = state.get_project().song().block_size();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;;
+                        let block_size = state.configuration.audio.block_size as f64;
                         let time_signature_numerator = state.project().song().time_signature_numerator();
                         let beats_per_bar = time_signature_numerator;
                         let mut play_position_in_frames = state.play_position_in_frames();
@@ -5676,12 +5756,35 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 grid.set_tempo(state.project().song().tempo());
                             }
                         }
-                        if let Some(controller_grid) = gui.automation_grid() {
-                            if let Ok(controllers) = controller_grid.lock() {
-                                let mut grid = controllers;
+                        if let Some(automation_grid) = gui.automation_grid() {
+                            if let Ok(mut grid) = automation_grid.lock() {
                                 grid.set_tempo(state.project().song().tempo());
                             }
                         }
+                        if let Some(riff_grid) = gui.riff_grid() {
+                            if let Ok(mut grid) = riff_grid.lock() {
+                                grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+
+                        {
+                            let mut time_info = vst_host_time_info.write();
+                            time_info.sample_pos = 0.0;
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;
+                            time_info.nanoseconds = 0.0;
+                            time_info.ppq_pos = 0.0;
+                            time_info.tempo = tempo;
+                            time_info.bar_start_pos = 0.0;
+                            time_info.cycle_start_pos = 0.0;
+                            time_info.cycle_end_pos = 0.0;
+                            time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
+                            time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
+                            time_info.smpte_offset = 0;
+                            time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                            time_info.samples_to_next_clock = 0;
+                            time_info.flags = 3;
+                        }
+
                         match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
@@ -5693,6 +5796,82 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - tempo change - could not get lock on state"),
                 };
             },
+            DAWEvents::TimeSignatureNumeratorChange(time_signature_numerator) => {
+                match state.lock() {
+                    Ok(mut state) => {
+                        let denominator = state.get_project().song_mut().time_signature_denominator();
+                        state.get_project().song_mut().set_time_signature_numerator(time_signature_numerator);
+                        if let Some(track_grid) = gui.track_grid() {
+                            if let Ok(mut grid) = track_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(piano_roll_grid) = gui.piano_roll_grid() {
+                            if let Ok(mut grid) = piano_roll_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(automation_grid) = gui.automation_grid() {
+                            if let Ok(mut grid) = automation_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(riff_grid) = gui.riff_grid() {
+                            if let Ok(mut grid) = riff_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+
+                        {
+                            let mut time_info = vst_host_time_info.write();
+                            time_info.time_sig_numerator = time_signature_numerator as i32;
+                        }
+
+                        for track in state.project().song().tracks().iter() {
+                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::TimeSignatureChange(time_signature_numerator as u32, denominator as u32));
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - time signature numerator change - could not get lock on state"),
+                };
+            }
+            DAWEvents::TimeSignatureDenominatorChange(time_signature_denominator) => {
+                match state.lock() {
+                    Ok(mut state) => {
+                        let numerator = state.get_project().song_mut().time_signature_numerator();
+                        state.get_project().song_mut().set_time_signature_denominator(time_signature_denominator);
+                        if let Some(track_grid) = gui.track_grid() {
+                            if let Ok(mut track) = track_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(mut piano_roll_grid) = gui.piano_roll_grid() {
+                            if let Ok(piano_roll) = piano_roll_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(automation_grid) = gui.automation_grid() {
+                            if let Ok(mut grid) = automation_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+                        if let Some(riff_grid) = gui.riff_grid() {
+                            if let Ok(mut grid) = riff_grid.lock() {
+                                // grid.set_tempo(state.project().song().tempo());
+                            }
+                        }
+
+                        {
+                            let mut time_info = vst_host_time_info.write();
+                             time_info.time_sig_denominator = time_signature_denominator as i32;
+                        }
+
+                        for track in state.project().song().tracks().iter() {
+                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::TimeSignatureChange(numerator as u32, time_signature_denominator as u32));
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - time signature denominator change - could not get lock on state"),
+                };
+            }
             DAWEvents::Panic => {
                 debug!("Sending note off messages to everything...");
                 match state.lock() {
@@ -5732,8 +5911,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
-                        let sample_rate = state.get_project().song().sample_rate();
-                        let block_size = state.get_project().song().block_size();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
+                        let block_size = state.configuration.audio.block_size as f64;
                         let play_position_in_frames = 60.0 * play_position_in_beats / bpm * sample_rate;
 
                         state.set_play_position_in_frames(play_position_in_frames as u32);
@@ -7169,7 +7348,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         // create the sample object and store it
                         let sample_data = SampleData::new(
                             file_name.clone(),
-                            *state.get_project().song_mut().sample_rate_mut() as i32,
+                            state.configuration.audio.sample_rate,
                         );
                         let sample = Sample::new(
                             file_name.clone(),
@@ -7441,7 +7620,78 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::RiffReferenceRegenerateIds - could not get lock on state"),
                 }
             }
-        },
+            DAWEvents::AudioConfigurationChanged(sample_rate, block_size) => {
+                debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged");
+                gui.clear_ui();
+                let state_arc = state.clone();
+                match state.lock() {
+                    Ok(mut state) => {
+                        state.close_all_tracks(tx_to_audio.clone());
+                        state.reset_state();
+                        state.configuration.audio.sample_rate = sample_rate;
+                        state.configuration.audio.block_size = block_size;
+
+                        {
+                            let mut time_info =  vst_host_time_info.write();
+                            time_info.sample_pos = 0.0;
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;
+                            time_info.nanoseconds = 0.0;
+                            time_info.ppq_pos = 0.0;
+                            time_info.tempo = state.project().song().tempo();
+                            time_info.bar_start_pos = 0.0;
+                            time_info.cycle_start_pos = 0.0;
+                            time_info.cycle_end_pos = 0.0;
+                            time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
+                            time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
+                            time_info.smpte_offset = 0;
+                            time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                            time_info.samples_to_next_clock = 0;
+                            time_info.flags = 3;
+                        }
+
+                        state.stop_jack();
+                        state.start_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+
+                        let mut instrument_track_senders2 = HashMap::new();
+                        let mut instrument_track_receivers2 = HashMap::new();
+                        let mut sample_references = HashMap::new();
+                        let mut samples_data = HashMap::new();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
+                        let block_size = state.configuration.audio.block_size as f64;
+                        let tempo = state.project().song().tempo();
+                        let time_signature_numerator = state.project().song().time_signature_numerator();
+                        let time_signature_denominator = state.project().song().time_signature_denominator();
+                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                            DAWState::init_track(
+                                vst24_plugin_loaders.clone(),
+                                clap_plugin_loaders.clone(),
+                                tx_to_audio.clone(),
+                                track_audio_coast.clone(),
+                                &mut instrument_track_senders2,
+                                &mut instrument_track_receivers2,
+                                track,
+                                Some(&sample_references),
+                                Some(&samples_data),
+                                vst_host_time_info.clone(),
+                                sample_rate,
+                                block_size,
+                                tempo,
+                                time_signature_numerator as i32,
+                                time_signature_denominator as i32,
+                            );
+                        }
+                        state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
+
+                        gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
+                        match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
+                        }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - could not get lock on state"),
+                }
+            }
+        }
         Err(_) => (),
     }
 }
@@ -14390,7 +14640,7 @@ fn create_jack_time_critical_event_processing_thread(
                                     match state.lock() {
                                         Ok(mut state) => {
                                             let tempo = state.project().song().tempo();
-                                            let sample_rate = state.project().song().sample_rate();
+                                            let sample_rate = state.configuration.audio.sample_rate as f64;;
                                             let current_view = state.current_view().clone();
                                             let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                                                 Some(selected_riff_arrangement_uuid.to_string())
@@ -14413,6 +14663,52 @@ fn create_jack_time_critical_event_processing_thread(
                                                                 TrackType::InstrumentTrack(track) => {
                                                                     match current_view {
                                                                         CurrentView::Track => {
+                                                                            match selected_riff_uuid {
+                                                                                Some(uuid) => {
+                                                                                    for riff in track.riffs_mut().iter_mut() {
+                                                                                        if riff.uuid().to_string() == *uuid {
+                                                                                            if (144..=159).contains(&midi_msg_type) { //note on
+                                                                                                let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                                let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                                debug!(
+                                                                                                    "Adding note to riff: delta frames={}, actual_position={}, adjusted_position={}, note={}, velocity={}",
+                                                                                                    jack_midi_event.delta_frames,
+                                                                                                    actual_position,
+                                                                                                    adjusted_position,
+                                                                                                    jack_midi_event.data[1] as i32,
+                                                                                                    jack_midi_event.data[2] as i32);
+                                                                                                let note = Note::new_with_params(
+                                                                                                    MidiPolyphonicExpressionNoteId::ALL as i32, adjusted_position, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, 0.2);
+                                                                                                recorded_playing_notes.insert(note.note(), note.position());
+                                                                                                riff.events_mut().push(TrackEvent::Note(note));
+                                                                                                riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                            } else if (128..=143).contains(&midi_msg_type) { // note off
+                                                                                                let note_number = jack_midi_event.data[1] as i32;
+                                                                                                if let Some(note_position) = recorded_playing_notes.get_mut(&note_number) {
+                                                                                                    let actual_position = tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate;
+                                                                                                    let adjusted_position = ((actual_position * 1000.0) as i32 % ((riff.length() * 1000.0) as i32)) as f64 / 1000.0;
+                                                                                                    // find the note in the riff
+                                                                                                    for track_event in riff.events_mut().iter_mut() {
+                                                                                                        if track_event.position() == *note_position {
+                                                                                                            if let TrackEvent::Note(note) = track_event {
+                                                                                                                if note.note() == note_number {
+                                                                                                                    note.set_length(adjusted_position - note.position());
+                                                                                                                    riff_changed = true;
+                                                                                                                    break;
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                                recorded_playing_notes.remove(&note_number);
+                                                                                            }
+
+                                                                                            break;
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                None => debug!("Jack midi receiver - no selected riff."),
+                                                                            }
                                                                             // add the controller events to the track automation
                                                                             if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
                                                                                 debug!("Adding controller to track automation: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
@@ -14556,7 +14852,7 @@ fn create_jack_time_critical_event_processing_thread(
                                                 debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                                 // need to send some track volume (176) or pan (177) messages
                                                 let position_in_frames = jack_midi_event.delta_frames;
-                                                let position_in_beats = (position_in_frames as f64) / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
+                                                let position_in_beats = (position_in_frames as f64) / state.configuration.audio.sample_rate as f64 * state.project().song().tempo() / 60.0;
                                                 let track_index = jack_midi_event.data[1] as i32 - 1;
                                                 let track_change_type = if jack_midi_event.data[0] as i32 == 176 {
                                                     TrackChangeType::Volume(Some(position_in_beats), jack_midi_event.data[2] as f32 / 127.0)
@@ -14607,7 +14903,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                         Ok(mut state) => {
                             let bpm = state.get_project().song().tempo();
                             let time_signature_numerator = state.get_project().song().time_signature_numerator();
-                            let sample_rate = state.get_project().song().sample_rate();
+                            let sample_rate = state.configuration.audio.sample_rate as f64;
                             let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
 
                             let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
@@ -14885,7 +15181,7 @@ fn process_track_background_processor_events(
                         },
                         TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                             automation_track_uuid.push_str(track_uuid.as_str());
-                            let play_position_in_beats = state.play_position_in_frames() as f64 / state.project().song().sample_rate() * state.project().song().tempo() / 60.0;
+                            let play_position_in_beats = state.play_position_in_frames() as f64 / state.configuration.audio.sample_rate as f64 * state.project().song().tempo() / 60.0;
                             automation_event = Some(TrackEvent::AudioPluginParameter(PluginParameter {
                                 id: Uuid::new_v4(),
                                 index: param_index,

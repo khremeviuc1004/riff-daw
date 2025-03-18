@@ -31,7 +31,10 @@ pub mod ffi {
             sampleRate: f64,
             blockSize: i32,
             vst3Host: Box<Vst3Host>,
-            sendParameterChange: fn(context: Box<Vst3Host>, param_id: i32, param_value: f32) -> Box<Vst3Host>
+            sendParameterChange: fn(context: Box<Vst3Host>, param_id: i32, param_value: f32) -> Box<Vst3Host>,
+            tempo: f64,
+            timeSignatureNumerator: i32,
+            timeSignatureDenominator: i32,
         ) -> bool;
         fn showPluginEditor(
             riff_daw_plugin_uuid: String,
@@ -39,6 +42,8 @@ pub mod ffi {
             vst3Host: Box<Vst3Host>,
             sendPluginWindowResize: fn(context: Box<Vst3Host>, new_window_width: i32, new_window_height: i32) -> Box<Vst3Host>,
         ) -> bool;
+        fn vst3_plugin_change_tempo(riff_daw_plugin_uuid: String, tempo: f64);
+        fn vst3_plugin_change_time_signature(riff_daw_plugin_uuid: String, timeSignatureNumerator: u32, timeSignatureDenominator: u32);
         fn vst3_plugin_get_window_height(riff_daw_plugin_uuid: String) -> u32;
         fn vst3_plugin_get_window_width(riff_daw_plugin_uuid: String) -> u32;
         fn vst3_plugin_get_window_refresh(riff_daw_plugin_uuid: String);

@@ -3747,7 +3747,7 @@ impl MainWindow {
                 copied_event_sender,
                 false,
                 true,
-                false,
+                true,
                 true
             ));
         let mut track_grid = BeatGrid::new_with_custom(
@@ -8472,7 +8472,7 @@ impl MainWindow {
                 copied_event_sender,
                 false,
                 true,
-                false,
+                true,
                 true
             ),
             use_globally_selected_riff_grid_uuid,
@@ -10539,6 +10539,9 @@ impl MainWindow {
     pub fn piano_roll_grid(&self) -> Option<&Arc<Mutex<BeatGrid>>> {
         self.piano_roll_grid.as_ref()
     }
+    pub fn piano_roll_grid_ruler(&self) -> Option<&Arc<Mutex<BeatGridRuler>>> {
+        self.piano_roll_grid_ruler.as_ref()
+    }
 
     /// Get a mutable reference to the main window's sample roll grid.
     pub fn sample_roll_grid_mut(&mut self) -> &mut Option<Arc<Mutex<BeatGrid>>> {
@@ -10555,15 +10558,27 @@ impl MainWindow {
         self.track_grid.as_ref()
     }
 
+    pub fn track_grid_ruler(&self) -> Option<&Arc<Mutex<BeatGridRuler>>> {
+        self.track_grid_ruler.as_ref()
+    }
+
     /// Get a reference to the main window's riff grid.
     pub fn riff_grid(&self) -> Option<&Arc<Mutex<BeatGrid>>> {
         self.riff_grid.as_ref()
+    }
+
+    pub fn riff_grid_ruler(&self) -> Option<&Arc<Mutex<BeatGridRuler>>> {
+        self.riff_grid_ruler.as_ref()
     }
 
     /// Get a reference to the main window's controller grid.
     #[must_use]
     pub fn automation_grid(&self) -> Option<&Arc<Mutex<BeatGrid>>> {
         self.automation_grid.as_ref()
+    }
+
+    pub fn automation_grid_ruler(&self) -> Option<&Arc<Mutex<BeatGridRuler>>> {
+        self.automation_grid_ruler.as_ref()
     }
 
     pub fn get_track_riffs_stack_visible_name(&self) -> String {

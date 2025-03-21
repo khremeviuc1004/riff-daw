@@ -1071,6 +1071,10 @@ impl BeatGrid {
     pub fn set_snap_strength(&mut self, snap_strength: f64) {
         self.snap_strength = snap_strength;
     }
+
+    pub fn set_beats_per_bar(&mut self, beats_per_bar: i32) {
+        self.beats_per_bar = beats_per_bar;
+    }
 }
 
 impl MouseHandler for BeatGrid {
@@ -1615,7 +1619,7 @@ impl Grid for BeatGrid {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
         let mut current_x = clip_x1_in_beats.floor() * adjusted_beat_width_in_pixels; // go to the first beat to the left of the view port e.g. bar 2 beat 3 = beat 2 * 4 + 3 = beat 11
-        let mut beat_in_bar_index = (clip_x1_in_beats as i32 % 4) + 1;
+        let mut beat_in_bar_index = (clip_x1_in_beats as i32 % self.beats_per_bar) + 1;
 
         while current_x < clip_x2 {
             if beat_in_bar_index == 1 {
@@ -1631,7 +1635,7 @@ impl Grid for BeatGrid {
             let _ = context.stroke();
             current_x += adjusted_beat_width_in_pixels;
 
-            if beat_in_bar_index == 4 {
+            if beat_in_bar_index == self.beats_per_bar {
                 beat_in_bar_index = 1;
             }
             else {
@@ -1986,6 +1990,10 @@ impl BeatGridRuler {
             custom_painter: None,
         }
     }
+
+    pub fn set_beats_per_bar(&mut self, beats_per_bar: i32) {
+        self.beats_per_bar = beats_per_bar;
+    }
 }
 
 impl MouseHandler for BeatGridRuler {
@@ -2020,8 +2028,8 @@ impl Grid for BeatGridRuler {
         let (clip_x1, _, clip_x2, _) = context.clip_extents().unwrap();
         let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
         let mut current_x = clip_x1_in_beats.floor() * adjusted_beat_width_in_pixels; // go to the first beat to the left of the view port e.g. bar 2 beat 3 = beat 2 * 4 + 3 = beat 11
-        let mut bar_index = (clip_x1_in_beats / 4.0) as i32 + 1; // get the bar
-        let mut beat_in_bar_index = (clip_x1_in_beats as i32 % 4) + 1;
+        let mut bar_index = (clip_x1_in_beats / (self.beats_per_bar as f64)) as i32 + 1; // get the bar
+        let mut beat_in_bar_index = (clip_x1_in_beats as i32 % self.beats_per_bar) + 1;
 
         while current_x < clip_x2 {
             if beat_in_bar_index == 1 {
@@ -2052,7 +2060,7 @@ impl Grid for BeatGridRuler {
 
             current_x += adjusted_beat_width_in_pixels;
 
-            if beat_in_bar_index == 4 {
+            if beat_in_bar_index == self.beats_per_bar {
                 beat_in_bar_index = 1;
                 bar_index += 1;
             }

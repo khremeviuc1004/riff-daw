@@ -32,6 +32,7 @@ use ui::*;
 use crate::{grid::Grid, utils::DAWUtils};
 use crate::audio::Audio;
 use crate::constants::{EVENT_DELETION_BEAT_TOLERANCE, VST3_PATH_ENVIRONMENT_VARIABLE_NAME};
+use crate::utils::CalculatedSnap;
 use crate::vst3_cxx_bridge::ffi;
 
 mod constants;
@@ -410,7 +411,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         let mut project = Project::new();
 
-                        project.song().set_tempo(gui.ui.song_tempo_spinner.value());
+                        project.song_mut().set_tempo(gui.ui.song_tempo_spinner.value());
 
                         {
                             let mut time_info =  vst_host_time_info.write();
@@ -4867,14 +4868,35 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             for track in state.get_project().song_mut().tracks_mut().iter_mut() {
                                 let mut unused_changes = vec![];
                                 for (original_riff, changed_riff) in change.iter() {
-                                    // only position changes are aloud for riff references
+                                    let mut used = false;
+                                    let mut riff_id = "".to_string();
+
                                     if let Some(riff_ref) = track.riff_refs_mut().iter_mut().find(|riff_ref| riff_ref.uuid().to_string() == changed_riff.uuid().to_string()) {
-                                        let snap_delta = changed_riff.position() % snap_position_in_beats;
-                                        let new_position = changed_riff.position() - snap_delta;
-                                        if new_position >= 0.0 {
-                                            riff_ref.set_position(new_position);
+                                        let delta = riff_ref.position() - changed_riff.position();
+
+                                        riff_id = riff_ref.linked_to();
+
+                                        if delta < -0.000001 || delta > 0.000001 {
+                                            let calculated_value = DAWUtils::quantise(changed_riff.position(), snap_position_in_beats, 1.0, false);
+                                            if calculated_value.snapped {
+                                                riff_ref.set_position(calculated_value.snapped_value);
+                                            }
                                         }
-                                    } else {
+                                        used = true;
+                                    }
+
+                                    if let Some(riff) = track.riffs_mut().iter_mut().find(|riff| riff.id() == riff_id) {
+                                        let delta = riff.length() - changed_riff.length();
+                                        if delta < -0.000001 || delta > 0.000001 {
+                                            let calculated_value = DAWUtils::quantise(changed_riff.length(), snap_position_in_beats, 1.0, true);
+                                            if calculated_value.snapped {
+                                                riff.set_length(calculated_value.snapped_value);
+                                            }
+                                        }
+                                        used = true;
+                                    }
+
+                                    if !used {
                                         unused_changes.push((original_riff.clone(), changed_riff.clone()));
                                     }
                                 }
@@ -5803,22 +5825,42 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.get_project().song_mut().set_time_signature_numerator(time_signature_numerator);
                         if let Some(track_grid) = gui.track_grid() {
                             if let Ok(mut grid) = track_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
+                            }
+                        }
+                        if let Some(track_grid_ruler) = gui.track_grid_ruler() {
+                            if let Ok(mut grid) = track_grid_ruler.lock() {
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
                             }
                         }
                         if let Some(piano_roll_grid) = gui.piano_roll_grid() {
                             if let Ok(mut grid) = piano_roll_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
+                            }
+                        }
+                        if let Some(piano_roll_grid_ruler) = gui.piano_roll_grid_ruler() {
+                            if let Ok(mut grid) = piano_roll_grid_ruler.lock() {
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
                             }
                         }
                         if let Some(automation_grid) = gui.automation_grid() {
                             if let Ok(mut grid) = automation_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
+                            }
+                        }
+                        if let Some(automation_grid_ruler) = gui.automation_grid_ruler() {
+                            if let Ok(mut grid) = automation_grid_ruler.lock() {
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
                             }
                         }
                         if let Some(riff_grid) = gui.riff_grid() {
                             if let Ok(mut grid) = riff_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
+                            }
+                        }
+                        if let Some(riff_grid_ruler) = gui.riff_grid_ruler() {
+                            if let Ok(mut grid) = riff_grid_ruler.lock() {
+                                grid.set_beats_per_bar(time_signature_numerator as i32);
                             }
                         }
 
@@ -5830,6 +5872,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         for track in state.project().song().tracks().iter() {
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::TimeSignatureChange(time_signature_numerator as u32, denominator as u32));
                         }
+
+                        gui.ui.piano_roll_drawing_area.queue_draw();
+                        gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+                        gui.ui.track_drawing_area.queue_draw();
+                        gui.ui.track_ruler_drawing_area.queue_draw();
+                        gui.ui.automation_drawing_area.queue_draw();
+                        gui.ui.automation_ruler_drawing_area.queue_draw();
+                        gui.ui.riff_grid_drawing_area.queue_draw();
+                        gui.ui.riff_grid_ruler_drawing_area.queue_draw();
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - time signature numerator change - could not get lock on state"),
                 };
@@ -5841,22 +5892,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.get_project().song_mut().set_time_signature_denominator(time_signature_denominator);
                         if let Some(track_grid) = gui.track_grid() {
                             if let Ok(mut track) = track_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                // grid.set_tempo(time_signature_denominator);
                             }
                         }
                         if let Some(mut piano_roll_grid) = gui.piano_roll_grid() {
                             if let Ok(piano_roll) = piano_roll_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                // grid.set_tempo(time_signature_denominator);
                             }
                         }
                         if let Some(automation_grid) = gui.automation_grid() {
                             if let Ok(mut grid) = automation_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                // grid.set_tempo(time_signature_denominator);
                             }
                         }
                         if let Some(riff_grid) = gui.riff_grid() {
                             if let Ok(mut grid) = riff_grid.lock() {
-                                // grid.set_tempo(state.project().song().tempo());
+                                // grid.set_tempo(time_signature_denominator);
                             }
                         }
 
@@ -6677,16 +6728,25 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     None => (),
                                 }
 
+                                let mut riff_id = "".to_string();
+                                let mut track_id = "".to_string();
                                 if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
                                     let track_uuids = { riff_grid.tracks().map(|key| key.to_string()).collect_vec() };
                                     for track_uuid in track_uuids {
                                         for (_, changed_riff) in change.iter() {
                                             for riff_refs in riff_grid.track_riff_references_mut(track_uuid.to_string()) {
+
                                                 if let Some(riff_ref) = riff_refs.iter_mut().find(|riff_ref| riff_ref.uuid().to_string() == changed_riff.uuid().to_string()) {
-                                                    let snap_delta = changed_riff.position() % snap_position_in_beats;
-                                                    let new_position = changed_riff.position() - snap_delta;
-                                                    if new_position >= 0.0 {
-                                                        riff_ref.set_position(new_position);
+                                                    let delta = riff_ref.position() - changed_riff.position();
+
+                                                    track_id = track_uuid.clone();
+                                                    riff_id = riff_ref.linked_to();
+
+                                                    if delta < -0.000001 || delta > 0.000001 {
+                                                        let calculated_value = DAWUtils::quantise(changed_riff.position(), snap_position_in_beats, 1.0, false);
+                                                        if calculated_value.snapped {
+                                                            riff_ref.set_position(calculated_value.snapped_value);
+                                                        }
                                                     }
                                                 }
                                             }

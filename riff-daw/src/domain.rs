@@ -7984,7 +7984,12 @@ mod tests {
             1.0,
             GeneralTrackType::InstrumentTrack,
             vst_host_time_info,
-            Box::new(RiffBufferTrackEventProcessor::new(1024.0))
+            Box::new(RiffBufferTrackEventProcessor::new(1024.0)),
+            44100.0,
+            1924.0,
+            140.0,
+            4,
+            4
         );
 
         // create a 1 bar riff with a long note

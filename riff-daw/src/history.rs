@@ -1394,6 +1394,21 @@ impl RiffAdd {
             track_id,
         }
     }
+
+    pub fn new_with_track_id(
+        id: Uuid,
+        name: String,
+        duration: f64,
+        state: &mut Arc<Mutex<DAWState>>,
+        track_id: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            duration,
+            track_id,
+        }
+    }
 }
 
 unsafe impl Send for RiffAdd {}

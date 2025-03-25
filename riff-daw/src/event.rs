@@ -135,6 +135,8 @@ pub enum RiffGridChangeType {
     RiffReferenceCopySelected,
     RiffReferencePaste,
     RiffReferenceChange( Vec<(Riff, Riff)> ), // Vec<(original riff copy, changed riff)>
+    RiffReferenceIncrementRiff{ track_index: i32, position: f64 },
+    RiffSelectWithTrackIndex{ track_index: i32, position: f64 },
 }
 
 #[derive(Clone)]
@@ -174,11 +176,13 @@ pub enum TrackChangeType {
     RiffColourChanged(String, f64, f64, f64, f64), // uuid, red, green, blue, alpha
 
     RiffAdd(Uuid, String, f64),     // uuid, name, length
+    RiffAddWithTrackIndex(String, f64, i32),     // uuid, length, track index
     RiffCopy(String, Uuid, String), // uuid to copy, uuid, name
     RiffDelete(String),             // riff uuid
     RiffNameChange(String, String), // riff uuid, new riff name
     RiffLengthChange(String, f64),  // riff uuid, new riff length
     RiffSelect(String),             // riff uuid
+    RiffSelectWithTrackIndex{ track_index: i32, position: f64 },
 
     RiffReferenceAdd(i32, f64),                    // track index, position
     RiffReferenceDragCopy(Vec<(f64, String)>),                    // position, original riff reference uuid
@@ -193,6 +197,7 @@ pub enum TrackChangeType {
     RiffReferenceChange(Vec<(Riff, Riff)>), // Vec<(original riff copy, changed riff)>
     RiffReferencesSelectAll,
     RiffReferencesDeselectAll,
+    RiffReferenceIncrementRiff{ track_index: i32, position: f64 },
 
     RiffAddNote(Vec<(i32, f64, f64)>),    // note_number, position, duration
     RiffDeleteNote(i32, f64),      // note_number, position

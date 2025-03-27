@@ -64,17 +64,6 @@ thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
 
 
 fn main() {
-    // transport
-    let transport = Transport {
-        playing: false,
-        bpm: 140.0,
-        sample_rate: 44100.0,
-        block_size: 1024.0,
-        position_in_beats: 0.0,
-        position_in_frames: 0,
-    };
-    TRANSPORT.set(RwLock::new(transport));
-
     // setup history
     let mut history_manager = Arc::new(Mutex::new(HistoryManager::new()));
 
@@ -91,10 +80,37 @@ fn main() {
         None
     };
 
+    let (tx_from_ui, rx_from_ui) = unbounded::<DAWEvents>();
+    let (tx_to_audio, rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
+    let (jack_midi_sender_ui, jack_midi_receiver_ui) = unbounded::<AudioLayerOutwardEvent>();
+    let (jack_midi_sender, jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
+    let (jack_time_critical_midi_sender, jack_time_critical_midi_receiver) = unbounded::<AudioLayerTimeCriticalOutwardEvent>();
+
+    let state = {
+        let tx_from_ui = tx_from_ui.clone();
+        Arc::new(Mutex::new (DAWState::new(tx_from_ui)))
+    };
+
+    let sample_rate = if let Ok(state) = state.lock() {
+        // transport
+        let transport = Transport {
+            playing: false,
+            bpm: 140.0,
+            sample_rate: state.configuration.audio.sample_rate as f64,
+            block_size: state.configuration.audio.block_size as f64,
+            position_in_beats: 0.0,
+            position_in_frames: 0,
+        };
+        TRANSPORT.set(RwLock::new(transport));
+
+        state.configuration.audio.sample_rate as f64
+    } else { 44100.0 };
+
+
     // VST2 timing
     let vst_host_time_info = Arc::new(RwLock::new(TimeInfo {
         sample_pos: 0.0,
-        sample_rate: 44100.0,
+        sample_rate,
         nanoseconds: 0.0,
         ppq_pos: 0.0,
         tempo: 140.0,
@@ -108,17 +124,6 @@ fn main() {
         samples_to_next_clock: 0,
         flags: 3,
     }));
-
-    let (tx_from_ui, rx_from_ui) = unbounded::<DAWEvents>();
-    let (tx_to_audio, rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
-    let (jack_midi_sender_ui, jack_midi_receiver_ui) = unbounded::<AudioLayerOutwardEvent>();
-    let (jack_midi_sender, jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
-    let (jack_time_critical_midi_sender, jack_time_critical_midi_receiver) = unbounded::<AudioLayerTimeCriticalOutwardEvent>();
-
-    let state = {
-        let tx_from_ui = tx_from_ui.clone();
-        Arc::new(Mutex::new (DAWState::new(tx_from_ui)))
-    };
 
     let mut audio_plugin_windows: HashMap<String, Window> = HashMap::new();
 
@@ -1033,6 +1038,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 let mut start_block = 0;
                                 let mut end_block = 44;
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
+                                let block_size = state.configuration.audio.block_size as f64;
                                 let song = state.project().song();
                                 let tracks = song.tracks();
 
@@ -1040,8 +1047,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(active_loop_uuid) => {
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                start_block = (active_loop.start_position() * 44100.0 / 1024.0) as i32;
-                                                end_block = (active_loop.end_position() * 44100.0 / 1024.0) as i32;
+                                                start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
+                                                end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
                                             },
                                             None => debug!("Could not find the active loop."),
                                         }
@@ -1086,6 +1093,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 let mut start_block = 0;
                                 let mut end_block = 44;
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
+                                let block_size = state.configuration.audio.block_size as f64;
                                 let song = state.project().song();
                                 let tracks = song.tracks();
 
@@ -1093,8 +1102,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(active_loop_uuid) => {
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                start_block = (active_loop.start_position() * 44100.0 / 1024.0) as i32;
-                                                end_block = (active_loop.end_position() * 44100.0 / 1024.0) as i32;
+                                                start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
+                                                end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
                                             },
                                             None => debug!("Could not find the active loop."),
                                         }
@@ -1116,14 +1125,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     LoopChangeType::LoopLimitLeftChanged(start_position) => {
                         match state.lock() {
                             Ok(state) => {
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
+                                let block_size = state.configuration.audio.block_size as f64;
+
                                 match state.active_loop() {
                                     Some(active_loop_uuid) => {
                                         let song = state.project().song();
                                         let tracks = song.tracks();
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                let start_block = (start_position * 44100.0 / 1024.0) as i32;
-                                                let end_block = (active_loop.end_position() * 44100.0 / 1024.0) as i32;
+                                                let start_block = (start_position * sample_rate / block_size) as i32;
+                                                let end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
                                                 for track in tracks {
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
                                                 }
@@ -1148,14 +1160,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     LoopChangeType::LoopLimitRightChanged(end_position) => {
                         match state.lock() {
                             Ok(state) => {
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
+                                let block_size = state.configuration.audio.block_size as f64;
+
                                 match state.active_loop() {
                                     Some(active_loop_uuid) => {
                                         let song = state.project().song();
                                         let tracks = song.tracks();
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                let start_block = (active_loop.start_position() * 44100.0 / 1024.0) as i32;
-                                                let end_block = (end_position * 44100.0 / 1024.0) as i32;
+                                                let start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
+                                                let end_block = (end_position * sample_rate / block_size) as i32;
                                                 for track in tracks {
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
                                                 }
@@ -5617,15 +5632,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.automation_drawing_area.queue_draw();
             }
             DAWEvents::TransportStop => {
-                // set some sensible defaults
-                let mut bpm = 140.0;
-                let mut sample_rate = 44100.0;
-                let mut block_size = 1024.0;
-                let mut song_length_in_beats = 400.0;
-
                 match state.lock() {
                     Ok(mut state) => {
-                        song_length_in_beats = *state.get_project().song_mut().length_in_beats_mut() as f64;
                         state.set_playing(false);
                         if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
                             gui.repaint_riff_set_view_riff_set_active_drawing_areas(playing_riff_set_uuid, 0.0);
@@ -5651,21 +5659,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(state) => {
                         let song = state.project().song();
+                        let song_length_in_beats = song.length_in_beats() as f64;
                         let tracks = song.tracks();
-                        bpm = song.tempo();
-                        sample_rate = state.configuration.audio.sample_rate as f64;
-                        block_size = state.configuration.audio.block_size as f64;
+                        let bpm = song.tempo();
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
+                        let block_size = state.configuration.audio.block_size as f64;
                         for track in tracks {
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Stop);
                         }
-                    },
-                    Err(_) => debug!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
-                };
                 let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
                 match tx_to_audio.send(AudioLayerInwardEvent::Play(false, number_of_blocks, 0)) {
                     Ok(_) => (),
                     Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when stopping play: {}", error),
                 }
+                    },
+                    Err(_) => debug!("Main - rx_ui processing loop - transport stop - could not get lock on state"),
+                };
             }
             DAWEvents::TransportPlay => {
                 match state.lock() {
@@ -7953,6 +7962,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             time_info.samples_to_next_clock = 0;
                             time_info.flags = 3;
                         }
+
+                        // update the transport
+                        TRANSPORT.get().write().sample_rate = sample_rate as f64;
+                        TRANSPORT.get().write().block_size = block_size as f64;
 
                         state.stop_jack();
                         state.start_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());

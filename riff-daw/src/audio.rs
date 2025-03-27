@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::From;
 use std::ops::IndexMut;
 use std::sync::{Arc, Mutex};
@@ -12,26 +12,22 @@ use log::*;
 use parking_lot::RwLock;
 use crate::domain::{AudioBlock, TRANSPORT};
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
+use crate::constants::EVENT_BUFFER_SIZE;
 use crate::event::AudioLayerTimeCriticalOutwardEvent;
 
-const MAX_MIDI: usize = 3;
-
-
-const CHANNELS: usize = 2;
-const FRAMES: u32 = 64;
-const SAMPLE_HZ: f64 = 44_100.0;
+const MAX_MIDI_BYTES: usize = 3;
 
 #[derive(Copy, Clone)]
 pub struct MidiCopy {
     len: usize,
-    data: [u8; MAX_MIDI],
+    data: [u8; MAX_MIDI_BYTES],
     time: Frames,
 }
 
 impl From<RawMidi<'_>> for MidiCopy {
     fn from(midi: RawMidi<'_>) -> Self {
-        let len = std::cmp::min(MAX_MIDI, midi.bytes.len());
-        let mut data = [0; MAX_MIDI];
+        let len = std::cmp::min(MAX_MIDI_BYTES, midi.bytes.len());
+        let mut data = [0; MAX_MIDI_BYTES];
         data[..len].copy_from_slice(&midi.bytes[..len]);
         MidiCopy {
             len,
@@ -204,11 +200,11 @@ impl NotificationHandler for JackNotificationHandler {
 pub struct Audio {
     audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
     audio_block_pool: Vec<AudioBlock>,
-    block_number_buffer: BTreeMap<i32, BTreeMap<i32, AudioBlock>>,
-    btree_map_pool: Vec<BTreeMap<i32, AudioBlock>>,
+    block_number_buffer: HashMap<i32, HashMap<i32, AudioBlock>>,
+    btree_map_pool: Vec<HashMap<i32, AudioBlock>>,
     stuck_block_number: i32,
     stuck_block_number_attempt_count: i32,
-    jack_midi_buffer: [(u32, u8, u8, u8, bool); 1024],
+    jack_midi_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
     out_l: Port<AudioOut>,
     out_r: Port<AudioOut>,
     midi_out: Port<MidiOut>,
@@ -254,16 +250,16 @@ impl Audio {
                tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
-        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
+        let btree_map_pool: Vec<HashMap<i32, AudioBlock>> = (0..100).map(|_| HashMap::new()).collect();
 
         Audio {
             audio_blocks: vec![],
             audio_block_pool,
-            block_number_buffer: BTreeMap::new(),
+            block_number_buffer: HashMap::new(),
             btree_map_pool,
             stuck_block_number: 0,
             stuck_block_number_attempt_count: 0,
-            jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
+            jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
             midi_out: client.register_port("midi_out", MidiOut::default()).unwrap(),
@@ -311,16 +307,16 @@ impl Audio {
                               tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
-        let btree_map_pool: Vec<BTreeMap<i32, AudioBlock>> = (0..100).map(|_| BTreeMap::new()).collect();
+        let btree_map_pool: Vec<HashMap<i32, AudioBlock>> = (0..100).map(|_| HashMap::new()).collect();
 
         Audio {
             audio_blocks: vec![],
             audio_block_pool,
-            block_number_buffer: BTreeMap::new(),
+            block_number_buffer: HashMap::new(),
             btree_map_pool,
             stuck_block_number: 0,
             stuck_block_number_attempt_count: 0,
-            jack_midi_buffer: [(0, 0, 0, 0, false); 1024],
+            jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
             midi_out: client.register_port("midi_out", MidiOut::default()).unwrap(),
@@ -469,7 +465,7 @@ impl Audio {
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
 
-            // if block number is 0 then dump all previous data and return audio blocks and btree maps to their respective pools - works when loop in the riff views
+            // if block number is 0 then dump all previous data and return audio blocks and maps to their respective pools - works when loop in the riff views
             if self.block == 0 {
                 let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
                 for block_number in block_numbers.iter() {
@@ -520,50 +516,52 @@ impl Audio {
                 }
             }
 
+            // play the audio for the lowest number of block if it has an audio block for each and every tracks
             let mut key_to_remove = None;
-            if let Some((key, track_buffer)) = self.block_number_buffer.first_key_value() {
-                if self.stuck_block_number != *key {
-                    self.stuck_block_number = *key;
-                    self.stuck_block_number_attempt_count = 0;
-                }
+            if let Some(key) = self.block_number_buffer.keys().min() {
+                if let Some(track_buffer) = self.block_number_buffer.get(key) {
+                    if self.stuck_block_number != *key {
+                        self.stuck_block_number = *key;
+                        self.stuck_block_number_attempt_count = 0;
+                    }
 
-                if track_buffer.len() == self.audio_consumers.len() {
-                    for audio_block in track_buffer.values() {
-                        for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
-                            if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
-                                *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
-                                *right += audio_block.audio_data_right[index] * self.master_volume * 2.0 * right_pan;
-                                if *left > master_channel_left_level {
-                                    master_channel_left_level += *left;
+                    if track_buffer.len() == self.audio_consumers.len() {
+                        for audio_block in track_buffer.values() {
+                            for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
+                                if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
+                                    *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
+                                    *right += audio_block.audio_data_right[index] * self.master_volume * 2.0 * right_pan;
+                                    if *left > master_channel_left_level {
+                                        master_channel_left_level += *left;
+                                    }
+                                    if *right > master_channel_right_level {
+                                        master_channel_right_level += *right;
+                                    }
+                                } else {
+                                    break;
                                 }
-                                if *right > master_channel_right_level {
-                                    master_channel_right_level += *right;
-                                }
-                            } else {
-                                break;
                             }
                         }
-                    }
-                    key_to_remove = Some(*key);
-                }
-                else {
-                    self.stuck_block_number_attempt_count += 1;
-
-                    if self.stuck_block_number_attempt_count > 2 {
                         key_to_remove = Some(*key);
-                    }
-                }
-            }
+                    } else {
+                        self.stuck_block_number_attempt_count += 1;
 
-            if let Some(key) = key_to_remove {
-                if let Some(mut tracks) = self.block_number_buffer.remove(&key) {
-                    let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
-                    for track_number in track_numbers.iter() {
-                        if let Some(audio_block) = tracks.remove(&track_number) {
-                            self.audio_block_pool.push(audio_block);
+                        if self.stuck_block_number_attempt_count > 2 {
+                            key_to_remove = Some(*key);
                         }
                     }
-                    self.btree_map_pool.push(tracks);
+                }
+
+                if let Some(key) = key_to_remove {
+                    if let Some(mut tracks) = self.block_number_buffer.remove(&key) {
+                        let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
+                        for track_number in track_numbers.iter() {
+                            if let Some(audio_block) = tracks.remove(&track_number) {
+                                self.audio_block_pool.push(audio_block);
+                            }
+                        }
+                        self.btree_map_pool.push(tracks);
+                    }
                 }
             }
             // debug!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
@@ -650,7 +648,7 @@ impl Audio {
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
-                delta_frames = self.block * 1024 /* + event.time as i32 */;
+                delta_frames = self.block * self.block_size as i32 /* + event.time as i32 */;
             }
 
             if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
@@ -720,7 +718,7 @@ impl Audio {
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
-                delta_frames = self.block * 1024 + event.time as i32;
+                delta_frames = self.block * self.block_size as i32 + event.time as i32;
             }
 
             if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
@@ -781,7 +779,7 @@ impl Audio {
                 self.play_position_in_frames = 0;
             } else {
                 self.block += 1;
-                self.play_position_in_frames += 1024;
+                self.play_position_in_frames += self.block_size as u32;
             }
 
             TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
@@ -800,7 +798,7 @@ impl Audio {
                 time_info.ppq_pos = ppq_pos;
             }
 
-            if self.play_position_in_frames % self.frames_per_beat < 1024 {
+            if self.play_position_in_frames % self.frames_per_beat < self.block_size as u32 {
                 let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
             }
         }

@@ -11,7 +11,7 @@ use apres::MIDIEvent::{InstrumentName, TrackName};
 use factor::factor_include::factor_include;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use jack::{AsyncClient, Client, ClientOptions, PortFlags};
+use jack::{AsyncClient, Client, ClientOptions, Frames, PortFlags};
 use log::*;
 use parking_lot::RwLock;
 use rb::{RB, RbConsumer, SpscRb};
@@ -22,6 +22,7 @@ use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
 use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
+use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
 
@@ -593,7 +594,7 @@ impl DAWState {
 
     pub fn send_midi_routing_to_track_background_processors(&self, track_from_uuid: String, routing: TrackEventRouting) {
         // create the consumer producer pair
-        let track_event_ring_buffer: SpscRb<TrackEvent> = SpscRb::new(1024);
+        let track_event_ring_buffer: SpscRb<TrackEvent> = SpscRb::new(EVENT_BUFFER_SIZE);
         let track_event_producer = track_event_ring_buffer.producer();
         let track_event_consumer = track_event_ring_buffer.consumer();    
 
@@ -618,10 +619,10 @@ impl DAWState {
 
     pub fn send_audio_routing_to_track_background_processors(&self, track_from_uuid: String, routing: AudioRouting) {
         // create the consumer producer pair
-        let audio_ring_buffer_left: SpscRb<f32> = SpscRb::new(1024);
+        let audio_ring_buffer_left: SpscRb<f32> = SpscRb::new(self.configuration.audio.block_size as usize);
         let audio_producer_left = audio_ring_buffer_left.producer();
         let audio_consumer_left = audio_ring_buffer_left.consumer();    
-        let audio_ring_buffer_right: SpscRb<f32> = SpscRb::new(1024);
+        let audio_ring_buffer_right: SpscRb<f32> = SpscRb::new(self.configuration.audio.block_size as usize);
         let audio_producer_right = audio_ring_buffer_right.producer();
         let audio_consumer_right = audio_ring_buffer_right.consumer();    
 
@@ -1118,9 +1119,11 @@ impl DAWState {
     }
 
     pub fn play_song(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>) -> i32 {
-        let mut bpm = 140.0;
-        let mut sample_rate = 44100.0;
-        let mut block_size = 1024.0;
+        let bpm = self.project().song().tempo();
+        let time_signature_numerator = self.project().song().time_signature_numerator();
+        let time_signature_denominator = self.project().song().time_signature_denominator();
+        let sample_rate = self.configuration.audio.sample_rate as f64;
+        let block_size = self.configuration.audio.block_size as f64;
         let mut song_length_in_beats = 400.0;
         let mut start_block = 0;
         let mut end_block = 0;
@@ -1137,18 +1140,13 @@ impl DAWState {
         self.set_playing(true);
         self.set_play_mode(PlayMode::Song);
 
-        let song = self.project().song();
-        bpm = song.tempo();
-        sample_rate = self.configuration.audio.sample_rate as f64;
-        block_size = self.configuration.audio.block_size as f64;
         let play_position_in_frames = self.play_position_in_frames();
         start_block = (play_position_in_frames as f64 / block_size) as i32;
 
 
         if self.looping {
             if  let Some(loop_uuid) = &self.active_loop {
-                let song: &Song = self.project().song();
-                if let Some(active_loop) = song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == loop_uuid.to_string()) {
+                if let Some(active_loop) = self.project().song().loops().iter().find(|current_loop| current_loop.uuid().to_string() == loop_uuid.to_string()) {
                     let start_position_in_beats = active_loop.start_position();
                     let end_position_in_beats = active_loop.end_position();
 
@@ -1160,15 +1158,26 @@ impl DAWState {
             }
         }
 
-        let tracks = song.tracks();
-        for track in tracks {
+        for track in self.project().song().tracks() {
             let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
                 midi_track.midi_device().midi_channel()
             }
             else {
                 0
             };
-            let vst_event_blocks = DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), track.riff_refs(), bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete());
+            let vst_event_blocks = DAWUtils::convert_to_event_blocks(
+                                                                                        track.automation(),
+                                                                                        track.riffs(),
+                                                                                        track.riff_refs(),
+                                                                                        bpm,
+                                                                                        block_size,
+                                                                                        sample_rate,
+                                                                                        song_length_in_beats,
+                                                                                        midi_channel,
+                                                                                        self.automation_discrete(),
+                                                                                        time_signature_numerator,
+                                                                                        time_signature_denominator,
+                                                                                    );
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
 
@@ -1180,7 +1189,7 @@ impl DAWState {
 
         // thread::sleep(Duration::from_millis(2000));
 
-        for track in tracks {
+        for track in self.project().song().tracks() {
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));
         }
 
@@ -1213,6 +1222,8 @@ impl DAWState {
         let play_position_in_frames = 0;
         let tracks = song.tracks();
         let bpm = song.tempo();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
@@ -1259,7 +1270,19 @@ impl DAWState {
                         let mut riffs = vec![];
                         riffs.push(riff.clone());
                         let automation = Automation::new();
-                        let track_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel, self.automation_discrete());
+                        let track_event_blocks = DAWUtils::convert_to_event_blocks(
+                                                                                            &automation,
+                                                                                            &riffs,
+                                                                                            &riff_refs,
+                                                                                            bpm,
+                                                                                            block_size,
+                                                                                            sample_rate,
+                                                                                            lowest_common_factor_in_beats as f64,
+                                                                                            midi_channel,
+                                                                                            self.automation_discrete(),
+                                                                                            time_signature_numerator,
+                                                                                            time_signature_denominator
+                                                                                        );
                         debug!("Riff set # of blocks: {}", track_event_blocks.0.len());
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, track_event_blocks.0.len() as i32));
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(track_event_blocks, true));
@@ -1303,6 +1326,8 @@ impl DAWState {
         let play_position_in_frames = 0;
         let tracks = song.tracks();
         let bpm = song.tempo();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
@@ -1334,7 +1359,7 @@ impl DAWState {
                         let mut riffs = vec![];
                         riffs.push(riff.clone());
 
-                        let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
+                        let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
                         for track_event in track_events.iter() {
                             match track_event {
@@ -1395,6 +1420,8 @@ impl DAWState {
     pub fn play_riff_set_update_track_as_riff(&self, riff_set_uuid: String, track_uuid: String) {
         let song = self.project().song();
         let bpm = song.tempo();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let number_of_blocks = i32::MAX;
 
@@ -1422,7 +1449,7 @@ impl DAWState {
                             let mut riffs = vec![];
                             riffs.push(riff.clone());
 
-                            let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
+                            let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
                             for track_event in track_events.iter() {
                                 match track_event {
@@ -1475,6 +1502,8 @@ impl DAWState {
     pub fn play_riff_set_update_track_in_blocks(&self, riff_set_uuid: String, track_uuid: String) {
         let song = self.project().song();
         let bpm = song.tempo();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
         let mut lowest_common_factor_in_beats = 400;
@@ -1523,7 +1552,19 @@ impl DAWState {
                             let mut riffs = vec![];
                             riffs.push(riff.clone());
                             let automation = Automation::new();
-                            let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, lowest_common_factor_in_beats as f64, midi_channel, self.automation_discrete());
+                            let vst_event_blocks = DAWUtils::convert_to_event_blocks(
+                                                                                            &automation,
+                                                                                            &riffs,
+                                                                                            &riff_refs,
+                                                                                            bpm,
+                                                                                            block_size,
+                                                                                            sample_rate,
+                                                                                            lowest_common_factor_in_beats as f64,
+                                                                                            midi_channel,
+                                                                                            self.automation_discrete(),
+                                                                                            time_signature_numerator,
+                                                                                            time_signature_denominator,
+                                                                                        );
                             debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events with data");
                             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
                         }
@@ -1622,6 +1663,8 @@ impl DAWState {
         let song = self.project().song();
         let play_position_in_frames = 0;
         let bpm = song.tempo();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
         let start_block = (play_position_in_frames as f64 / block_size) as i32;
@@ -1664,7 +1707,19 @@ impl DAWState {
                 }
                 debug!("");
                 let automation = Automation::new();
-                let vst_event_blocks = DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete());
+                let vst_event_blocks = DAWUtils::convert_to_event_blocks(
+                                                                                        &automation,
+                                                                                        track.riffs(),
+                                                                                        &riff_refs,
+                                                                                        bpm,
+                                                                                        block_size,
+                                                                                        sample_rate,
+                                                                                        song_length_in_beats,
+                                                                                        midi_channel,
+                                                                                        self.automation_discrete(),
+                                                                                        time_signature_numerator,
+                                                                                        time_signature_denominator,
+                                                                                    );
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
             }
         }
@@ -1700,6 +1755,8 @@ impl DAWState {
         self.set_play_mode(PlayMode::Song);
 
         let song = self.project().song();
+        let time_signature_numerator = song.time_signature_numerator();
+        let time_signature_denominator = song.time_signature_denominator();
 
         let play_position_in_frames = self.play_position_in_frames();
         start_block = (play_position_in_frames as f64 / block_size) as i32;
@@ -1714,14 +1771,14 @@ impl DAWState {
             let automation = Automation::new();
             let vst_event_blocks = if let Some(riff_grid) = song.riff_grid(riff_grid_uuid.clone()) {
                 if let Some(track_riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
                 }
                 else {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
                 }
             }
             else {
-                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
+                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
             };
 
             if !already_playing {
@@ -1937,8 +1994,9 @@ impl DAWState {
 
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffArrangement);
-        // let song = self.project().song();
         let bpm = self.project().song().tempo();
+        let time_signature_numerator = self.project().song().time_signature_numerator();
+        let time_signature_denominator = self.project().song().time_signature_denominator();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let play_position_in_frames = play_position_in_beats / bpm * 60.0 * sample_rate;
         let block_size = self.configuration.audio.block_size as f64;
@@ -1982,11 +2040,11 @@ impl DAWState {
                     Some(riff_refs) => riff_refs,
                 };
                 let vst_event_blocks = if let Some(track_automation) = riff_arrangement.automation(&track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())
+                    DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
                 }
                 else {
                     let automation = Automation::new();
-                    /*let vst_event_blocks = */DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete())//;
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
                 };
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
@@ -2228,6 +2286,7 @@ impl DAWState {
     ) {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
+        let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
         let audio = Audio::new(
             &jack_client,
             rx_to_audio,
@@ -2369,18 +2428,21 @@ impl DAWState {
         let track_render_audio_consumers = self.track_render_audio_consumers.clone();
 
         if let Some(number_of_blocks) = number_of_blocks {
+            let sample_rate = self.configuration.audio.sample_rate as u32;
+            let block_size = self.configuration.audio.sample_rate as usize;
+
             let _ = thread::Builder::new().name("Export wave file".into()).spawn(move || {
                 match track_render_audio_consumers.lock() {
                     Ok(track_render_audio_consumers) => if let Ok(mut export_wave_file) = std::fs::File::create(path) {
                         let number_of_audio_type_tracks = track_render_audio_consumers.len() as f32;
-                        let mut master_left_channel_data: [f32; 1024] = [0.0; 1024];
-                        let mut master_right_channel_data: [f32; 1024] = [0.0; 1024];
+                        let mut master_left_channel_data: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
+                        let mut master_right_channel_data: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
                         let mut sample_data = vec![];
                         let mut audio_blocks = vec![AudioBlock::default()];
 
                         for _block_number in 0..number_of_blocks {
                             // reset the master block
-                            for index in 0..1024_usize {
+                            for index in 0..block_size {
                                 master_left_channel_data[index] = 0.0;
                                 master_right_channel_data[index] = 0.0;
                             }
@@ -2391,10 +2453,10 @@ impl DAWState {
                                     // copy the track channel data to the master channels
                                     if blocks_read == 1 {
                                         let audio_block = audio_blocks.get(0).unwrap();
-                                        for index in 0..1024_usize {
+                                        for index in 0..block_size {
                                             master_left_channel_data[index] += audio_block.audio_data_left[index] / number_of_audio_type_tracks;
                                         }
-                                        for index in 0..1024_usize {
+                                        for index in 0..block_size {
                                             master_right_channel_data[index] += audio_block.audio_data_right[index] / number_of_audio_type_tracks;
                                         }
                                     }
@@ -2402,14 +2464,14 @@ impl DAWState {
                             }
 
                             // write the master block out
-                            for index in 0..1024_usize {
+                            for index in 0..block_size {
                                 sample_data.push(master_left_channel_data[index]);
                                 sample_data.push(master_right_channel_data[index]);
                             }
                         }
 
                         // write the file
-                        let wav_header = wav_io::new_header(44100, 32, true, false);
+                        let wav_header = wav_io::new_header(sample_rate, 32, true, false);
                         let _ = wav_io::write_to_file(&mut export_wave_file, &wav_header, &sample_data);
                     }
                     Err(_) => {}

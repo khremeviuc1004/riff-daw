@@ -29,6 +29,7 @@ use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGesture
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
 use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
+use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::EventProcessorType;
 use crate::state::MidiPolyphonicExpressionNoteId;
 use crate::vst3_cxx_bridge::{ffi, Vst3Host};
@@ -1923,6 +1924,7 @@ pub struct VstHost {
     track_event_outward_routings: HashMap<String, TrackEventRouting>,
     track_event_outward_ring_buffers: HashMap<String, SpscRb<TrackEvent>>,
     track_event_outward_producers: HashMap<String, Producer<TrackEvent>>,
+    block_size: isize,
 }
 
 impl VstHost {
@@ -1937,6 +1939,7 @@ impl VstHost {
         tempo: f64,
         time_signature_numerator: u32,
         time_signature_denominator: u32,
+        block_size: isize,
     ) -> VstHost {
         VstHost {
             shell_id,
@@ -1953,6 +1956,7 @@ impl VstHost {
             track_event_outward_routings: HashMap::new(),
             track_event_outward_ring_buffers: HashMap::new(),
             track_event_outward_producers: HashMap::new(),
+            block_size,
         }
     }
 
@@ -2109,7 +2113,7 @@ impl Host for VstHost {
 
     fn get_block_size(&self) -> isize {
         debug!("Vst plugin asked for host block size.");
-        1024
+        self.block_size
     }
 
     fn update_display(&self) {
@@ -2727,7 +2731,7 @@ impl BackgroundProcessorVst24AudioPlugin {
             rx_from_host,
             editor: None,
             vst_host_time_info,
-            sample_rate: 44100.0,
+            sample_rate,
         }
     }
 
@@ -2807,6 +2811,7 @@ pub struct BackgroundProcessorClapAudioPlugin {
     host_receiver: crossbeam_channel::Receiver<DAWCallback>,
     tempo: f64,
     sample_rate: f64,
+    block_size: i64,
     stop_now: bool,
     param_gesture_begin: HashMap<i32, bool>,
 }
@@ -3000,6 +3005,7 @@ impl BackgroundProcessorClapAudioPlugin {
             host_receiver,
             tempo,
             sample_rate,
+            block_size,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
         }
@@ -3042,14 +3048,14 @@ impl BackgroundProcessorClapAudioPlugin {
                     
                     {
                         let channel1 = &mut channel[0];
-                        for index in 0..1024 {
+                        for index in 0..self.block_size as usize {
                             channel1[index] = background_processor_left_channel[index];
                         }
                     }
 
                     {
                         let channel2 = &mut channel[1];
-                        for index in 0..1024 {
+                        for index in 0..self.block_size as usize {
                             channel2[index] = background_processor_right_channel[index];
                         }
                     }
@@ -3119,14 +3125,14 @@ impl BackgroundProcessorClapAudioPlugin {
                 let (_, mut outputs) = background_processor_buffer.split();
                 let background_processor_left_channel = outputs.get_mut(0);
                 let background_processor_right_channel = outputs.get_mut(1);
-                for index in 0..1024 {
+                for index in 0..self.block_size as usize {
                     background_processor_left_channel[index] = channel1[index];
                     background_processor_right_channel[index] = channel2[index];
                 }
             }
 
             self.process_data.clear_events();
-            self.process_data.advance_transport(1024);
+            self.process_data.advance_transport(self.block_size as u32);
         }
     }
     pub fn plugin(&self) -> &simple_clap_host_helper_lib::plugin::instance::Plugin {
@@ -3144,6 +3150,11 @@ pub struct BackgroundProcessorVst3AudioPlugin {
     tx_from_host: Sender<AudioPluginHostOutwardEvent>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
     instrument: bool,
+    sample_rate: f64,
+    block_size: i64,
+    tempo: f64,
+    time_signature_numerator: i32,
+    time_signature_denominator: i32,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
@@ -3204,11 +3215,12 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
     }
 
     fn set_tempo(&mut self, tempo: f64) {
+        self.tempo = tempo;
         ffi::vst3_plugin_change_tempo(self.daw_plugin_uuid.to_string(), tempo);
     }
 
     fn tempo(&self) -> f64 {
-        140.0
+        self.tempo
     }
 
     fn stop_processing(&mut self) {
@@ -3240,14 +3252,16 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
     }
 
     fn sample_rate(&self) -> f64 {
-        44100.0
+        self.sample_rate
     }
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
-        // todo!()
+        self.sample_rate = sample_rate;
     }
 
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        self.time_signature_numerator = time_signature_numerator as i32;
+        self.time_signature_denominator = time_signature_denominator as i32;
         ffi::vst3_plugin_change_time_signature(self.daw_plugin_uuid.to_string(), time_signature_numerator, time_signature_denominator);
     }
 }
@@ -3287,6 +3301,11 @@ impl BackgroundProcessorVst3AudioPlugin {
             tx_from_host: tx_from_host.clone(),
             rx_from_host,
             instrument,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
         }
     }
 
@@ -3567,7 +3586,7 @@ pub struct TrackBackgroundProcessorHelper {
     pub tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
     pub track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
     pub keep_alive: bool,
-    pub jack_midi_out_buffer: [(u32, u8, u8, u8, bool); 1024],
+    pub jack_midi_out_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
     pub volume: f32,
     pub pan: f32,
     sample: Option<SampleData>, // might need sample references - each is tied to a midi note number and started and stopped by note on and off messages
@@ -3619,7 +3638,7 @@ impl TrackBackgroundProcessorHelper {
             vst_event_blocks_transition_to: None,
             jack_midi_out_immediate_events: vec![],
             mute: false,
-            midi_sender: SendEventBuffer::new(1024),
+            midi_sender: SendEventBuffer::new(EVENT_BUFFER_SIZE),
             instrument_plugin_initial_delay: 0,
             instrument_plugin_instances: vec![],
             request_preset_data: false,
@@ -3633,7 +3652,7 @@ impl TrackBackgroundProcessorHelper {
             tx_vst_thread,
             track_thread_coast,
             keep_alive: true,
-            jack_midi_out_buffer: [(0, 0, 0, 0, false); 1024],
+            jack_midi_out_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             volume,
             pan,
             sample: None,
@@ -3668,7 +3687,7 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::SetEventProcessorType(event_processor_type) => {
                     match event_processor_type {
                         EventProcessorType::RiffBufferEventProcessor => {
-                            self.event_processor = Box::new(RiffBufferTrackEventProcessor::new(1024.0));
+                            self.event_processor = Box::new(RiffBufferTrackEventProcessor::new(self.block_size));
                         }
                         EventProcessorType::BlockEventProcessor => {
                             self.event_processor = Box::new(BlockBufferTrackEventProcessor::new());
@@ -5036,16 +5055,16 @@ impl TrackBackgroundProcessorHelper {
 #[derive(Clone, Copy)]
 pub struct AudioBlock {
     pub block: i32,
-    pub audio_data_left: [f32; 1024],
-    pub audio_data_right: [f32; 1024],
+    pub audio_data_left: [f32; BLOCK_SIZE_MAX as usize],
+    pub audio_data_right: [f32; BLOCK_SIZE_MAX as usize],
 }
 
 impl Default for AudioBlock {
     fn default() -> Self {
         Self { 
             block: 0, 
-            audio_data_left: [0.0f32; 1024], 
-            audio_data_right: [0.0f32; 1024] }
+            audio_data_left: [0.0f32; BLOCK_SIZE_MAX as usize],
+            audio_data_right: [0.0f32; BLOCK_SIZE_MAX as usize] }
     }
 }
 
@@ -5102,9 +5121,6 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
-                let mut sample_rate = sample_rate;
-                let mut tempo = tempo;
-                const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
                 let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(2);
@@ -5120,8 +5136,8 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                 let mut host_buffer: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
                 let mut host_buffer_swapped: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
-                let mut inputs = vec![vec![0.0; BLOCK_SIZE]; HOST_BUFFER_CHANNELS];
-                let mut outputs = vec![vec![0.0; BLOCK_SIZE]; HOST_BUFFER_CHANNELS];
+                let mut inputs: Vec<Vec<f32>> = vec![vec![0.0; BLOCK_SIZE_MAX as usize]; HOST_BUFFER_CHANNELS];
+                let mut outputs: Vec<Vec<f32>> = vec![vec![0.0; BLOCK_SIZE_MAX as usize]; HOST_BUFFER_CHANNELS];
                 let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
                 let mut audio_buffer_swapped = host_buffer_swapped.bind(&outputs, &mut inputs);
 
@@ -5147,8 +5163,8 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         time_signature_denominator,
                     );
 
-                let mut routed_audio_left_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
-                let mut routed_audio_right_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
+                let mut routed_audio_left_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
+                let mut routed_audio_right_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
 
                 let mut audio_block = AudioBlock::default();
                 let mut audio_block_buffer = vec![audio_block];
@@ -5175,8 +5191,8 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     // track_background_processor_helper.process_plugin_audio(); - having problems with life times
 
                     // couldn't push the following into a member method because of lifetime issues
-                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (BLOCK_SIZE as i32)) as f64  * tempo / (60.0 * sample_rate)) + 1.0;
-                    let sample_position = (track_background_processor_helper.event_processor.block_index() * (BLOCK_SIZE as i32)) as f64;
+                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64  * tempo / (60.0 * sample_rate)) + 1.0;
+                    let sample_position = (track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64;
 
                     if let Some(instrument_plugin) = track_background_processor_helper.instrument_plugin_instances.get_mut(0) {
                         match instrument_plugin {
@@ -5186,7 +5202,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                     vst_host.set_sample_position(sample_position);
                                 }
                                 let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
-                                vst_plugin_instance.process(&mut audio_buffer);
+                                vst_plugin_instance.process(&mut audio_buffer, block_size as i32);
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(&mut audio_buffer);
@@ -5254,7 +5270,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                     vst_host.set_ppq_pos(ppq_pos);
                                     vst_host.set_sample_position(sample_position);
                                 }
-                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use);
+                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, block_size as i32);
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(audio_buffer_in_use);
@@ -5300,11 +5316,13 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         let mut index = 0;
 
                         for index in 0..routed_audio_left_buffer.len() {
+                            if index >= track_background_processor_helper.block_size as usize { break; }
                             routed_audio_left_buffer[index] = 0.0;
                             routed_audio_right_buffer[index] = 0.0;
                         }
 
                         for left_frame in left_channel.iter() {
+                            if index >= track_background_processor_helper.block_size as usize { break; }
                             routed_audio_left_buffer[index] = *left_frame;
                             index += 1;
                         }
@@ -5314,6 +5332,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         index = 0;
                         let right_channel = outputs_32.get_mut(1);
                         for right_frame in right_channel.iter() {
+                            if index >= track_background_processor_helper.block_size as usize { break; }
                             routed_audio_right_buffer[index] = *right_frame;
                             index += 1;
                         }
@@ -5330,6 +5349,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
                         for (index, left_frame) in left_channel.iter_mut().enumerate() {
+                            if index >= track_background_processor_helper.block_size as usize { break; }
                             *left_frame *= track_background_processor_helper.volume;
                             *left_frame *= left_pan;
                             if *left_frame > left_channel_level {
@@ -5339,6 +5359,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         }
                         let right_channel = outputs_32.get_mut(1);
                         for (index, right_frame) in right_channel.iter_mut().enumerate() {
+                            if index >= track_background_processor_helper.block_size as usize { break; }
                             *right_frame *= track_background_processor_helper.volume;
                             *right_frame *= right_pan;
                             if *right_frame > right_channel_level {
@@ -5407,7 +5428,6 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
-                const BLOCK_SIZE: usize = 1024;
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
                 let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
@@ -5422,8 +5442,8 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                 let mut host_buffer: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
                 let mut host_buffer_swapped: HostBuffer<f32> = HostBuffer::new(HOST_BUFFER_CHANNELS, HOST_BUFFER_CHANNELS);
-                let mut inputs = vec![vec![0.0; 1024]; HOST_BUFFER_CHANNELS];
-                let mut outputs = vec![vec![0.0; 1024]; HOST_BUFFER_CHANNELS];
+                let mut inputs = vec![vec![0.0; BLOCK_SIZE_MAX as usize]; HOST_BUFFER_CHANNELS];
+                let mut outputs = vec![vec![0.0; BLOCK_SIZE_MAX as usize]; HOST_BUFFER_CHANNELS];
                 let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
                 let mut audio_buffer_swapped = host_buffer_swapped.bind(&outputs, &mut inputs);
 
@@ -5438,7 +5458,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         pan,
                         GeneralTrackType::AudioTrack,
                         vst_host_time_info,
-                        Box::new(RiffBufferTrackEventProcessor::new(BLOCK_SIZE as f64)),
+                        Box::new(RiffBufferTrackEventProcessor::new(block_size)),
                         sample_rate,
                         block_size,
                         tempo,
@@ -5448,8 +5468,8 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                 let mut use_sample_audio = true;
 
-                let mut routed_audio_left_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
-                let mut routed_audio_right_buffer: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
+                let mut routed_audio_left_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
+                let mut routed_audio_right_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
 
                 let mut audio_block = AudioBlock::default();
                 let mut audio_block_buffer = vec![audio_block];
@@ -5507,7 +5527,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     }
 
                     if use_sample_audio {
-                        track_background_processor_helper.process_sample(&mut audio_buffer, 1024, left_pan, right_pan);
+                        track_background_processor_helper.process_sample(&mut audio_buffer, block_size as i32, left_pan, right_pan);
                     }
 
                     let mut swap = true;
@@ -5522,10 +5542,12 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                         match effect {
                             BackgroundProcessorAudioPluginType::Vst24(effect) => {
-                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use);
+                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, block_size as i32);
                             }
-                            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
-                            BackgroundProcessorAudioPluginType::Clap(_effect) => {
+                            BackgroundProcessorAudioPluginType::Vst3(effect) => {
+
+                            }
+                            BackgroundProcessorAudioPluginType::Clap(effect) => {
 
                             }
                         }
@@ -5631,9 +5653,8 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
-                const SIZE: usize = 1024;
 
-                let ring_buffer_midi: SpscRb<(u32, u8, u8, u8, bool)> = SpscRb::new(SIZE);
+                let ring_buffer_midi: SpscRb<(u32, u8, u8, u8, bool)> = SpscRb::new(EVENT_BUFFER_SIZE);
                 let (mut producer_midi, consumer_midi) = (ring_buffer_midi.producer(), ring_buffer_midi.consumer());
                 let midi_consumer_details = MidiConsumerDetails::<(u32, u8, u8, u8, bool)>::new(track_uuid.clone(), consumer_midi);
 
@@ -7972,7 +7993,8 @@ mod tests {
             samples_to_next_clock: 0,
             flags: 3,
         }));
-
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         let mut track_helper = TrackBackgroundProcessorHelper::new(
             Uuid::new_v4().to_string(),
@@ -8014,11 +8036,11 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
 
         // do the transition conversion
         let (transition_event_blocks, _transition_param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
+            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
 
         track_helper.event_processor.set_track_event_blocks(Some(event_blocks.clone()));
         track_helper.event_processor.set_play(true);
@@ -8072,6 +8094,8 @@ mod tests {
         let sample_rate = 44100.0;
         let block_size = 1024.0;
         let midi_channel = 0;
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
@@ -8107,7 +8131,7 @@ mod tests {
         transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
 
         // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
+        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
         // let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel);
 
         let mut track_events: Vec<TrackEvent> = vec![];
@@ -8171,6 +8195,8 @@ mod tests {
         let sample_rate = 44100.0;
         let block_size = 1024.0;
         let midi_channel = 0;
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
@@ -8206,8 +8232,8 @@ mod tests {
         transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
 
         // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
-        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel);
+        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
+        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
         // dump out the converted events
         for event in riff_converted_track_events.iter() {
@@ -8265,6 +8291,8 @@ mod tests {
         let sample_rate = 44100.0;
         let block_size = 1024.0;
         let midi_channel = 0;
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
@@ -8300,8 +8328,8 @@ mod tests {
         transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
 
         // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel);
-        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel);
+        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
+        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
         // dump out the converted events
         for event in riff_converted_track_events.iter() {

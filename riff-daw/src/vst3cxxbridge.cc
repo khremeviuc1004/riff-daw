@@ -608,6 +608,8 @@ bool Vst3PluginHandler::initialise(
                 processSetUp.maxSamplesPerBlock = blockSize;
                 processSetUp.sampleRate = sampleRate;
 
+                this->blockSize = blockSize;
+
                 if (audioProcessor->setupProcessing(processSetUp) != Steinberg::kResultOk)
                 {
                     std::cout << "Failed to setup processing for the audio processor." << std::endl;
@@ -779,9 +781,9 @@ bool Vst3PluginHandler::process(
             return false;
         }
 
-        processContext.projectTimeSamples += 1024;
+        processContext.projectTimeSamples += processSetUp.maxSamplesPerBlock;
         processContext.systemTime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        processContext.continousTimeSamples += 1024;
+        processContext.continousTimeSamples += processSetUp.maxSamplesPerBlock;
 
         auto inputEventBusCount = component.get()->getBusCount(Steinberg::Vst::MediaTypes::kEvent, Steinberg::Vst::BusDirections::kInput);
         for (auto index = 0; index < inputEventBusCount; index++)

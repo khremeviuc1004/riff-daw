@@ -49,6 +49,7 @@ pub fn create_vst24_audio_plugin(
         tempo,
         time_signature_numerator as u32,
         time_signature_denominator as u32,
+        block_size as isize,
     )));
 
     if !path.exists() || !path.is_file() {
@@ -333,7 +334,7 @@ pub fn create_vst3_audio_plugin(
                     panic!("Couldn't allocate audio buffers.");
                 };
             
-                let _ = plugin.activate(44100.0, 1, 1024);
+                let _ = plugin.activate(sample_rate, 1, block_size as usize);
                 let _ = plugin.start_processing();
             
                 let process_data = ProcessData::new(audio_buffers, process_config);

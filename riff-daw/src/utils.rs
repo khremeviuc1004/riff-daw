@@ -8,7 +8,7 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation, DAWItemID};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -232,16 +232,18 @@ impl DAWUtils {
         passage_length_in_beats: f64,
         midi_channel: i32,
         automation_discrete: bool,
+        time_signature_numerator: f64,
+        time_signature_denominator: f64,
     ) -> (Vec<Vec<TrackEvent>>, Vec<Vec<PluginParameter>>) {
         debug!("Automation events for track: {}", automation.events().len());
         debug!("Automation envelopes for track: {}", automation.envelopes().len());
         // TODO need to make sure that this doesn't cross over into the next measure
-        // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - 1024.0; 
+        // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - block_size_in_samples;
         let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
 
         debug!("util - convert_to_event_blocks: passage_length_in_frames={}", passage_length_in_frames);
 
-        let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel);
+        let mut track_events: Vec<TrackEvent> = Self::extract_riff_ref_events(riffs, riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
         debug!("Number of riff ref events extracted for track: {}", track_events.len());
         let plugin_parameter_events = if automation_discrete {
             Self::convert_automation_events(automation.events(), bpm, sample_rate, &mut track_events, midi_channel)
@@ -468,126 +470,6 @@ impl DAWUtils {
         events_all.sort_by(|event1, event2| DAWUtils::sort_by_daw_position(event1, event2));
         plugin_parameter_events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
         plugin_parameter_events
-    }
-
-    fn convert_riff_ref_events_to_vst(riffs: &Vec<Riff>, riff_refs: &Vec<RiffReference>, bpm: f64, sample_rate: f64, midi_channel: i32) -> Vec<MidiEvent> {
-        let mut events_all: Vec<MidiEvent> = Vec::new();
-
-        for riff_ref in riff_refs {
-            for riff in riffs.iter() {
-                if riff.uuid().to_string() == riff_ref.linked_to() {
-                    debug!("util-convert_to_vst_events: riff name={}", riff.name());
-                    for event in riff.events().iter() {
-                        match event {
-                            TrackEvent::Note(note) => {
-                                debug!("DAWUtils.convert_riff_ref_events_to_vst: note off - riff_ref.position={}, note.end position={}, note.duration={}", riff_ref.position(), note.position(), note.length());
-                                let note_on_position_in_frames = (riff_ref.position() + note.position()) / bpm * 60.0 * sample_rate;
-                                let note_on = MidiEvent {
-                                    data: [144 + (midi_channel as u8), note.note() as u8, note.velocity() as u8],
-                                    delta_frames: note_on_position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(note_on);
-                                let note_off_position_in_frames = (riff_ref.position() + note.position() + note.length()) / bpm * 60.0 * sample_rate;
-                                let note_off = MidiEvent {
-                                    data: [128 + (midi_channel as u8), note.note() as u8, 0],
-                                    delta_frames: note_off_position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(note_off);
-                            }
-                            TrackEvent::NoteOn(_) => {}
-                            TrackEvent::NoteOff(_) => {}
-                            TrackEvent::Controller(controller) => {
-                                let position_in_frames = controller.position() / bpm * 60.0 * sample_rate;
-                                let controller_event = MidiEvent {
-                                    data: [176 + (midi_channel as u8), controller.controller() as u8, controller.value() as u8],
-                                    delta_frames: position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(controller_event);
-                            }
-                            TrackEvent::PitchBend(pitch_bend) => {
-                                let position_in_frames = pitch_bend.position() / bpm * 60.0 * sample_rate;
-                                let (lsb, msb) = pitch_bend.midi_bytes_from_value();
-                                let pitch_bend_event = MidiEvent {
-                                    data: [224 + (midi_channel as u8), lsb, msb],
-                                    delta_frames: position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(pitch_bend_event);
-                            }
-                            TrackEvent::AudioPluginParameter(_) => {}
-                            TrackEvent::Sample(sample) => {
-                                let note_on_position_in_frames = (riff_ref.position() + sample.position()) / bpm * 60.0 * sample_rate;
-                                let note_on = MidiEvent {
-                                    data: [144 + (midi_channel as u8), 60, 127],
-                                    delta_frames: note_on_position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(note_on);
-                                let note_off_position_in_frames = (riff_ref.position() + sample.position() + 1.0 /* FIXME needs to be the sample length */) / bpm * 60.0 * sample_rate;
-                                let note_off = MidiEvent {
-                                    data: [128 + (midi_channel as u8), 60, 127],
-                                    delta_frames: note_off_position_in_frames as i32,
-                                    live: true,
-                                    note_length: None,
-                                    note_offset: None,
-                                    detune: 0,
-                                    note_off_velocity: 0,
-                                };
-                                events_all.push(note_off);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // add the measure boundary markers
-                    let number_of_measures = (riff.length() / 4.0) as i32; // TODO need to pass through the beats per bar
-                    for measure_number in 0..number_of_measures {
-                        let measure_boundary_marker = MidiEvent {
-                            data: [255, 0, 0],
-                            delta_frames: ((riff_ref.position() + (((measure_number + 1) * 4) as f64)) / bpm * 60.0 * sample_rate) as i32,
-                            live: true,
-                            note_length: None,
-                            note_offset: None,
-                            detune: 0,
-                            note_off_velocity: 0,
-                        };
-                        events_all.push(measure_boundary_marker);
-                        debug!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
-                    }
-
-                    // somehow add the full play out loop point marker
-
-
-                    break;
-                }
-            }
-        }
-
-        events_all.sort_by(|a, b| a.delta_frames.cmp(&b.delta_frames));
-        events_all
     }
 
     pub fn convert_vst_events_to_track_events_with_timing_in_frames(vst_events: Vec<MidiEvent>) -> Vec<TrackEvent> {
@@ -867,7 +749,15 @@ impl DAWUtils {
         events_all
     }
 
-    pub fn extract_riff_ref_events(riffs: &Vec<Riff>, riff_refs: &Vec<RiffReference>, bpm: f64, sample_rate: f64, _midi_channel: i32) -> Vec<TrackEvent> {
+    pub fn extract_riff_ref_events(
+        riffs: &Vec<Riff>,
+        riff_refs: &Vec<RiffReference>,
+        bpm: f64,
+        sample_rate: f64,
+        _midi_channel: i32,
+        time_signature_numerator: f64,
+        time_signature_denominator: f64,
+    ) -> Vec<TrackEvent> {
         let mut events_all: Vec<TrackEvent> = Vec::new();
 
         for riff_ref in riff_refs {
@@ -919,7 +809,7 @@ impl DAWUtils {
                     }
 
                     // add the measure boundary markers
-                    let number_of_measures = (riff.length() / 4.0) as i32; // TODO need to pass through the beats per bar
+                    let number_of_measures = (riff.length() / time_signature_numerator) as i32; // TODO need to pass through the beats per bar
                     for measure_number in 0..number_of_measures {
                         let measure_boundary_marker = Measure::new((riff_ref.position() + ((measure_number + 1) * 4) as f64) / bpm * 60.0 * sample_rate);
                         events_all.push(TrackEvent::Measure(measure_boundary_marker));
@@ -1251,6 +1141,8 @@ mod tests {
         let automation = Automation::new();
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         // create a riff
         let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_string(), 4.0);
@@ -1259,7 +1151,7 @@ mod tests {
             riff.events_mut().push(TrackEvent::Note(note));
         }
 
-        // create a riff ref that does not state at position 0
+        // create a riff ref that does not start at position 0
         let mut riff_ref = RiffReference::new(Uuid::new_v4().to_string(), 5.0);
         riff_ref.set_linked_to(riff.uuid().to_string());
 
@@ -1268,7 +1160,7 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
 
         // calculate how many blocks are expected
         let expected_blocks = ((sample_rate * 60.0 /* secs */ * song_length_in_beats) / (block_size * bpm)).round() as usize;
@@ -1307,14 +1199,16 @@ mod tests {
     }
 
     #[test]
-    fn convert_riff_ref_events_to_vst_events_one_measure_gap_before_first_note() {
+    fn check_event_conversion_to_of_blocks() {
         let bpm = 140.0;
         let sample_rate = 44100.0;
-        let _block_size = 1024.0;
-        let _song_length_in_beats = 10.0;
-        let _automation: Vec<TrackEvent> = vec![];
+        let block_size = 1024.0;
+        let song_length_in_beats = 10.0;
+        let automation = Automation::new();
         let mut riffs: Vec<Riff> = vec![];
         let mut riff_refs: Vec<RiffReference> = vec![];
+        let time_signature_numerator = 4.0;
+        let time_signature_denominator = 4.0;
 
         // create a riff
         let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_string(), 4.0);
@@ -1330,68 +1224,81 @@ mod tests {
         riffs.push(riff);
         riff_refs.push(riff_ref);
 
-        let midi_events = DAWUtils::convert_riff_ref_events_to_vst(&riffs, &riff_refs, bpm, sample_rate, 0);
+        // #################################### block size of 1024 ###########################################
 
-        assert_eq!(8 + 1 /* measure end */, midi_events.len() as i32);
+        // do the conversion
+        let (event_blocks, _param_event_blocks) =
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+
+        // calculate how many blocks are expected
+        let expected_blocks = ((sample_rate * 60.0 /* secs */ * song_length_in_beats) / (block_size * bpm)).round() as usize;
+
+        // check the number of blocks received
+        assert_eq!(expected_blocks, event_blocks.len());
+
+        // find which block the first event appears in
+        let first_event_found_block_number_option = event_blocks.iter().position(|block| !block.is_empty());
+
+        let first_event_found_block_number = if let Some(first_event_found_block_number) = first_event_found_block_number_option {
+            first_event_found_block_number as i32
+        }
+        else {
+            -1
+        };
+
+        assert_ne!(-1, first_event_found_block_number);
+        assert_ne!(0, first_event_found_block_number);
 
         // calculate the expected frame position of the first event
         let expected_first_event_frame_position = ((5.0 /* riff position in beats */ + 0.0 /* note position in beats */) / bpm * 60.0 * sample_rate) as i32;
+        let expected_frames_into_block = expected_first_event_frame_position % (block_size as i32);
+        let expected_block_number = expected_first_event_frame_position / (block_size as i32);
+        let expected_block_number2 = ((sample_rate * 60.0 /* secs */ * 5.0) / (block_size * bpm)).round() as i32;
 
-        assert_eq!(expected_first_event_frame_position, midi_events.get(0_usize).unwrap().delta_frames);
-    }
+        assert_eq!(expected_block_number, expected_block_number2);
+        println!("block_size={}, expected_block_number: {}, first_event_found_block_number: {}", block_size, expected_block_number, first_event_found_block_number);
+        assert_eq!(expected_block_number, first_event_found_block_number);
+        assert_eq!(expected_frames_into_block, event_blocks.get(first_event_found_block_number as usize).unwrap().get(0_usize).unwrap().position() as i32);
 
-    #[test]
-    fn convert_riff_ref_events_to_vst_events_one_measure_bass_line() {
-        let bpm = 140.0;
-        let sample_rate = 44100.0;
-        let _block_size = 1024.0;
-        let _song_length_in_beats = 10.0;
-        let _automation: Vec<TrackEvent> = vec![];
-        let mut riffs: Vec<Riff> = vec![];
-        let mut riff_refs: Vec<RiffReference> = vec![];
-
-        // create a riff
-        let mut riff = Riff::new_with_name_and_length(Uuid::new_v4(), "Bass line 1 - 1".to_string(), 4.0);
-        let riff_uuid = riff.uuid().to_string();
-        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 44, 71, 0.45535714285714285);
-        riff.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.5, 46, 27, 0.24107142857142855);
-        riff.events_mut().push(TrackEvent::Note(note2));
-        let note3 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 1.0, 46, 68, 0.42857142857142855);
-        riff.events_mut().push(TrackEvent::Note(note3));
-        let note4 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 1.5, 36, 41, 0.45535714285714285);
-        riff.events_mut().push(TrackEvent::Note(note4));
-        let note5 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 2.5, 46, 36, 0.45535714285714285);
-        riff.events_mut().push(TrackEvent::Note(note5));
-        let note6 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 3.0, 36, 45, 0.45535714285714285);
-        riff.events_mut().push(TrackEvent::Note(note6));
-        riffs.push(riff);
-
-        // create riff refs
-        let mut position = 0.0;
-        for _x in 0..24 {
-            let mut riff_ref = RiffReference::new(Uuid::new_v4().to_string(), position);
-            riff_ref.set_linked_to(riff_uuid.clone());
-            riff_refs.push(riff_ref);
-            position += 4.0;
+        let mut number_of_found_events = 0;
+        for block in event_blocks.iter() {
+            number_of_found_events += block.len() as i32;
         }
+        assert_eq!(8 + 1 /* measure end */, number_of_found_events);
 
-        let midi_events = DAWUtils::convert_riff_ref_events_to_vst(&riffs, &riff_refs, bpm, sample_rate, 0);
+        // #################################### block size of 2048 ###########################################
+        let block_size = 2048.0;
 
-        assert_eq!(24 * 6 * 2 + 24 /* measure ends */, midi_events.len() as i32);
+        let (event_blocks, _param_event_blocks) =
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
 
-        let mut event_index = 1;
-        for event in midi_events.iter() {
-            debug!("Event: index={}, frame={}, data[0]={}, data[1]={}, data[2]={}", event_index, event.delta_frames, event.data[0], event.data[1], event.data[2]);
-            if event_index == 13 {
-                event_index = 1;
-            }
-            else {
-                event_index += 1;
-            }
+
+        // find which block the first event appears in
+        let first_event_found_block_number_option = event_blocks.iter().position(|block| !block.is_empty());
+
+        let first_event_found_block_number = if let Some(first_event_found_block_number) = first_event_found_block_number_option {
+            first_event_found_block_number as i32
         }
+        else {
+            -1
+        };
 
-        assert_eq!(0, midi_events.get(0_usize).unwrap().delta_frames);
+        assert_ne!(-1, first_event_found_block_number);
+        assert_ne!(0, first_event_found_block_number);
+
+        // calculate the expected frame position of the first event
+        let expected_frames_into_block = expected_first_event_frame_position % (block_size as i32);
+        let expected_block_number = expected_first_event_frame_position / (block_size as i32);
+
+        println!("block_size={}, expected_block_number: {}, first_event_found_block_number: {}", block_size, expected_block_number, first_event_found_block_number);
+        assert_eq!(expected_block_number, first_event_found_block_number);
+        assert_eq!(expected_frames_into_block, event_blocks.get(first_event_found_block_number as usize).unwrap().get(0_usize).unwrap().position() as i32);
+
+        let mut number_of_found_events = 0;
+        for block in event_blocks.iter() {
+            number_of_found_events += block.len() as i32;
+        }
+        assert_eq!(8 + 1 /* measure end */, number_of_found_events);
     }
 
     #[test]

@@ -205,7 +205,6 @@
                       <item id="512" translatable="yes">512</item>
                       <item id="1024" translatable="yes">1024</item>
                       <item id="2048" translatable="yes">2048</item>
-                      <item id="4096" translatable="yes">4096</item>
                     </items>
                   </object>
                   <packing>

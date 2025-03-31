@@ -48,10 +48,10 @@ impl DAWUtils {
         }
         else {
             if let TrackEvent::Measure(measure) = &a {
-                Ordering::Less
+                Ordering::Greater
             }
             else if let TrackEvent::Measure(measure) = &b {
-                Ordering::Greater
+                Ordering::Less
             }
             else {
                 Ordering::Equal
@@ -809,9 +809,9 @@ impl DAWUtils {
                     }
 
                     // add the measure boundary markers
-                    let number_of_measures = (riff.length() / time_signature_numerator) as i32; // TODO need to pass through the beats per bar
+                    let number_of_measures = (riff.length() / time_signature_numerator) as i32;
                     for measure_number in 0..number_of_measures {
-                        let measure_boundary_marker = Measure::new((riff_ref.position() + ((measure_number + 1) * 4) as f64) / bpm * 60.0 * sample_rate);
+                        let measure_boundary_marker = Measure::new((riff_ref.position() + ((measure_number + 1) * time_signature_numerator as i32) as f64) / bpm * 60.0 * sample_rate);
                         events_all.push(TrackEvent::Measure(measure_boundary_marker));
 
                         debug!("^^^^^^^^^^^^^^^^^^^^^^ added a measure boundary");
@@ -1128,7 +1128,7 @@ mod tests {
 
     use crate::DAWUtils;
     // use {DAWEventPosition, Riff, RiffReference, Track, TrackEvent, VstPluginParameter};
-    use crate::domain::{Automation, AutomationEnvelope, DAWItemPosition, Note, PluginParameter, Riff, RiffReference, TrackEvent};
+    use crate::domain::{Automation, AutomationEnvelope, DAWItemPosition, Measure, Note, NoteOff, NoteOn, PluginParameter, Riff, RiffReference, TrackEvent};
     use crate::event::TranslationEntityType::AudioPluginParameter;
     use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -1522,6 +1522,49 @@ mod tests {
             }
 
             previous_value = Some(param_event.value);
+        }
+    }
+
+    #[test]
+    fn check_sort_with_last_measure_and_event_in_same_position() {
+        let mut events = vec![];
+
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 0.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 4725.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 66150.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 70875.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 71130.93750000001, 60, 127)));
+        events.push(TrackEvent::Measure(Measure::new(75600.0)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 75600.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 75600.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 80325.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 141750.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 146475.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 146475.0, 60, 127)));
+        events.push(TrackEvent::Measure(Measure::new(151200.0)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 151200.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 151200.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 155925.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 217350.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 222075.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 222075.0, 60, 127)));
+        events.push(TrackEvent::Measure(Measure::new(226800.00000000003)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 226800.00000000003, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 226800.00000000003, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 231525.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 292950.0, 60, 127)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 297675.0, 60, 127)));
+        events.push(TrackEvent::NoteOn(NoteOn::new_with_params(-1, 297930.93750000006, 60, 127)));
+        events.push(TrackEvent::Measure(Measure::new(302400.0)));
+        events.push(TrackEvent::NoteOff(NoteOff::new_with_params(-1, 302400.0, 60, 127)));
+
+        events.sort_by(DAWUtils::sort_track_events);
+
+        if let TrackEvent::Measure(event) = events.last().unwrap() {
+
+        }
+        else {
+            assert!(false);
         }
     }
 }

@@ -294,8 +294,13 @@ pub enum DAWEvents {
     ExportRiffsToMidiFile(PathBuf),
     ExportRiffsToSeparateMidiFiles(PathBuf),
     ExportWaveFile(PathBuf),
+
+    ScanPlugins,
+
+    UpdateProgressBarMessage(String), // progress dialogue update message
+
     UpdateUI,
-    UpdateState,
+    UpdateUIPlugins,
     HideProgressDialogue,
 
     Undo,

@@ -29,3 +29,5 @@ pub const EVENT_DELETION_BEAT_TOLERANCE: f64 = 0.05;
 pub const BLOCK_SIZE_MAX: i32 = 2048;
 pub const EVENT_BUFFER_SIZE: usize = 1024;
 
+pub const PLUGIN_PATHS_SEPARATOR: &str = ",";
+

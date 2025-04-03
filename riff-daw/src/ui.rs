@@ -18,9 +18,9 @@ use itertools::Itertools;
 use log::*;
 use uuid::Uuid;
 
-use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID};
+use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID, PLUGIN_PATHS_SEPARATOR};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference};
+use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference, InstrumentTrack};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
@@ -68,6 +68,12 @@ pub struct Ui {
     pub configuration_dialogue: Dialog,
     pub sample_rate_combobox: ComboBoxText,
     pub block_size_combobox: ComboBoxText,
+    pub vst24_plugin_paths_entry: Entry,
+    pub add_vst24_path_button: Button,
+    pub clap_plugin_paths_entry: Entry,
+    pub add_clap_path_button: Button,
+    pub vst3_plugin_paths_entry: Entry,
+    pub add_vst3_path_button: Button,
 
     pub about_dialogue: AboutDialog,
 
@@ -91,6 +97,9 @@ pub struct Ui {
     pub menu_item_paste: MenuItem,
     pub menu_item_regenerate_riff_ref_ids: MenuItem,
     pub menu_item_preferences: MenuItem,
+
+    // util menu item
+    pub menu_item_scan_plugins: MenuItem,
 
     // help menu
     pub menu_item_about: MenuItem,
@@ -3459,18 +3468,24 @@ impl MainWindow {
 
         {
             let configuration_dialogue = self.ui.configuration_dialogue.clone();
+            let state = state.clone();
+            let tx_from_ui = tx_from_ui.clone();
             let sample_rate_combobox = self.ui.sample_rate_combobox.clone();
             let block_size_combobox = self.ui.block_size_combobox.clone();
-            let state = state.clone();
-            if let Ok(state) = state.lock() {
-                self.ui.sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
-                self.ui.block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
-            }
-            let tx_from_ui = tx_from_ui.clone();
+            let vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
+            let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
+            let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
             self.ui.menu_item_preferences.connect_button_press_event(move |_menu_item, _btn|{
+                if let Ok(mut state) = state.lock() {
+                    sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
+                    block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
+                    vst24_plugin_paths_entry.set_text(state.configuration.vst24_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
+                    clap_plugin_paths_entry.set_text(state.configuration.clap_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
+                    vst3_plugin_paths_entry.set_text(state.configuration.vst3_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
+                }
                 if configuration_dialogue.run() == ResponseType::Ok {
                     debug!("***************************************---------------------------");
-                    if let Ok(state) = state.lock() {
+                    if let Ok(mut state) = state.lock() {
                         let possible_new_sample_rate = sample_rate_combobox.active_id().unwrap().to_string();
                         let possible_new_block_size = block_size_combobox.active_id().unwrap().to_string();
                         if format!("{}", state.configuration.audio.sample_rate) != possible_new_sample_rate ||
@@ -3478,11 +3493,107 @@ impl MainWindow {
                             let _ = tx_from_ui.send(DAWEvents::AudioConfigurationChanged(
                                 possible_new_sample_rate.parse().expect("Not a number"), possible_new_block_size.parse().expect("Not a number")));
                         }
+
+                        state.configuration.vst24_plugin_paths.clear();
+                        for path in vst24_plugin_paths_entry.text().as_str().split(PLUGIN_PATHS_SEPARATOR) {
+                            state.configuration.vst24_plugin_paths.push(path.to_string());
+                        }
+
+                        state.configuration.clap_plugin_paths.clear();
+                        for path in clap_plugin_paths_entry.text().as_str().split(PLUGIN_PATHS_SEPARATOR) {
+                            state.configuration.clap_plugin_paths.push(path.to_string());
+                        }
+
+                        state.configuration.vst3_plugin_paths.clear();
+                        for path in vst3_plugin_paths_entry.text().as_str().split(PLUGIN_PATHS_SEPARATOR) {
+                            state.configuration.vst3_plugin_paths.push(path.to_string());
+                        }
                     }
                 }
                 configuration_dialogue.hide();
 
                 Inhibit(true)
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.menu_item_scan_plugins.connect_button_press_event(move |_menu_item, _btn|{
+                let _ = tx_from_ui.send(DAWEvents::ScanPlugins);
+
+                Inhibit(true)
+            });
+        }
+
+        {
+            let mut vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
+            let window = self.ui.get_wnd_main().clone();
+            let add_vst24_path_chooser = FileChooserDialog::new(Some("Add VST 2.4 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
+            add_vst24_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
+            add_vst24_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            self.ui.add_vst24_path_button.connect_clicked(move |_| {
+                if add_vst24_path_chooser.run() == ResponseType::Ok {
+                    if let Some(directory) = add_vst24_path_chooser.current_folder() {
+                        let mut current_paths = vst24_plugin_paths_entry.text().to_string();
+                        if let Some(directory) = directory.to_str() {
+                            if directory.chars().count() > 0 {
+                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                            }
+                            current_paths.push_str(directory.clone());
+
+                            vst24_plugin_paths_entry.set_text(current_paths.as_str());
+                        }
+                    }
+                }
+                add_vst24_path_chooser.hide();
+            });
+        }
+
+        {
+            let mut clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
+            let window = self.ui.get_wnd_main().clone();
+            let add_clap_path_chooser = FileChooserDialog::new(Some("Add Clap plugin path..."), Some(&window), FileChooserAction::SelectFolder);
+            add_clap_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
+            add_clap_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            self.ui.add_clap_path_button.connect_clicked(move |_| {
+                if add_clap_path_chooser.run() == ResponseType::Ok {
+                    if let Some(directory) = add_clap_path_chooser.current_folder() {
+                        let mut current_paths = clap_plugin_paths_entry.text().to_string();
+                        if let Some(directory) = directory.to_str() {
+                            if directory.chars().count() > 0 {
+                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                            }
+                            current_paths.push_str(directory.clone());
+
+                            clap_plugin_paths_entry.set_text(current_paths.as_str());
+                        }
+                    }
+                }
+                add_clap_path_chooser.hide();
+            });
+        }
+
+        {
+            let mut vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
+            let window = self.ui.get_wnd_main().clone();
+            let add_vst3_path_chooser = FileChooserDialog::new(Some("Add VST 3 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
+            add_vst3_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
+            add_vst3_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            self.ui.add_vst3_path_button.connect_clicked(move |_| {
+                if add_vst3_path_chooser.run() == ResponseType::Ok {
+                    if let Some(directory) = add_vst3_path_chooser.current_folder() {
+                        let mut current_paths = vst3_plugin_paths_entry.text().to_string();
+                        if let Some(directory) = directory.to_str() {
+                            if directory.chars().count() > 0 {
+                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                            }
+                            current_paths.push_str(directory.clone());
+
+                            vst3_plugin_paths_entry.set_text(current_paths.as_str());
+                        }
+                    }
+                }
+                add_vst3_path_chooser.hide();
             });
         }
 
@@ -9512,10 +9623,25 @@ impl MainWindow {
 
     pub fn update_ui_from_state(&mut self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, state: &mut DAWState, state_arc: Arc<Mutex<DAWState>>) {
         let midi_input_devices: Vec<String> = state.midi_devices();
-        let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
 
-        for (key, value) in state.instrument_plugins().iter() {
-            instrument_plugins.insert(key.clone(), value.clone());
+        let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
+        let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        for key in instrument_keys.iter() {
+            if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
+                let adjusted_key = key.replace(char::from(0), "");
+                let adjusted_value = value.replace(char::from(0), "");
+                instrument_plugins.insert(adjusted_key, adjusted_value);
+            }
+        }
+
+        let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
+        let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        for key in effect_keys.iter() {
+            if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
+                let adjusted_key = key.replace(char::from(0), "");
+                let adjusted_value = value.replace(char::from(0), "");
+                effect_plugins.insert(adjusted_key, adjusted_value);
+            }
         }
 
         let project = state.get_project();
@@ -9580,7 +9706,7 @@ impl MainWindow {
                     );
                 }
             }
-            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut track_number, &track);
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &mut track_number, &track);
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -9723,7 +9849,7 @@ impl MainWindow {
         self.update_riff_sequences(&tx_from_ui, state, &state_arc, &mut track_uuids, false);
         self.update_riff_grids(state, false);
         self.update_riff_arrangements(tx_from_ui, state, state_arc, track_uuids, false);
-        self.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
+        self.update_available_audio_plugins_in_ui(&state.configuration.scanned_instrument_plugins.successfully_scanned, &state.configuration.scanned_effect_plugins.successfully_scanned);
 
         debug!("main_window.update_ui_from_state() end - number of riff sequences={}", state.project().song().riff_sequences().len());
     }
@@ -9963,7 +10089,14 @@ impl MainWindow {
         }
     }
 
-    pub fn update_track_details_dialogue(&mut self, midi_input_devices: &Vec<String>, instrument_plugins: &mut IndexMap<String, String>, track_number: &mut i32, track: &&mut TrackType) {
+    pub fn update_track_details_dialogue(
+        &mut self,
+        midi_input_devices: &Vec<String>,
+        instrument_plugins: &mut IndexMap<String, String>,
+        effects_plugins: &mut IndexMap<String, String>,
+        track_number: &mut i32,
+        track: &&mut TrackType
+    ) {
         let track_uuid = track.uuid().to_string();
         
         match self.track_details_dialogues.get_mut(&track_uuid) {
@@ -10009,11 +10142,13 @@ impl MainWindow {
 
                         // re-populate the track instrument choice
                         track_instrument_choice.remove_all();
-                        for (key, value) in instrument_plugins.iter() {
-                            let adjusted_key = key.replace(char::from(0), "");
-                            let adjusted_value = value.replace(char::from(0), "");
-                            // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
-                            track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                        let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                        for key in instrument_keys.iter() {
+                            if let Some(value) = instrument_plugins.get(*key) {
+                                let adjusted_key = key.replace(char::from(0), "");
+                                let adjusted_value = value.replace(char::from(0), "");
+                                track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                            }
                         }
 
                         // set the active element without generating an event
@@ -10041,25 +10176,11 @@ impl MainWindow {
                             }
                         }
 
-                        // clear and add the effects
-                        let track_effects_list = track_details_dialogue.track_effect_list.clone();
-                        if let Some(track_effects_list_store) = track_effects_list.model() {
-                            if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
-                                model.clear();
-                                for effect in track.effects().iter() {
-                                    model.insert_with_values(None, &[
-                                        (0, &effect.name().to_string()),
-                                        (1, &effect.file().to_string()),
-                                        (2, &effect.uuid().to_string()),
-                                        (3, &(RGBA::black())),
-                                        (4, &(RGBA::white())),
-                                    ]);
-                                }
-                                track_effects_list.set_model(Some(model));
-                            }
-                        }
-                    },
-                    TrackType::AudioTrack(_track) => {},
+                        Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+                    }
+                    TrackType::AudioTrack(track) => {
+                        Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+                    }
                     TrackType::MidiTrack(track) => {
                         track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
 
@@ -10070,22 +10191,58 @@ impl MainWindow {
                         }
 
                         track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
-                    },
-                };
+                    }
+                }
             }
             None => (),
         }
     }
 
-    pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &IndexMap<String, String>, effect_plugins: &IndexMap<String, String>) {
+    fn update_track_details_effects(effects_plugins: &mut IndexMap<String, String>, track_details_dialogue: &mut TrackDetailsDialogue, track: &dyn AudioEffectTrack) {
+        // re-populate the track effects choice
+        let track_effects_choice = track_details_dialogue.track_effects_choice.clone();
+        track_effects_choice.remove_all();
+        let effects_keys = effects_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        for key in effects_keys.iter() {
+            if let Some(value) = effects_plugins.get(*key) {
+                let adjusted_key = key.replace(char::from(0), "");
+                let adjusted_value = value.replace(char::from(0), "");
+                track_effects_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+            }
+        }
+
+        // clear and add the effects
+        let track_effects_list = track_details_dialogue.track_effect_list.clone();
+        if let Some(track_effects_list_store) = track_effects_list.model() {
+            if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
+                model.clear();
+                for effect in track.effects().iter() {
+                    model.insert_with_values(None, &[
+                        (0, &effect.name().to_string()),
+                        (1, &effect.file().to_string()),
+                        (2, &effect.uuid().to_string()),
+                        (3, &(RGBA::black())),
+                        (4, &(RGBA::white())),
+                    ]);
+                }
+                track_effects_list.set_model(Some(model));
+            }
+        }
+    }
+
+    pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &HashMap<String, String>, effect_plugins: &HashMap<String, String>) {
         self.track_details_dialogues.iter().for_each(|(track_uuid, panel)| {
             let active_instrument_id = panel.track_instrument_choice.active_id();
             panel.track_instrument_choice.remove_all();
-            for (key, value) in instrument_plugins.iter() {
-                let adjusted_key = key.replace(char::from(0), "");
-                let adjusted_value = value.replace(char::from(0), "");
-                // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
-                panel.track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+
+            let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+            for key in instrument_keys.iter() {
+                if let Some(value) = instrument_plugins.get(*key) {
+                    let adjusted_key = key.replace(char::from(0), "");
+                    let adjusted_value = value.replace(char::from(0), "");
+                    // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
+                    panel.track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                }
             }
             if let Some(active_instrument_id) = active_instrument_id {
                 if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(track_uuid) {
@@ -10100,8 +10257,11 @@ impl MainWindow {
             }
 
             panel.track_effects_choice.remove_all();
-            for (key, value) in effect_plugins.iter() {
-                panel.track_effects_choice.append(Some(key.replace(char::from(0), "").as_str()), value.replace(char::from(0), "").as_str());
+            let effect_keys = effect_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+            for key in effect_keys.iter() {
+                if let Some(value) = effect_plugins.get(*key) {
+                    panel.track_effects_choice.append(Some(key.replace(char::from(0), "").as_str()), value.replace(char::from(0), "").as_str());
+                }
             }
         });
     }

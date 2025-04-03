@@ -101,8 +101,6 @@ pub struct DAWState {
     sample_data: HashMap<String, SampleData>,
     track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>>,
     centre_split_pane_position: i32,
-    instrument_plugins: IndexMap<String, String>,
-    effect_plugins: IndexMap<String, String>,
     track_grid_cursor_follow: bool,
     riff_grid_cursor_follow: bool,
     pub current_view: CurrentView,
@@ -165,8 +163,6 @@ impl DAWState {
             sample_data: HashMap::new(),
             track_render_audio_consumers: Arc::new(Mutex::new(HashMap::new())),
             centre_split_pane_position: 600,
-            instrument_plugins: IndexMap::new(),
-            effect_plugins: IndexMap::new(),
             track_grid_cursor_follow: true,
             riff_grid_cursor_follow: true,
             current_view: CurrentView::Track,
@@ -2835,18 +2831,6 @@ impl DAWState {
     }
     pub fn set_centre_split_pane_position(&mut self, centre_split_pane_position: i32) {
         self.centre_split_pane_position = centre_split_pane_position;
-    }
-    pub fn instrument_plugins(&self) -> &IndexMap<String, String> {
-        &self.instrument_plugins
-    }
-    pub fn instrument_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
-        &mut self.instrument_plugins
-    }
-    pub fn effect_plugins(&self) -> &IndexMap<String, String> {
-        &self.effect_plugins
-    }
-    pub fn effect_plugins_mut(&mut self) -> &mut IndexMap<String, String> {
-        &mut self.effect_plugins
     }
     pub fn track_grid_cursor_follow(&self) -> bool {
         self.track_grid_cursor_follow

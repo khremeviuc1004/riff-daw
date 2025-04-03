@@ -7087,6 +7087,12 @@ pub struct DAWConfiguration {
     pub scanned_effect_plugins: ScannedPlugins,
     pub midi_input_connections: MidiInputConnections,
     pub midi_output_connections: MidiOutputConnections,
+    #[serde(default = "Vec::new")]
+    pub vst24_plugin_paths: Vec<String>,
+    #[serde(default = "Vec::new")]
+    pub clap_plugin_paths: Vec<String>,
+    #[serde(default = "Vec::new")]
+    pub vst3_plugin_paths: Vec<String>,
 }
 
 impl DAWConfiguration {
@@ -7097,6 +7103,9 @@ impl DAWConfiguration {
             scanned_effect_plugins: ScannedPlugins::new(),
             midi_input_connections: MidiInputConnections::new(),
             midi_output_connections: MidiOutputConnections::new(),
+            vst24_plugin_paths: vec![],
+            clap_plugin_paths: vec![],
+            vst3_plugin_paths: vec![],
         }
     }
 

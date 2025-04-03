@@ -8409,10 +8409,10 @@ mod tests {
             }
         }
 
-        if let Some(track_event) = riff_four_bar_with_two_long_notes.events().get(4) {
+        if let Some(track_event) = riff_four_bar_with_two_long_notes.events().get(5) {
             match track_event {
                 TrackEvent::Measure(_) => Ok(()),
-                _ => Err("The fifth element is not a measure.".to_string())
+                _ => Err("The sixth element is not a measure.".to_string())
             }
         }
         else {

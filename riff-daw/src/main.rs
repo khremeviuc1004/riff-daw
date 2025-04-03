@@ -155,9 +155,7 @@ fn main() {
     let autosave_keep_alive = Arc::new(Mutex::new(true));
 
     set_up_initial_project_in_ui(&tx_to_audio, &track_audio_coast, &mut gui, tx_from_ui.clone(), state.clone(), vst_host_time_info.clone());
-
-    // scan for audio plugins
-    scan_audio_plugins(state.clone(), &gui);
+    let _ = tx_from_ui.send(DAWEvents::UpdateUIPlugins);
 
     start_autosave(state.clone(), autosave_keep_alive.clone());
 
@@ -276,57 +274,6 @@ pub fn start_autosave(state: Arc<Mutex<DAWState>>, autosave_keep_alive: Arc<Mute
             }
         }
     });
-}
-
-
-pub fn scan_audio_plugins(state: Arc<Mutex<DAWState>>, gui: &MainWindow)     {
-    if let Ok(vst_path) = std::env::var(VST_PATH_ENVIRONMENT_VARIABLE_NAME) {
-        if let Ok(clap_path) = std::env::var(CLAP_PATH_ENVIRONMENT_VARIABLE_NAME) {
-            if let Ok(vst3_path) = std::env::var(VST3_PATH_ENVIRONMENT_VARIABLE_NAME) {
-                match state.lock() {
-                    Ok(mut state) => {
-                        if state.configuration.scanned_instrument_plugins.successfully_scanned.is_empty() && state.configuration.scanned_effect_plugins.successfully_scanned.is_empty() {
-                            let (instruments, effects) = scan_for_audio_plugins(vst_path.clone(), clap_path.clone(), vst3_path.clone());
-                            for (key, value) in instruments.iter() {
-                                state.instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                                state.configuration.scanned_instrument_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                            }
-                            state.instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                            for (key, value) in effects.iter() {
-                                state.effect_plugins_mut().insert(key.to_string(), value.to_string());
-                                state.configuration.scanned_effect_plugins.successfully_scanned.insert(key.to_string(), value.to_string());
-                            }
-                            state.effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                            state.configuration.save();
-                        } else {
-                            let mut intermediate_map = HashMap::new();
-                            for (key, value) in state.configuration.scanned_instrument_plugins.successfully_scanned.iter() {
-                                intermediate_map.insert(key.to_string(), value.to_string());
-                            }
-                            for (key, value) in intermediate_map.iter() {
-                                state.instrument_plugins_mut().insert(key.to_string(), value.to_string());
-                            }
-                            state.instrument_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-
-                            intermediate_map.clear();
-                            for (key, value) in state.configuration.scanned_effect_plugins.successfully_scanned.iter() {
-                                intermediate_map.insert(key.to_string(), value.to_string());
-                            }
-                            for (key, value) in intermediate_map.iter() {
-                                state.effect_plugins_mut().insert(key.to_string(), value.to_string());
-                            }
-                            state.effect_plugins_mut().sort_by(|_key1, value1: &String, _key2, value2: &String| value1.cmp(value2));
-                        }
-
-                        gui.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
-                    }
-                    Err(_) => {}
-                }
-            }
-        }
-    }
 }
 
 
@@ -980,6 +927,52 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }
             }
+            DAWEvents::ScanPlugins => {
+                gui.ui.dialogue_progress_bar.set_text(Some("Scanning for plugins..."));
+                gui.ui.progress_dialogue.set_title("Scanning Plugins...");
+                gui.ui.progress_dialogue.show_all();
+
+                let state = state.clone();
+                let tx_from_ui = tx_from_ui.clone();
+                let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
+                    let mut vst24_plugin_paths = vec![];
+                    let mut clap_plugin_paths = vec![];
+                    let mut vst3_plugin_paths = vec![];
+
+                    match state.lock() {
+                        Ok(mut state) => {
+                            debug!("Main - rx_ui processing loop - DAWEvents::ScanPlugins.");
+                            vst24_plugin_paths = state.configuration.vst24_plugin_paths.clone();
+                            clap_plugin_paths = state.configuration.clap_plugin_paths.clone();
+                            vst3_plugin_paths = state.configuration.vst3_plugin_paths.clone();
+                        }
+                        Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::ScanPlugins - could not get lock on state"),
+                    }
+
+                    let (instrument_audio_plugins, effect_audio_plugins) = scan_for_audio_plugins(
+                                                                                            &vst24_plugin_paths,
+                                                                                            &clap_plugin_paths,
+                                                                                            &vst3_plugin_paths,
+                                                                                            tx_from_ui.clone(),
+                                                                                        );
+
+                    match state.lock() {
+                        Ok(mut state) => {
+                            debug!("Main - rx_ui processing loop - DAWEvents::ScanPlugins.");
+                            state.configuration.scanned_instrument_plugins.successfully_scanned = instrument_audio_plugins;
+                            state.configuration.scanned_effect_plugins.successfully_scanned = effect_audio_plugins;
+                        }
+                        Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::ScanPlugins - could not get lock on state"),
+                    }
+
+
+                    let _ = tx_from_ui.send(DAWEvents::UpdateUIPlugins);
+                    let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                }));
+            }
+            DAWEvents::UpdateProgressBarMessage(message) => {
+                gui.ui.dialogue_progress_bar.set_text(Some(message.as_str()));
+            }
             DAWEvents::UpdateUI => {
                 let state_arc = state.clone();
                 match state.lock() {
@@ -994,7 +987,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 gui.ui.sample_roll_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
             }
-            DAWEvents::UpdateState => debug!("Event: update state"),
+            DAWEvents::UpdateUIPlugins => {
+                match state.lock() {
+                    Ok(mut state) => {
+                        gui.update_available_audio_plugins_in_ui(&state.configuration.scanned_instrument_plugins.successfully_scanned, &state.configuration.scanned_effect_plugins.successfully_scanned);
+                    }
+                    Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::UpdateUIPlugins - could not get lock on state"),
+                }
+            }
             DAWEvents::Notification(notification_type, message) => {
                 let message_type = match notification_type {
                     NotificationType::Info => { MessageType::Info }
@@ -1234,7 +1234,25 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::PianoRollMPENoteIdChange(mpe_note_id_change) => {
                 match state.lock() {
                     Ok(mut state) => {
+                        let new_note_id = mpe_note_id_change.clone() as i32;
                         state.set_piano_roll_mpe_note_id(mpe_note_id_change);
+
+                        // if a riff is selected and notes in the riff are selected then change there note id
+                        let selected_riff_events = state.selected_riff_events().iter().map(|id| id.clone()).collect_vec();
+                        if let Some(track_uuid) = state.selected_track() {
+                            if let Some(riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+                                if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                    if let Some(riff) = track.riffs_mut().iter_mut().find(|riff| riff.id() == riff_uuid) {
+                                        for event in riff.events_mut().iter_mut().filter(|event| selected_riff_events.contains(&event.id())) {
+                                            if let TrackEvent::Note(note) = event {
+                                                note.set_note_id(new_note_id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         gui.ui.piano_roll_drawing_area.queue_draw();
                     }
                     Err(_) => debug!("Main - rx_ui processing loop - PianoRollMPENoteIdChange - could not get lock on state"),
@@ -1395,7 +1413,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
 
                             state.update_track_senders_and_receivers(instrument_track_senders_local, instrument_track_receivers_local);
-                            gui.update_available_audio_plugins_in_ui(state.instrument_plugins(), state.effect_plugins());
+                            gui.update_available_audio_plugins_in_ui(&state.configuration.scanned_instrument_plugins.successfully_scanned, &state.configuration.scanned_effect_plugins.successfully_scanned);
                         }
                         Err(_) => debug!("Main - rx_ui processing loop - Track Added - could not get lock on state"),
                     }
@@ -5016,16 +5034,31 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         match state.lock() {
                             Ok(mut state) => {
                                 let midi_input_devices: Vec<String> = state.midi_devices();
-                                let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
 
-                                for (key, value) in state.instrument_plugins().iter() {
-                                    instrument_plugins.insert(key.clone(), value.clone());
+                                let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
+                                let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                                for key in instrument_keys.iter() {
+                                    if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
+                                        let adjusted_key = key.replace(char::from(0), "");
+                                        let adjusted_value = value.replace(char::from(0), "");
+                                        instrument_plugins.insert(adjusted_key, adjusted_value);
+                                    }
+                                }
+
+                                let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
+                                let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                                for key in effect_keys.iter() {
+                                    if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
+                                        let adjusted_key = key.replace(char::from(0), "");
+                                        let adjusted_value = value.replace(char::from(0), "");
+                                        effect_plugins.insert(adjusted_key, adjusted_value);
+                                    }
                                 }
 
                                 for (mut track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                     if track.uuid().to_string() == track_uuid {
                                         let mut track_number = track_number as i32;
-                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut track_number, &track);
+                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &mut track_number, &track);
                                         break;
                                     }
                                 }

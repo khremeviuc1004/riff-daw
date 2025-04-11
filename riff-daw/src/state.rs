@@ -2425,7 +2425,7 @@ impl DAWState {
 
         if let Some(number_of_blocks) = number_of_blocks {
             let sample_rate = self.configuration.audio.sample_rate as u32;
-            let block_size = self.configuration.audio.sample_rate as usize;
+            let block_size = self.configuration.audio.block_size as usize;
 
             let _ = thread::Builder::new().name("Export wave file".into()).spawn(move || {
                 match track_render_audio_consumers.lock() {

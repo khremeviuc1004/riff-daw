@@ -11,7 +11,7 @@ use cairo::glib::{BindingFlags, BoolError, SignalHandlerId};
 use crossbeam_channel::Sender;
 use gdk::{EventType, RGBA, ScrollDirection};
 use gladis::Gladis;
-use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType, Spinner};
+use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType, Spinner, TreeStore, EntryCompletion};
 use gtk::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, ComboBoxText, CssProvider, Dialog, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserDialog, FileChooserWidget, FileFilter, Frame, gdk, glib, Grid, Label, ListStore, MenuItem, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, RadioToolButton, RecentChooserMenu, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, ToggleToolButton, ToolButton, TreeView, Viewport, Widget};
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -22,7 +22,7 @@ use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_V
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
 use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference, InstrumentTrack};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
-use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler};
+use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
 use crate::utils::DAWUtils;
 
@@ -442,6 +442,9 @@ pub struct Ui {
     pub add_arrangement_btn: Button,
     pub arrangements_combobox: ComboBoxText,
 
+    pub riff_arrangement_overview_drawing_area: DrawingArea,
+    pub riff_arrangement_overview_toggle_button: ToggleButton,
+
     pub riffs_stack: Stack,
 
     pub song_position_txt_ctrl: Label,
@@ -633,6 +636,8 @@ pub struct RiffArrangementBlade {
     pub riff_items_view_port: Viewport,
     pub riff_arrangement_save_name_btn: Button,
     pub riff_arrangement_scrolled_window: ScrolledWindow,
+    pub riff_arrangement_riff_set_entry_tree_store: TreeStore,
+    pub riff_arrangement_riff_set_entry_completion: EntryCompletion,
 }
 
 #[derive(Gladis, Clone)]
@@ -696,6 +701,7 @@ pub struct MainWindow {
     pub scripting_window_stack: Stack,
     pub piano_roll_grid: Option<Arc<Mutex<BeatGrid>>>,
     pub piano_roll_grid_ruler: Option<Arc<Mutex<BeatGridRuler>>>,
+    pub riff_arrangement_overview_grid: Option<Arc<Mutex<BeatGrid>>>,
     pub sample_roll_grid: Option<Arc<Mutex<BeatGrid>>>,
     pub sample_roll_grid_ruler: Option<Arc<Mutex<BeatGridRuler>>>,
     pub track_grid: Option<Arc<Mutex<BeatGrid>>>,
@@ -885,6 +891,7 @@ impl MainWindow {
             piano_roll_grid_ruler: None,
             sample_roll_grid: None,
             sample_roll_grid_ruler: None,
+            riff_arrangement_overview_grid: None,
             track_grid: None,
             track_grid_ruler: None,
             riff_grid: None,
@@ -6012,6 +6019,7 @@ impl MainWindow {
                 4,
                 Some(std::boxed::Box::new(piano_roll_custom_painter)),
                 Some(std::boxed::Box::new(piano_roll_custom_vertical_scale_painter)),
+                None,
                 Some(std::boxed::Box::new(PianoRollMouseCoordHelper)),
                 tx_from_ui.clone(),
                 true,
@@ -8750,7 +8758,135 @@ impl MainWindow {
                 }
             });
         }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            self.ui.riff_arrangement_overview_toggle_button.connect_clicked(move |riff_arrangement_overview_toggle_button| {
+                let _ = tx_from_ui.send(DAWEvents::RiffArrangementToggleOverview {show: riff_arrangement_overview_toggle_button.is_active()});
+            });
+        }
+
+        let riff_arrangement_overview_custom_painter: RiffArrangementOverviewCustomPainter = RiffArrangementOverviewCustomPainter::new(
+            state_arc.clone(),
+            self.ui.riff_arrangement_box.clone(),
+        );
+        let riff_arrangement_overview_custom_vertical_scale_painter = RiffArrangementOverviewDummyCustomPainter::new();
+        let riff_arrangement_overview_custom_horizontal_scale_painter = RiffArrangementOverviewDummyCustomPainter::new();
+        let riff_arrangement_overview_grid = BeatGrid::new_with_painters(
+            1.0,
+            1.0,
+            self.ui.riff_arrangement_overview_drawing_area.height_request() as f64 / 127.0,
+            50.0,
+            4,
+            Some(std::boxed::Box::new(riff_arrangement_overview_custom_painter)),
+            Some(std::boxed::Box::new(riff_arrangement_overview_custom_vertical_scale_painter)),
+            Some(std::boxed::Box::new(riff_arrangement_overview_custom_horizontal_scale_painter)),
+            Some(std::boxed::Box::new(RiffArrangementOverviewMouseCoordHelper)),
+            tx_from_ui.clone(),
+            true,
+            Some(DrawingAreaType::RiffArrangement),
+        );
+        let riff_arrangement_overview_grid_arc = Arc::new( Mutex::new(riff_arrangement_overview_grid));
+
+        self.set_riff_arrangement_overview_grid(Some(riff_arrangement_overview_grid_arc.clone()));
+
+        {
+            let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
+            self.ui.riff_arrangement_overview_drawing_area.connect_draw(move |drawing_area, context| {
+                match riff_arrangement_overview_grid.lock() {
+                    Ok(mut grid) => grid.paint(context, drawing_area),
+                    Err(_) => (),
+                }
+                Inhibit(false)
+            });
+        }
+
+        {
+            let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
+            self.ui.riff_arrangement_overview_drawing_area.connect_motion_notify_event(move |piano_roll_drawing_area, motion_event| {
+                let coords = motion_event.coords().unwrap();
+                let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button1
+                }
+                else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button3
+                };
+                debug!("Riff arrangement overview mouse motion: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                match riff_arrangement_overview_grid.lock() {
+                    Ok(mut grid) => {
+                        grid.handle_mouse_motion(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
+                    },
+                    Err(_) => (),
+                }
+
+                piano_roll_drawing_area.queue_draw();
+
+                Inhibit(false)
+            });
+        }
+
+        {
+            let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
+            self.ui.riff_arrangement_overview_drawing_area.connect_button_press_event(move |piano_roll_drawing_area, event_btn| {
+                let coords = event_btn.coords().unwrap();
+                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button3
+                }
+                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button1
+                };
+                debug!("Riff arrangement overview mouse pressed coords: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                match riff_arrangement_overview_grid.lock() {
+                    Ok(mut grid) => {
+                        grid.handle_mouse_press(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed);
+                    },
+                    Err(_) => (),
+                }
+                Inhibit(false)
+            });
+        }
+
+        {
+            let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
+            self.ui.riff_arrangement_overview_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
+                let coords = event_btn.coords().unwrap();
+                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button1
+                }
+                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button3
+                };
+
+                piano_roll_drawing_area.grab_focus();
+
+                debug!("Riff arrangement overview mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+                match riff_arrangement_overview_grid.lock() {
+                    Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                    Err(_) => (),
+                }
+                Inhibit(false)
+            });
+        }
     }
+
 
     fn add_riff_arrangement_blade(
         riff_arrangements_box: Box,
@@ -9467,6 +9603,10 @@ impl MainWindow {
         self.piano_roll_grid_ruler = piano_roll_grid_ruler;
     }
 
+    pub fn set_riff_arrangement_overview_grid(&mut self, riff_arrangement_overview_grid: Option<Arc<Mutex<BeatGrid>>>) {
+        self.riff_arrangement_overview_grid = riff_arrangement_overview_grid;
+    }
+
     /// Set the main window's sample roll grid.
     pub fn set_sample_roll_grid(&mut self, sample_roll_grid: Option<Arc<Mutex<BeatGrid>>>) {
         self.sample_roll_grid = sample_roll_grid;
@@ -9513,7 +9653,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_goto_start_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportGotoStart) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),
@@ -9524,7 +9664,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_move_back_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportMoveBack) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),
@@ -9535,7 +9675,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_stop_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportStop) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),
@@ -9589,7 +9729,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_pause_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportPause) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),
@@ -9600,7 +9740,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             main_window.ui.transport_move_forward_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportMoveForward) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),
@@ -9611,7 +9751,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui;
             main_window.ui.transport_goto_end_button.connect_clicked(move |button| {
-                if button.is_active() && button.is_active() {
+                if button.is_active() {
                     match tx_from_ui.send(DAWEvents::TransportGotoEnd) {
                         Ok(_) => (),
                         Err(error) => debug!("{:?}", error),

@@ -403,6 +403,8 @@ pub enum DAWEvents {
     RiffArrangementCopySelectedToTrackViewCursorPosition(String), // riff arrangement uuid
     RiffArrangementRiffItemSelect(String, String, bool), // riff_arrangement uuid, riff item uuid (riff set reference uuid), bool selected
 
+    RiffArrangementToggleOverview{show: bool},
+
     MasterChannelChange(MasterChannelChangeType), // channel change type
 
     PianoRollSetTrackName(String),

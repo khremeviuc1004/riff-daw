@@ -42,6 +42,8 @@
     <property name="step-increment">1</property>
     <property name="page-increment">10</property>
   </object>
+  <object class="GtkEntryCompletion" id="riff_arrangement_riff_set_entry_completion"/>
+  <object class="GtkTreeStore" id="riff_arrangement_riff_set_entry_tree_store"/>
   <object class="GtkImage" id="save_image">
     <property name="visible">True</property>
     <property name="can-focus">False</property>
@@ -145,21 +147,6 @@
                       </object>
                       <packing>
                         <property name="left-attach">8</property>
-                        <property name="top-attach">0</property>
-                      </packing>
-                    </child>
-                    <child>
-                      <object class="GtkComboBoxText" id="riff_set_combobox">
-                        <property name="name">riff_arr_riff_set_combo</property>
-                        <property name="width-request">100</property>
-                        <property name="visible">True</property>
-                        <property name="can-focus">False</property>
-                        <property name="halign">start</property>
-                        <property name="valign">center</property>
-                        <property name="popup-fixed-width">False</property>
-                      </object>
-                      <packing>
-                        <property name="left-attach">9</property>
                         <property name="top-attach">0</property>
                       </packing>
                     </child>
@@ -288,6 +275,31 @@
                       </object>
                       <packing>
                         <property name="left-attach">3</property>
+                        <property name="top-attach">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkComboBoxText" id="riff_set_combobox">
+                        <property name="name">riff_arr_riff_set_combo</property>
+                        <property name="width-request">100</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="halign">start</property>
+                        <property name="valign">center</property>
+                        <property name="has-entry">True</property>
+                        <property name="popup-fixed-width">False</property>
+                        <child internal-child="entry">
+                          <object class="GtkEntry">
+                            <property name="can-focus">False</property>
+                            <property name="halign">start</property>
+                            <property name="valign">center</property>
+                            <property name="max-length">20</property>
+                            <property name="completion">riff_arrangement_riff_set_entry_completion</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="left-attach">9</property>
                         <property name="top-attach">0</property>
                       </packing>
                     </child>

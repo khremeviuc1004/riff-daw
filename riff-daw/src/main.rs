@@ -434,7 +434,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             },
             DAWEvents::OpenFile(path) => {
                 gui.clear_ui();
-                gui.ui.dialogue_progress_bar.set_text(Some(format!("Loading {}...", path.to_str().unwrap()).as_str()));
+                gui.ui.dialogue_progress_bar.set_text(Some(format!("Opening {}...", path.to_str().unwrap()).as_str()));
                 gui.ui.progress_dialogue.set_title("Open");
                 gui.ui.progress_dialogue.show_all();
 
@@ -452,67 +452,85 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     // history.clear();
                     let mut midi_tracks = HashMap::new();
                     let state_arc2 = state.clone();
+
+                    // get and release locks on state regularly (parking lot promises round robin locking to prevent starvation) otherwise it locks up the UI and causes jack under runs
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Closing all tracks...".to_string()));
+                        state.close_all_tracks(tx_to_audio.clone());
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Resetting state...".to_string()));
+                        state.reset_state();
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Loading file...".to_string()));
+                        state.load_from_file(
+                            vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone());
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Setting up VST24 time info...".to_string()));
+                        let tempo = state.project().song().tempo();
+
+                        {
+                            let mut time_info = vst_host_time_info.write();
+                            time_info.sample_pos = 0.0;
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;; // FIXME is sample rate and block size part of a song or should it be part of configuration???
+                            time_info.nanoseconds = 0.0;
+                            time_info.ppq_pos = 0.0;
+                            time_info.tempo = tempo;
+                            time_info.bar_start_pos = 0.0;
+                            time_info.cycle_start_pos = 0.0;
+                            time_info.cycle_end_pos = 0.0;
+                            time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
+                            time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
+                            time_info.smpte_offset = 0;
+                            time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                            time_info.samples_to_next_clock = 0;
+                            time_info.flags = 3;
+                        }
+                    }
                     match state.lock() {
                         Ok(mut state) => {
-                            state.close_all_tracks(tx_to_audio.clone());
-                            state.reset_state();
-
-                            state.load_from_file(
-                                vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone());
-
+                            let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to track background processor...".to_string()));
                             let tempo = state.project().song().tempo();
-
-                            {
-                                let mut time_info = vst_host_time_info.write();
-                                time_info.sample_pos = 0.0;
-                                time_info.sample_rate = state.configuration.audio.sample_rate as f64;; // FIXME is sample rate and block size part of a song or should it be part of configuration???
-                                time_info.nanoseconds = 0.0;
-                                time_info.ppq_pos = 0.0;
-                                time_info.tempo = tempo;
-                                time_info.bar_start_pos = 0.0;
-                                time_info.cycle_start_pos = 0.0;
-                                time_info.cycle_end_pos = 0.0;
-                                time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
-                                time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
-                                time_info.smpte_offset = 0;
-                                time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
-                                time_info.samples_to_next_clock = 0;
-                                time_info.flags = 3;
-                            }
-
-                            let mut audio_track_ids = vec![];
-                            for track in state.get_project().song_mut().tracks_mut() {
+                            for track in state.project().song().tracks() {
                                 match track {
                                     TrackType::MidiTrack(track) => {
                                         midi_tracks.insert(track.uuid().to_string(), track.name().to_string());
                                     }
                                     _ => {
-                                        audio_track_ids.push(track.uuid().to_string());
+                                        state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
                                     }
                                 }
-                            }
-                            for track_id in audio_track_ids.iter() {
-                                state.send_to_track_background_processor(track_id.clone(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
-                            }
-
-                            match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
-                                Ok(_) => (),
-                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
-                            }
-                            match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
-                                Ok(_) => (),
-                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
-                            }
-                            match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
-                                Ok(_) => (),
-                                Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                             }
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - Open File - could not get lock on state"),
                     }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending block size to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                        }
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                        }
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending sample rate to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                        }
+                    }
 
                     match state_arc2.lock() {
                         Ok(state) => {
+                            let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Creating track midi ports...".to_string()));
                             // add midi track ports
                             for (track_uuid, _) in midi_tracks {
                                 if let Some(jack_client) = state.jack_client() {
@@ -8042,6 +8060,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - could not get lock on state"),
                 }
             }
+            DAWEvents::RiffArrangementToggleOverview { show } => {
+                if show {
+                    gui.ui.riff_arrangement_overview_drawing_area.show();
+                }
+                else {
+                    gui.ui.riff_arrangement_overview_drawing_area.hide();
+                }
+            }
         }
         Err(_) => (),
     }
@@ -15330,6 +15356,11 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                 if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
                                     gui.repaint_riff_arrangement_view_active_drawing_areas(riff_arrangement_uuid.as_str(), play_position_in_beats, playing_riff_arrangement_summary_data);
                                 }
+                                if let Some(grid) = gui.riff_arrangement_overview_grid.clone() {
+                                    if let Ok(mut grid) = grid.lock() {
+                                        grid.set_track_cursor_time_in_beats(play_position_in_beats);
+                                    }
+                                }
                             }
                             // else {
                             //     // debug!("Not playing riff set");
@@ -15343,6 +15374,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     gui.ui.sample_roll_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
+                    gui.ui.riff_arrangement_overview_drawing_area.queue_draw();
                 }
                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
                     debug!("Midi generic MMC event: ");

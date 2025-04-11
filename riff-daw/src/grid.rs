@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::MutexGuard;
 use cairo::{Context};
 use crossbeam_channel::Sender;
-use gtk::{DrawingArea, prelude::*};
+use gtk::{DrawingArea, prelude::*, Frame, ScrolledWindow, Viewport};
 use itertools::Itertools;
 use log::*;
 use strum_macros::Display;
@@ -45,12 +45,13 @@ pub enum DrawingAreaType {
     Automation,
     Riff,
     RiffGrid,
+    RiffArrangement,
 }
 
 pub trait Grid : MouseHandler {
     fn paint(&mut self, context: &Context, drawing_area: &DrawingArea);
     fn paint_vertical_scale(&mut self, context: &Context, height: f64, width: f64, drawing_area: &DrawingArea);
-    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64);
+    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64, drawing_area: &DrawingArea);
     fn paint_custom(&mut self, context: &Context, height: f64, width: f64, drawing_area_widget_name: String, drawing_area: &DrawingArea);
     fn paint_select_window(&mut self, context: &Context, height: f64, width: f64);
     fn paint_zoom_window(&mut self, context: &Context, height: f64, width: f64);
@@ -114,7 +115,7 @@ pub trait CustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    );
+    ) -> (f64, f64);
     fn track_cursor_time_in_beats(&self) -> f64;
     fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64);
 
@@ -617,6 +618,7 @@ pub struct BeatGrid {
     resize_drawing_area: bool,
 
     vertical_scale_painter: Option<Box<dyn CustomPainter>>,
+    horizontal_scale_painter: Option<Box<dyn CustomPainter>>,
 
     // draw mode
     draw_mode_on: bool,
@@ -710,6 +712,7 @@ impl BeatGrid {
             resize_drawing_area: true,
 
             vertical_scale_painter: None,
+            horizontal_scale_painter: None,
 
             draw_mode_on: false,
             draw_mode: DrawMode::Point,
@@ -813,6 +816,7 @@ impl BeatGrid {
             resize_drawing_area,
 
             vertical_scale_painter: None,
+            horizontal_scale_painter: None,
 
             draw_mode_on: false,
             draw_mode: DrawMode::Point,
@@ -839,6 +843,7 @@ impl BeatGrid {
         beats_per_bar: i32,
         custom_painter: Option<Box<dyn CustomPainter>>,
         vertical_scale_painter: Option<Box<dyn CustomPainter>>,
+        horizontal_scale_painter: Option<Box<dyn CustomPainter>>,
         mouse_coord_helper: Option<Box<dyn BeatGridMouseCoordHelper>>,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         resize_drawing_area: bool,
@@ -917,6 +922,7 @@ impl BeatGrid {
             resize_drawing_area,
 
             vertical_scale_painter,
+            horizontal_scale_painter,
 
             draw_mode_on: false,
             draw_mode: DrawMode::Point,
@@ -1081,6 +1087,10 @@ impl BeatGrid {
 
     pub fn vertical_scale_painter_mut(&mut self) -> &mut Option<Box<dyn CustomPainter>> {
         &mut self.vertical_scale_painter
+    }
+
+    pub fn horizontal_scale_painter_mut(&mut self) -> &mut Option<Box<dyn CustomPainter>> {
+        &mut self.horizontal_scale_painter
     }
 
     pub fn snap_start(&self) -> bool {
@@ -1601,15 +1611,15 @@ impl Grid for BeatGrid {
         context.rectangle(clip_x1, clip_y1, clip_x2 - clip_x1, clip_y2 - clip_y1);
         let _ = context.fill();
 
-        let height = drawing_area.height_request() as f64;
-        let width = drawing_area.width_request() as f64;
+        let height = drawing_area.allocated_height() as f64;
+        let width = drawing_area.allocated_width() as f64;
 
         if let Some(window) = drawing_area.window() {
             window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Cross)));
         }
 
         self.paint_vertical_scale(context, height, width, drawing_area);
-        self.paint_horizontal_scale(context, height, width);
+        self.paint_horizontal_scale(context, height, width, drawing_area);
         self.paint_custom(context, height, width, drawing_area.widget_name().to_string(), drawing_area);
         self.paint_loop_markers(context, height, width);
         if self.draw_selection_window {
@@ -1639,7 +1649,7 @@ impl Grid for BeatGrid {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
 
         if let Some(vertical_scale_painter) = self.vertical_scale_painter_mut() {
-            vertical_scale_painter.paint_custom(context,
+            let (entity_height, entity_width) = vertical_scale_painter.paint_custom(context,
                                                 height,
                                                 width,
                                                 entity_height_in_pixels,
@@ -1663,6 +1673,9 @@ impl Grid for BeatGrid {
                                                 &edit_drag_cycle,
                                                 tx_from_ui,
             );
+
+            self.entity_height_in_pixels = entity_height;
+            self.beat_width_in_pixels = entity_width;
         }
         else {
             context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
@@ -1687,32 +1700,69 @@ impl Grid for BeatGrid {
         }
     }
 
-    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64) {
-        let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
-        let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
-        let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
-        let mut current_x = clip_x1_in_beats.floor() * adjusted_beat_width_in_pixels; // go to the first beat to the left of the view port e.g. bar 2 beat 3 = beat 2 * 4 + 3 = beat 11
-        let mut beat_in_bar_index = (clip_x1_in_beats as i32 % self.beats_per_bar) + 1;
+    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64, drawing_area: &DrawingArea) {
+        let entity_height_in_pixels = self.entity_height_in_pixels;
+        let beat_width_in_pixels = self.beat_width_in_pixels;
+        let zoom_horizontal = self.zoom_horizontal;
+        let zoom_vertical = self.zoom_vertical;
+        let operation_mode = self.operation_mode.clone();
+        let edit_drag_cycle = self.edit_drag_cycle.clone();
+        let tx_from_ui = self.tx_from_ui.clone();
 
-        while current_x < clip_x2 {
-            if beat_in_bar_index == 1 {
-                context.set_source_rgba(0.5, 0.5, 0.5, 1.0);
-            }
-            else {
-                context.set_source_rgba(0.5, 0.5, 0.5, 0.5);
-            }
+        if let Some(horizontal_scale_painter_mut) = self.horizontal_scale_painter_mut() {
+            let (entity_height, entity_width) = horizontal_scale_painter_mut.paint_custom(context,
+                                                      height,
+                                                      width,
+                                                      entity_height_in_pixels,
+                                                      beat_width_in_pixels,
+                                                      zoom_horizontal,
+                                                      zoom_vertical,
+                                                      None,
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      false,
+                                                      DrawMode::Point,
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      drawing_area,
+                                                      &operation_mode,
+                                                      false,
+                                                      &edit_drag_cycle,
+                                                      tx_from_ui,
+            );
 
-            context.move_to(current_x, clip_y1);
-            context.line_to(current_x, clip_y2);
-            context.set_line_width(0.3);
-            let _ = context.stroke();
-            current_x += adjusted_beat_width_in_pixels;
+            self.entity_height_in_pixels = entity_height;
+            self.beat_width_in_pixels = entity_width;
+        }
+        else {
+            let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
+            let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
+            let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
+            let mut current_x = clip_x1_in_beats.floor() * adjusted_beat_width_in_pixels; // go to the first beat to the left of the view port e.g. bar 2 beat 3 = beat 2 * 4 + 3 = beat 11
+            let mut beat_in_bar_index = (clip_x1_in_beats as i32 % self.beats_per_bar) + 1;
 
-            if beat_in_bar_index == self.beats_per_bar {
-                beat_in_bar_index = 1;
-            }
-            else {
-                beat_in_bar_index += 1;
+            while current_x < clip_x2 {
+                if beat_in_bar_index == 1 {
+                    context.set_source_rgba(0.5, 0.5, 0.5, 1.0);
+                } else {
+                    context.set_source_rgba(0.5, 0.5, 0.5, 0.5);
+                }
+
+                context.move_to(current_x, clip_y1);
+                context.line_to(current_x, clip_y2);
+                context.set_line_width(0.3);
+                let _ = context.stroke();
+                current_x += adjusted_beat_width_in_pixels;
+
+                if beat_in_bar_index == self.beats_per_bar {
+                    beat_in_bar_index = 1;
+                } else {
+                    beat_in_bar_index += 1;
+                }
             }
         }
     }
@@ -1724,7 +1774,7 @@ impl Grid for BeatGrid {
         let (x_selection_window_position, y_selection_window_position, x_selection_window_position2, y_selection_window_position2) = self.get_select_window();
         if let Some(custom_painter) = self.custom_painter.as_mut() {
             custom_painter.set_track_cursor_time_in_beats(self.track_cursor_time_in_beats);
-            custom_painter.paint_custom(
+            let (entity_height, entity_width) = custom_painter.paint_custom(
                 context,
                 height,
                 width,
@@ -1749,6 +1799,9 @@ impl Grid for BeatGrid {
                 &self.edit_drag_cycle.clone(),
                 self.tx_from_ui.clone(),
             );
+
+            self.entity_height_in_pixels = entity_height;
+            self.beat_width_in_pixels = entity_width;
 
             match &self.edit_drag_cycle {
                 DragCycle::MouseReleased => self.edit_drag_cycle = DragCycle::NotStarted,
@@ -2090,13 +2143,13 @@ impl Grid for BeatGridRuler {
         let height = drawing_area.height_request() as f64;
         let width = drawing_area.width_request() as f64;
 
-        self.paint_horizontal_scale(context, height, width);
+        self.paint_horizontal_scale(context, height, width, drawing_area);
     }
 
     fn paint_vertical_scale(&mut self, _context: &Context, _height: f64, _width: f64, _drawing_area: &DrawingArea) {
     }
 
-    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64) {
+    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64, _drawing_area: &DrawingArea) {
         let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
         let (clip_x1, _, clip_x2, _) = context.clip_extents().unwrap();
         let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
@@ -2482,7 +2535,7 @@ impl CustomPainter for PianoRollCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
         match self.state.lock() {
@@ -2611,6 +2664,12 @@ impl CustomPainter for PianoRollCustomPainter {
             let octave_number = note_number / 12 - 2;
             let _ = context.show_text(format!("{}{}", note_name, octave_number).as_str());
         }
+
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -3775,7 +3834,7 @@ impl CustomPainter for SampleRollCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         match self.state.lock() {
             Ok( state) => {
                 // let bpm = state.get_project().song().tempo();
@@ -3827,6 +3886,12 @@ impl CustomPainter for SampleRollCustomPainter {
             },
             Err(_) => debug!("Piano Roll custom painter could not get state lock."),
         }
+
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -3876,7 +3941,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
         match self.state.lock() {
             Ok( state) => {
@@ -4049,6 +4114,11 @@ impl CustomPainter for RiffSetTrackCustomPainter {
         }
 
         // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -4096,7 +4166,7 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
 
@@ -4122,6 +4192,12 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
                 row_number -= 1;
             }
         }
+
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -4196,7 +4272,7 @@ impl CustomPainter for TrackGridCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         // debug!("TrackGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
         let clip_rectangle = Rect::new(
@@ -4457,6 +4533,11 @@ impl CustomPainter for TrackGridCustomPainter {
             Err(_) => debug!("Track grid custom painter could not get state lock."),
         }
         // debug!("TrackGridCustomPainter::paint_custom - exited.");
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -4541,7 +4622,7 @@ impl CustomPainter for RiffGridCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         // debug!("RiffGridCustomPainter::paint_custom - entered...: clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={},", clip_x1, clip_y1, clip_x2, clip_y2);
         let clip_rectangle = Rect::new(
@@ -4779,6 +4860,11 @@ impl CustomPainter for RiffGridCustomPainter {
             Err(_) => debug!("Riff grid custom painter could not get state lock."),
         }
         // debug!("RiffGridCustomPainter::paint_custom - exited.");
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -5043,7 +5129,7 @@ impl CustomPainter for AutomationCustomPainter {
                     drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-    ) {
+    ) -> (f64, f64) {
         match self.state.lock() {
             Ok(mut state) => {
                 let automation_type = *state.automation_type_mut();
@@ -5607,6 +5693,11 @@ impl CustomPainter for AutomationCustomPainter {
                 Self::draw_line(context, draw_mode_start_x, draw_mode_start_y, draw_mode_end_x, draw_mode_end_y);
             }
         }
+
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
     }
 
     fn track_cursor_time_in_beats(&self) -> f64 {
@@ -5714,5 +5805,466 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     }
 
     fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+}
+
+
+pub struct RiffArrangementOverviewMouseCoordHelper;
+
+impl BeatGridMouseCoordHelper for RiffArrangementOverviewMouseCoordHelper {
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
+        0.0
+    }
+
+    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+    }
+
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    }
+
+    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+    }
+
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    }
+
+    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
+    }
+
+    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    }
+
+    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
+    }
+
+    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    }
+
+    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    }
+
+    fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+
+    fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    }
+}
+
+pub struct RiffArrangementOverviewDummyCustomPainter;
+
+impl RiffArrangementOverviewDummyCustomPainter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl CustomPainter for RiffArrangementOverviewDummyCustomPainter {
+    fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, zoom_horizontal: f64, zoom_vertical: f64, drawing_area_widget_name: Option<String>, mouse_pointer_x: f64, mouse_pointer_y: f64, mouse_pointer_previous_x: f64, mouse_pointer_previous_y: f64, draw_mode_on: bool, draw_mode: DrawMode, draw_mode_start_x: f64, draw_mode_start_y: f64, draw_mode_end_x: f64, draw_mode_end_y: f64, drawing_area: &DrawingArea, operation_mode: &OperationModeType, drag_started: bool, edit_drag_cycle: &DragCycle, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> (f64, f64) {
+        (
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+        )
+    }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+pub struct RiffArrangementOverviewCustomPainter {
+    state: Arc<Mutex<DAWState>>,
+    track_height_in_pixels: f64,
+    actual_beat_width_in_pixels: f64,
+    riff_arrangement_box: gtk::Box,
+}
+
+impl RiffArrangementOverviewCustomPainter {
+    pub fn new(state: Arc<Mutex<DAWState>>, riff_arrangement_box: gtk::Box) -> Self {
+        Self {
+            state,
+            track_height_in_pixels: 5.0,
+            actual_beat_width_in_pixels: 5.0,
+            riff_arrangement_box,
+        }
+    }
+
+    fn get_riff_set_lcd(
+        state: &MutexGuard<DAWState>,
+        riff_set_uuid: String
+    ) -> f64 {
+        let lowest_common_factor_in_beats = if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
+            let mut riff_lengths = vec![];
+
+            // get the number of repeats
+            for track in state.project().song().tracks().iter() {
+                // get the riff_ref
+                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                    // get the riff
+                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                        riff_lengths.push(riff.length() as i32);
+                    }
+                }
+            }
+
+            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+
+            DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64
+        }
+        else { 0.0 };
+
+        lowest_common_factor_in_beats
+    }
+
+    fn draw_riff_set_riff_refs(
+        context: &Context,
+        entity_height_in_pixels: f64,
+        beat_width_in_pixels: f64,
+        state: &MutexGuard<DAWState>,
+        running_position: &mut f64,
+        riff_set_uuid: String
+    ) {
+        if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
+            let mut riff_lengths = vec![];
+            let mut riffs_to_draw = vec![];
+
+            // get the number of repeats
+            for track in state.project().song().tracks().iter() {
+                // get the riff_ref
+                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                    // get the riff
+                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                        riff_lengths.push(riff.length() as i32);
+                        let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, riff.length(), Some(track.colour()));
+                        riff_to_draw.set_name(riff.name().to_string());
+                        riffs_to_draw.push(riff_to_draw);
+                    }
+                }
+            }
+
+            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+
+            let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
+
+            // draw the riff reference x number of times
+            for (index, riff_to_draw) in riffs_to_draw.iter_mut().enumerate() {
+                let mut running_position = *running_position;
+                for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
+                    riff_to_draw.set_position(running_position);
+                    if riff_to_draw.name() != "empty" {
+                        if let Some((red, green, blue, alpha)) = riff_to_draw.colour() {
+                            context.set_source_rgba(*red, *green, *blue, *alpha);
+                        }
+                        else {
+                            context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
+                        }
+                        context.rectangle(riff_to_draw.position() * beat_width_in_pixels, index as f64 * entity_height_in_pixels, riff_to_draw.length() * beat_width_in_pixels, entity_height_in_pixels);
+                        let _ = context.fill();
+                    }
+                    running_position += riff_to_draw.length();
+                }
+            }
+
+            *running_position += lowest_common_factor_in_beats as f64;
+        }
+    }
+}
+
+impl CustomPainter for RiffArrangementOverviewCustomPainter {
+    fn paint_custom(
+        &mut self,
+        context: &Context,
+        height: f64,
+        width: f64,
+        entity_height_in_pixels: f64,
+        beat_width_in_pixels: f64,
+        zoom_horizontal: f64,
+        zoom_vertical: f64,
+        drawing_area_widget_name: Option<String>,
+        mouse_pointer_x: f64,
+        mouse_pointer_y: f64,
+        mouse_pointer_previous_x: f64,
+        mouse_pointer_previous_y: f64,
+        draw_mode_on: bool,
+        draw_mode: DrawMode,
+        draw_mode_start_x: f64,
+        draw_mode_start_y: f64,
+        draw_mode_end_x: f64,
+        draw_mode_end_y: f64,
+        drawing_area: &DrawingArea,
+        operation_mode: &OperationModeType,
+        drag_started: bool,
+        edit_drag_cycle: &DragCycle,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
+    ) -> (f64, f64) {
+        let mut view_window_riff_item_uuids = vec![];
+        let mut view_window_track_indexes = vec![];
+        let mut view_window_first_beat = 0.0;
+        let mut view_window_last_beat = 0.0;
+        let mut view_window_first_track = 0.0;
+        let mut view_window_last_track = 0.0;
+
+        context.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+        context.rectangle(0.0, 0.0, width, height);
+        let _ = context.fill();
+
+        'zanzibar:
+        for widget in self.riff_arrangement_box.children().iter() {
+            if widget.is_visible() {
+                if let Some(blade) = widget.dynamic_cast_ref::<Frame>() {
+                    if let Some(widget) = blade.child() {
+                        if let Some(gtk_box) = widget.dynamic_cast_ref::<gtk::Box>() {
+                            for widget in gtk_box.children() {
+                                if widget.widget_name().as_str() == "riff_arrangement_riff_items_scrolled_window" {
+                                    if let Some(riff_arrangement_scrolled_window) = widget.dynamic_cast_ref::<ScrolledWindow>() {
+                                        if let Some(widget) = riff_arrangement_scrolled_window.child() {
+                                            if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
+                                                let mut view_port_clip = view_port.clip();
+                                                // debug!("view_port: clip={:?}", view_port.clip());
+
+                                                if let Some(widget) = view_port.child() {
+                                                    if let Some(riff_set_box) = widget.dynamic_cast_ref::<gtk::Box>() {
+                                                        if let Some(coord) = view_port.translate_coordinates(riff_set_box, 0, 0) {
+                                                            // debug!("Translate: {:?}", coord);
+                                                            view_port_clip.x = coord.0;
+                                                            view_port_clip.y = coord.1;
+                                                        }
+
+                                                        let mut process_riff_set_box_child = true;
+                                                        for widget in riff_set_box.children().iter() {
+                                                            let widget_clip = widget.clip();
+                                                            if let Some(_) = widget_clip.intersect(&view_port_clip) {
+                                                                view_window_riff_item_uuids.push(widget.widget_name().to_string());
+                                                                // debug!("view_port: child widget_details={} - {:?}", widget.widget_name(), widget.clip());
+
+                                                                if process_riff_set_box_child {
+                                                                    if let Some(riff_arrangement_riff_set_blade) = widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                        for widget in riff_arrangement_riff_set_blade.children().iter() {
+                                                                            if let Some(scrolled_window) = widget.dynamic_cast_ref::<ScrolledWindow>() {
+                                                                                if let Some(widget) = scrolled_window.child() {
+                                                                                    if let Some(riff_set_view_port) = widget.dynamic_cast_ref::<Viewport>() {
+                                                                                        if let Some(widget) = riff_set_view_port.child() {
+                                                                                            if let Some(riff_set_drawing_areas_box) = widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                                                if let Some(drawing_area_blade_widget) = riff_set_drawing_areas_box.children().get(0) {
+                                                                                                    if let Some(riff_set_drawing_areas_box) = drawing_area_blade_widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                                                        for (track_index, widget) in riff_set_drawing_areas_box.children().iter().enumerate() {
+                                                                                                            if let Some(drawing_area) = widget.dynamic_cast_ref::<DrawingArea>() {
+                                                                                                                // debug!("riff set - drawing area: track_index={}, clip={:?}", track_index, widget.clip());
+                                                                                                                if let Some(_) = widget.clip().intersect(&view_port_clip) {
+                                                                                                                    debug!("riff set - drawing area: riff set name={}, track_index={}, viewport clip={:?}, widget clip={:?}", widget.widget_name(), track_index, &view_port_clip, widget.clip());
+                                                                                                                    // debug!("riff set - drawing area intersects view port clip: track_index={}", track_index);
+                                                                                                                    view_window_track_indexes.push(track_index as f64);
+                                                                                                                    process_riff_set_box_child = false;
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        break 'zanzibar;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(first_track_index) = view_window_track_indexes.first() {
+            view_window_first_track = *first_track_index;
+        }
+
+        if let Some(last_track_index) = view_window_track_indexes.last() {
+            view_window_last_track = *last_track_index;
+        }
+
+        if let Ok(state) = self.state.lock() {
+            // get the selected riff arrangement uuid
+            if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                // get the riff arrangement
+                if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                    let mut arrangement_length_in_beats = 0.0;
+
+                    // loop through the riff items and get a total size for the arrangement - use lcd for riff sets
+                    for riff_item in riff_arrangement.items().iter() {
+                        if let Some(first_visible_riff_item_uuid) = view_window_riff_item_uuids.first() {
+                            if riff_item.uuid().as_str() == first_visible_riff_item_uuid.as_str() {
+                                view_window_first_beat = arrangement_length_in_beats;
+                            }
+                        }
+
+                        match riff_item.item_type() {
+                            RiffItemType::RiffSet => {
+                                arrangement_length_in_beats += Self::get_riff_set_lcd(&state, riff_item.item_uuid().to_string());
+                            }
+                            RiffItemType::RiffSequence => {
+                                // get the riff sequence
+                                if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                                    // loop through the riff sets
+                                    for riff_item in riff_sequence.riff_sets().iter() {
+                                        arrangement_length_in_beats += Self::get_riff_set_lcd(&state, riff_item.item_uuid().to_string());
+                                    }
+                                }
+                            }
+                            RiffItemType::RiffGrid => {
+                                if let Some(riff_grid) = state.project().song().riff_grid(riff_item.item_uuid().to_string()) {
+                                    let mut riff_grid_actual_play_length = 0.0;
+                                    for track_uuid in riff_grid.tracks() {
+                                        if let Some(track) =  state.project().song().track(track_uuid.clone()) {
+                                            for track_riff_references in riff_grid.track_riff_references(track_uuid.clone()).iter() {
+                                                for riff_ref in track_riff_references.iter() {
+                                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                        let length = riff_ref.position() + riff.length();
+                                                        if length > riff_grid_actual_play_length {
+                                                            riff_grid_actual_play_length = length;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    arrangement_length_in_beats += riff_grid_actual_play_length;
+                                }
+                            }
+                        }
+
+                        if let Some(last_visible_riff_item_uuid) = view_window_riff_item_uuids.last() {
+                            if riff_item.uuid().as_str() == last_visible_riff_item_uuid.as_str() {
+                                view_window_last_beat = arrangement_length_in_beats;
+                            }
+                        }
+                    }
+
+                    // based on the number of tracks determine the track height
+                    self.track_height_in_pixels = height / state.project().song().tracks().iter().count() as f64;
+
+                    // work out the beat or bar width
+                    self.actual_beat_width_in_pixels = width / arrangement_length_in_beats;
+
+                    // loop through the riff items and draw them
+                    let mut running_position = 0.0;
+                    for riff_item in riff_arrangement.items().iter() {
+                        match riff_item.item_type() {
+                            RiffItemType::RiffSet => {
+                                Self::draw_riff_set_riff_refs(context, self.track_height_in_pixels, self.actual_beat_width_in_pixels, &state, &mut running_position, riff_item.item_uuid().to_string());
+                            }
+                            RiffItemType::RiffSequence => {
+                                // get the riff sequence
+                                if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                                    // loop through the riff sets
+                                    for riff_item in riff_sequence.riff_sets().iter() {
+                                        Self::draw_riff_set_riff_refs(context, self.track_height_in_pixels, self.actual_beat_width_in_pixels, &state, &mut running_position, riff_item.item_uuid().to_string());
+                                    }
+                                }
+                            }
+                            RiffItemType::RiffGrid => {
+                                if let Some(riff_grid) = state.project().song().riff_grid(riff_item.item_uuid().to_string()) {
+                                    let mut riff_grid_actual_play_length = 0.0;
+                                    for (index, track) in state.project().song().tracks().iter().enumerate() {
+                                        for track_riff_references in riff_grid.track_riff_references(track.uuid().to_string()).iter() {
+                                            for riff_ref in track_riff_references.iter() {
+                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                    let length = riff_ref.position() + riff.length();
+                                                    if length > riff_grid_actual_play_length {
+                                                        riff_grid_actual_play_length = length;
+                                                    }
+
+                                                    if riff.name() != "empty" {
+                                                        let (red, green, blue, alpha) = track.colour();
+                                                        context.set_source_rgba(red, green, blue, alpha);
+                                                        context.rectangle((running_position + riff_ref.position()) * self.actual_beat_width_in_pixels, index as f64 * self.track_height_in_pixels, riff.length() * self.actual_beat_width_in_pixels, self.track_height_in_pixels);
+                                                        let _ = context.fill();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    running_position += riff_grid_actual_play_length;
+                                }
+                            }
+                        }
+                    }
+                }
+
+
+                context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
+                context.rectangle(
+                    view_window_first_beat * self.actual_beat_width_in_pixels,
+                    view_window_first_track * self.track_height_in_pixels,
+                    (view_window_last_beat - view_window_first_beat) * self.actual_beat_width_in_pixels,
+                    (view_window_last_track - view_window_first_track) * self.track_height_in_pixels);
+                let _ = context.stroke();
+            }
+        }
+
+        (
+            self.track_height_in_pixels,
+            self.actual_beat_width_in_pixels,
+        )
+    }
+
+    fn track_cursor_time_in_beats(&self) -> f64 {
+        0.0
+    }
+
+    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }

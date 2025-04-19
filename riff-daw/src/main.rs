@@ -6357,6 +6357,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         let new_riff_set_name = state.riff_set_increment_riff_for_track(riff_set_uuid.clone(), track_uuid.clone());
+                        if let Some(playing_riff_set_uuid) = state.playing_riff_set_mut() {
+                            if *playing_riff_set_uuid == riff_set_uuid {
+                                state.play_riff_set_update_track_as_riff(riff_set_uuid.clone(), track_uuid.clone());
+                            }
+                        }
                         gui.update_available_riff_sets(&state);
                         gui.update_riff_set_name_in_riff_views(riff_set_uuid.clone(), new_riff_set_name);
                     },

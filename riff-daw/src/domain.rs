@@ -1,8 +1,11 @@
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
+use std::collections::BTreeMap;
 use std::collections::hash_map::Keys;
 use std::default::Default;
+use std::ffi::CStr;
 use std::io::prelude::*;
-use std::ops::Index;
+use std::ops::{DerefMut, Index};
 use std::os::raw::c_char;
 use std::sync::mpsc::TryRecvError;
 use std::thread;
@@ -16,11 +19,11 @@ use mlua::prelude::LuaUserData;
 use parking_lot::RwLock;
 use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
 use samplerate_rs::{convert, ConverterType};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use simple_clap_host_helper_lib::{host::DAWCallback, plugin::{ext::{posix_fd_support::PosixFDSupport, timer_support::TimerSupport}, ext::params::Params, instance::process::ProcessData, library::PluginLibrary}};
 use sndfile::*;
 use state::InitCell;
-use strum_macros::EnumString;
+use strum_macros::{Display, EnumIter, EnumString};
 use thread_priority::*;
 use uuid::Uuid;
 use widestring::U16String;
@@ -28,16 +31,19 @@ use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
 use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGestureBegin, ParamGestureEnd, ParamValue};
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
-use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
-use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
+use std::fmt::{Display, Formatter};
+use serde::de::Visitor;
+use vst3_host::WindowHandle;
+use xcb::{Connection, Event, ProtocolResult, Xid};
+use xcb::x::{CreateWindow, EventMask};
+pub(crate) use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, utils::DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
+use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE, VST3};
 use crate::event::EventProcessorType;
 use crate::state::MidiPolyphonicExpressionNoteId;
 use crate::vst3_cxx_bridge::{ffi, Vst3Host};
 use crate::vst3_cxx_bridge::ffi::{showPluginEditor, vst3_plugin_get_window_width};
 
-extern {
-    fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
-}
+
 pub static TRANSPORT: InitCell<RwLock<Transport>> = InitCell::new();
 
 pub struct Transport {
@@ -58,7 +64,7 @@ pub enum PlayMode {
     RiffArrangement,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
 pub enum TrackEvent {
     #[default]
     ActiveSense,
@@ -207,7 +213,7 @@ impl TrackEvent {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum TrackType {
     InstrumentTrack(InstrumentTrack),
     AudioTrack(AudioTrack),
@@ -329,14 +335,14 @@ impl Track for TrackType {
             TrackType::MidiTrack(track) => track.automation(),
         }
     }
-    fn uuid(&self) -> Uuid {
+    fn uuid(&self) -> String {
         match self {
             TrackType::InstrumentTrack(track) => track.uuid(),
             TrackType::AudioTrack(track) => track.uuid(),
             TrackType::MidiTrack(track) => track.uuid(),
         }
     }
-    fn uuid_mut(&mut self) -> &mut Uuid {
+    fn uuid_mut(&mut self) -> String {
         match self {
             TrackType::InstrumentTrack(track) => track.uuid_mut(),
             TrackType::AudioTrack(track) => track.uuid_mut(),
@@ -345,51 +351,51 @@ impl Track for TrackType {
     }
     fn uuid_string(&mut self) -> String {
         match self {
-            TrackType::InstrumentTrack(track) => track.uuid_string(),
+            TrackType::InstrumentTrack(track) => track.uuid.clone(),
             TrackType::AudioTrack(track) => track.uuid_string(),
             TrackType::MidiTrack(track) => track.uuid_string(),
         }
     }
     fn set_uuid(&mut self, uuid: Uuid) {
         match self {
-            TrackType::InstrumentTrack(track) => track.set_uuid(uuid),
+            TrackType::InstrumentTrack(track) => track.uuid = uuid.to_string(),
             TrackType::AudioTrack(track) => track.set_uuid(uuid),
             TrackType::MidiTrack(track) => track.set_uuid(uuid),
         }
     }
 
-    fn start_background_processing(&self,
-                                   tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                                   rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                                   tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                                   track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                                   volume: f32,
-                                   pan: f32,
-                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
-                                   sample_rate: f64,
-                                   block_size: f64,
-                                   tempo: f64,
-                                   time_signature_numerator: i32,
-                                   time_signature_denominator: i32,
-    ) {
-        match self {
-            TrackType::InstrumentTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
-                                                                                   block_size,
-                                                                                   tempo,
-                                                                                   time_signature_numerator,
-                                                                                   time_signature_denominator),
-            TrackType::AudioTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
-                                                                              block_size,
-                                                                              tempo,
-                                                                              time_signature_numerator,
-                                                                              time_signature_denominator),
-            TrackType::MidiTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
-                                                                             block_size,
-                                                                             tempo,
-                                                                             time_signature_numerator,
-                                                                             time_signature_denominator),
-        }
-    }
+    // fn start_background_processing(&self,
+    //                                tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+    //                                rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+    //                                tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+    //                                track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+    //                                volume: f32,
+    //                                pan: f32,
+    //                                vst_host_time_info: Arc<RwLock<TimeInfo>>,
+    //                                sample_rate: f64,
+    //                                block_size: f64,
+    //                                tempo: f64,
+    //                                time_signature_numerator: i32,
+    //                                time_signature_denominator: i32,
+    // ) {
+    //     match self {
+    //         TrackType::InstrumentTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+    //                                                                                block_size,
+    //                                                                                tempo,
+    //                                                                                time_signature_numerator,
+    //                                                                                time_signature_denominator),
+    //         TrackType::AudioTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+    //                                                                           block_size,
+    //                                                                           tempo,
+    //                                                                           time_signature_numerator,
+    //                                                                           time_signature_denominator),
+    //         TrackType::MidiTrack(track) => track.start_background_processing(tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info, sample_rate,
+    //                                                                          block_size,
+    //                                                                          tempo,
+    //                                                                          time_signature_numerator,
+    //                                                                          time_signature_denominator),
+    //     }
+    // }
 
     fn volume(&self) -> f32 {
         match self {
@@ -479,43 +485,43 @@ pub trait DAWItemID {
 }
 
 pub trait DAWItemPosition {
-	fn position(&self) -> f64;
-	fn set_position(&mut self, time: f64);
+    fn position(&self) -> f64;
+    fn set_position(&mut self, time: f64);
 }
 
 pub trait DAWItemLength {
-	fn length(&self) -> f64;
-	fn set_length(&mut self, length: f64);
+    fn length(&self) -> f64;
+    fn set_length(&mut self, length: f64);
 }
 
 pub trait DAWItemVerticalIndex {
-	fn vertical_index(&self) -> i32;
-	fn set_vertical_index(&mut self, value: i32);
+    fn vertical_index(&self) -> i32;
+    fn set_vertical_index(&mut self, value: i32);
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Serialize, Deserialize, Default, PartialEq, Debug)]
 pub struct Measure {
-	position: f64,
+    position: f64,
 }
 
 impl DAWItemPosition for Measure {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl Measure {
-	pub fn new(position: f64) -> Measure {
-		Measure {
-			position,
-		}
-	}
+    pub fn new(position: f64) -> Measure {
+        Measure {
+            position,
+        }
+    }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Default, EnumString, PartialEq)]
+#[derive(Clone, Copy, Serialize, Deserialize, Default, EnumString, PartialEq, Debug, EnumIter)]
 pub enum NoteExpressionType {
     #[default]
     Volume = 0,
@@ -527,17 +533,31 @@ pub enum NoteExpressionType {
     Brightness,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+impl Display for NoteExpressionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoteExpressionType::Volume => write!(f, "Volume"),
+            NoteExpressionType::Pan => write!(f, "Pan"),
+            NoteExpressionType::Tuning => write!(f, "Tuning"),
+            NoteExpressionType::Vibrato => write!(f, "Vibrato"),
+            NoteExpressionType::Expression => write!(f, "Expression"),
+            NoteExpressionType::Pressure => write!(f, "Pressure"),
+            NoteExpressionType::Brightness => write!(f, "Brightness"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Default, PartialEq, Debug)]
 pub struct NoteExpression {
     #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
-    id: Uuid,
-    expression_type: NoteExpressionType,
-    port: i16,
-    channel: i16,
-	position: f64,
-	note_id: i32,
-    key: i32,
-	value: f64,
+    pub id: Uuid,
+    pub expression_type: NoteExpressionType,
+    pub port: i16,
+    pub channel: i16,
+    pub position: f64,
+    pub note_id: i32,
+    pub key: i32,
+    pub value: f64,
 }
 
 impl DAWItemID for NoteExpression {
@@ -558,27 +578,27 @@ impl DAWItemID for NoteExpression {
 }
 
 impl DAWItemPosition for NoteExpression {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl NoteExpression {
-	pub fn new_with_params(expression_type: NoteExpressionType, port: i16, channel: i16, position: f64, note_id: i32, key: i32, value: f64) -> NoteExpression {
-		Self {
+    pub fn new_with_params(expression_type: NoteExpressionType, port: i16, channel: i16, position: f64, note_id: i32, key: i32, value: f64) -> NoteExpression {
+        Self {
             expression_type,
             port,
             channel,
-			position,
-			note_id,
+            position,
+            note_id,
             key,
-			value,
+            value,
             id: Uuid::new_v4(),
-		}
-	}
+        }
+    }
 
     /// Get a reference to the note's id.
     pub fn note_id(&self) -> i32 {
@@ -621,48 +641,48 @@ impl NoteExpression {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 pub struct Note {
-    #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
-    id: Uuid,
+    #[serde(skip_serializing, skip_deserializing, default = "UuidWrapper::new_v4")]
+    pub id: UuidWrapper,
     #[serde(default)]
-    note_id: i32,
+    pub note_id: i32,
     #[serde(default)]
-    port: u16,
+    pub port: u16,
     #[serde(default)]
-    channel: u16,
-	position: f64,
-	note: i32,
-	velocity: i32,
-    length: f64,
+    pub channel: u16,
+    pub position: f64,
+    pub note: i32,
+    pub velocity: i32,
+    pub length: f64,
     #[serde(default)]
-    riff_start_note: bool,
+    pub riff_start_note: bool,
 }
 
 impl DAWItemID for Note {
     fn id(&self) -> String {
-        self.id.to_string()
+        self.id.uuid.to_string()
     }
 
     fn set_id(&mut self, uuid: String) {
         match Uuid::parse_str(uuid.as_str()) {
-            Ok(uuid) =>self.id = uuid,
+            Ok(uuid) =>self.id = UuidWrapper::new(uuid),
             Err(_) => {}
         }
     }
 
     fn id_mut(&mut self) -> String {
-        return self.id.to_string()
+        return self.id.uuid.to_string()
     }
 }
 
 impl DAWItemPosition for Note {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl DAWItemLength for Note {
@@ -686,19 +706,19 @@ impl DAWItemVerticalIndex for Note {
 }
 
 impl Note {
-	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32, duration: f64) -> Note {
-		Note {
+    pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32, duration: f64) -> Note {
+        Note {
             note_id,
             channel: 0,
             port: 0,
-			position,
-			note,
-			velocity,
+            position,
+            note,
+            velocity,
             length: duration,
-            id: Uuid::new_v4(),
+            id: UuidWrapper::new_v4(),
             riff_start_note: false,
-		}
-	}
+        }
+    }
 
     /// Get a reference to the note's note.
     pub fn note(&self) -> i32 {
@@ -762,39 +782,39 @@ impl Note {
 }
 
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
 pub struct NoteOn {
     #[serde(default)]
-    note_id: i32,
+    pub note_id: i32,
     #[serde(default)]
-    port: u16,
+    pub port: u16,
     #[serde(default)]
-    channel: u16,
-	position: f64,
-	note: i32,
-	velocity: i32,
+    pub channel: u16,
+    pub position: f64,
+    pub note: i32,
+    pub velocity: i32,
 }
 
 impl DAWItemPosition for NoteOn {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl NoteOn {
-	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOn {
-		NoteOn {
+    pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOn {
+        NoteOn {
             note_id,
             port: 0,
             channel: 0,
-			position,
-			note,
-			velocity,
-		}
-	}
+            position,
+            note,
+            velocity,
+        }
+    }
     pub fn note(&self) -> i32 {
         self.note
     }
@@ -841,30 +861,30 @@ impl NoteOn {
     }
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
 pub struct NoteOff {
     #[serde(default)]
-    note_id: i32,
+    pub note_id: i32,
     #[serde(default)]
-    port: u16,
+    pub port: u16,
     #[serde(default)]
-    channel: u16,
-	position: f64,
-	note: i32,
-	velocity: i32,
+    pub channel: u16,
+    pub position: f64,
+    pub note: i32,
+    pub velocity: i32,
 }
 
 impl NoteOff {
-	pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOff {
-		NoteOff {
+    pub fn new_with_params(note_id: i32, position: f64, note: i32, velocity: i32) -> NoteOff {
+        NoteOff {
             note_id,
             port: 0,
             channel: 0,
-			position,
-			note,
-			velocity,
-		}
-	}
+            position,
+            note,
+            velocity,
+        }
+    }
     pub fn note(&self) -> i32 {
         self.note
     }
@@ -912,59 +932,59 @@ impl NoteOff {
 }
 
 impl DAWItemPosition for NoteOff {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Controller {
-    #[serde(skip_serializing, skip_deserializing, default)]
-    id: Uuid,
-	position: f64,
-	controller: i32,
-    value: i32,
+    #[serde(skip_serializing, skip_deserializing)]
+    id: UuidWrapper,
+    pub position: f64,
+    pub controller: i32,
+    pub value: i32,
 }
 
 impl DAWItemID for Controller {
     fn id(&self) -> String {
-        self.id.to_string()
+        self.id.uuid.to_string()
     }
 
     fn set_id(&mut self, uuid: String) {
         match Uuid::parse_str(uuid.as_str()) {
-            Ok(uuid) =>self.id = uuid,
+            Ok(uuid) =>self.id.uuid = uuid,
             Err(_) => {}
         }
     }
 
     fn id_mut(&mut self) -> String {
-        return self.id.to_string()
+        return self.id.uuid.to_string()
     }
 }
 
 impl DAWItemPosition for Controller {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl Controller {
-	pub fn new(position: f64, controller: i32, value: i32) -> Controller {
-		Self {
-			position,
-			controller,
+    pub fn new(position: f64, controller: i32, value: i32) -> Controller {
+        Self {
+            position,
+            controller,
             value,
-            id: Uuid::new_v4(),
-		}
-	}
+            id: UuidWrapper::new(Uuid::new_v4()),
+        }
+    }
 
     /// Get a reference to the controller's controller.
     pub fn controller(&self) -> i32 {
@@ -987,28 +1007,28 @@ impl Controller {
     }
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
 pub struct PitchBend {
     #[serde(skip_serializing, skip_deserializing)]
-    id: Uuid,
-    position: f64,
-    value: i32,
+    pub id: UuidWrapper,
+    pub position: f64,
+    pub value: i32,
 }
 
 impl DAWItemID for PitchBend {
     fn id(&self) -> String {
-        self.id.to_string()
+        self.id.uuid.to_string()
     }
 
     fn set_id(&mut self, uuid: String) {
         match Uuid::parse_str(uuid.as_str()) {
-            Ok(uuid) =>self.id = uuid,
+            Ok(uuid) =>self.id.uuid = uuid,
             Err(_) => {}
         }
     }
 
     fn id_mut(&mut self) -> String {
-        return self.id.to_string()
+        return self.id.uuid.to_string()
     }
 }
 
@@ -1023,20 +1043,20 @@ impl DAWItemPosition for PitchBend {
 
 impl PitchBend {
     pub fn new(position: f64, value: i32) -> Self {
-        Self { 
-            position, 
+        Self {
+            position,
             value,
-            id: Uuid::new_v4(),
-         }
+            id: UuidWrapper::new(Uuid::new_v4()),
+        }
     }
     pub fn new_from_midi_bytes(position: f64, lsb: u8, msb: u8) -> Self {
         let mut value: u16 = msb as u16;
         value <<= 7;
         value |= lsb as u16;
-        Self { 
-            position, 
+        Self {
+            position,
             value: value as i32,
-            id: Uuid::new_v4(),
+            id: UuidWrapper::new(Uuid::new_v4()),
         }
     }
     pub fn value(&self) -> i32 {
@@ -1064,28 +1084,28 @@ impl PitchBend {
 }
 
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SampleReference {
-	position: f64,
+    position: f64,
     sample_ref_uuid: Uuid,
 }
 
 impl DAWItemPosition for SampleReference {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl SampleReference {
-	pub fn new(position: f64, sample_ref_uuid: String) -> SampleReference {
-		Self {
-			position,
+    pub fn new(position: f64, sample_ref_uuid: String) -> SampleReference {
+        Self {
+            position,
             sample_ref_uuid: Uuid::parse_str(&sample_ref_uuid).unwrap(),
-		}
-	}
+        }
+    }
     pub fn sample_ref_uuid(&self) -> String {
         self.sample_ref_uuid.to_string()
     }
@@ -1096,7 +1116,7 @@ impl SampleReference {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Sample {
-    uuid: Uuid,
+    uuid: String,
     name: String,
     file_name: String,
     sample_data_uuid: String,
@@ -1105,17 +1125,17 @@ pub struct Sample {
 impl Sample {
     pub fn new(name: String, file: String, sample_data_uuid: String) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             name,
             file_name: file,
             sample_data_uuid,
         }
     }
     pub fn uuid(&self) -> Uuid {
-        self.uuid
+        Uuid::parse_str(self.uuid.as_str()).unwrap()
     }
     pub fn uuid_mut(&mut self) -> Uuid {
-        self.uuid
+        Uuid::parse_str(self.uuid.as_str()).unwrap()
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -1139,9 +1159,9 @@ impl Sample {
 
 #[derive(Clone)]
 pub struct SampleData {
-    uuid: Uuid,
-    channels: i32,
-    samples: Vec<f32>,
+    pub uuid: Uuid,
+    pub channels: i32,
+    pub samples: Vec<f32>,
 }
 
 impl SampleData {
@@ -1164,7 +1184,7 @@ impl SampleData {
     }
 
     pub fn load_data(wav_file_name: String, sample_rate: i32) -> (i32, Vec<f32>) {
-        if let Ok(mut wav_file) = OpenOptions::ReadOnly(ReadOptions::Auto).from_path(wav_file_name.as_str()) {
+        if let Ok(mut wav_file) = OpenOptions::ReadOnly(ReadOptions::Auto).from_path(wav_file_name.clone()) {
             if let Ok(wav_data) = wav_file.read_all_to_vec() {
                 if wav_file.get_samplerate() != sample_rate as usize {
                     let resampled_data = convert(wav_file.get_samplerate() as u32, sample_rate as u32, 1, ConverterType::SincBestQuality, &wav_data).unwrap();
@@ -1200,16 +1220,16 @@ impl SampleData {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Riff {
-    uuid: Uuid,
-	name: String,
-	position: f64,
-	length: f64,
-    colour: Option<(f64, f64, f64, f64)>, // rgba
-	events: Vec<TrackEvent>,
+    pub uuid: UuidWrapper,
+    pub name: String,
+    pub position: f64,
+    pub length: f64,
+    pub colour: Option<(f64, f64, f64, f64)>, // rgba
+    pub events: Vec<TrackEvent>,
     #[serde(skip_serializing, skip_deserializing)]
-    vertical_index: i32,
+    pub vertical_index: i32,
 }
 
 impl DAWItemID for Riff {
@@ -1219,22 +1239,22 @@ impl DAWItemID for Riff {
 
     fn set_id(&mut self, uuid: String) {
         if let Ok(uuid) = Uuid::parse_str(uuid.as_str()) {
-            self.uuid = uuid;
+            self.uuid.uuid = uuid;
         }
     }
 
     fn id_mut(&mut self) -> String {
-        self.uuid.to_string()
+        self.uuid.uuid.to_string()
     }
 }
 
 impl DAWItemPosition for Riff {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl DAWItemLength for Riff {
@@ -1260,7 +1280,7 @@ impl DAWItemVerticalIndex for Riff {
 impl Riff {
     pub fn new_with_name_and_length(uuid: Uuid, name: String, length: f64) -> Riff {
         Riff {
-            uuid,
+            uuid: UuidWrapper::new(uuid),
             name,
             position: 0.0,
             length,
@@ -1270,9 +1290,9 @@ impl Riff {
         }
     }
 
-    pub fn new_with_position_length_and_colour(uuid: Uuid, position: f64, length:f64, colour: Option<(f64, f64, f64, f64)>) -> Riff {
+    pub fn new_with_position_length_and_colour(uuid: Uuid, position: f64, length: f64, colour: Option<(f64, f64, f64, f64)>) -> Riff {
         Riff {
-            uuid,
+            uuid: UuidWrapper::new(uuid),
             name: String::new(),
             position,
             length,
@@ -1315,11 +1335,11 @@ impl Riff {
     }
 
     pub fn uuid(&self) -> Uuid {
-        self.uuid
+        self.uuid.uuid.clone()
     }
 
     pub fn set_uuid(&mut self, uuid: Uuid) {
-        self.uuid = uuid;
+        self.uuid.uuid = uuid;
     }
 
     pub fn colour_mut(&mut self) -> &mut Option<(f64, f64, f64, f64)> {
@@ -1342,13 +1362,13 @@ impl RiffReferenceMode {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffReference {
-    uuid: Uuid,
-	position: f64,
-	linked_to: String,
+    pub uuid: String,
+    pub position: f64,
+    pub linked_to: String,
     #[serde(default = "RiffReferenceMode::normal")]
-    mode: RiffReferenceMode,
+    pub mode: RiffReferenceMode,
     #[serde(skip_serializing, skip_deserializing, default = "String::new")]
-    track_id: String,
+    pub track_id: String,
 }
 
 impl DAWItemID for RiffReference {
@@ -1362,18 +1382,18 @@ impl DAWItemID for RiffReference {
 
     fn set_id(&mut self, uuid: String) {
         if let Ok(uuid) = Uuid::parse_str(uuid.as_str()) {
-            self.uuid = uuid;
+            self.uuid = uuid.to_string();
         }
     }
 }
 
 impl DAWItemPosition for RiffReference {
-	fn position(&self) -> f64 {
-		self.position
-	}
-	fn set_position(&mut self, time: f64) {
-		self.position = time;
-	}
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
 }
 
 impl DAWItemLength for RiffReference {
@@ -1382,7 +1402,7 @@ impl DAWItemLength for RiffReference {
     }
 
     fn set_length(&mut self, _length: f64) {
-        
+
     }
 }
 
@@ -1392,14 +1412,14 @@ impl DAWItemVerticalIndex for RiffReference {
     }
 
     fn set_vertical_index(&mut self, _value: i32) {
-        
+
     }
 }
 
 impl RiffReference {
     pub fn new(riff_uuid: String, position: f64) -> RiffReference {
         RiffReference {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             position,
             linked_to: riff_uuid,
             mode: RiffReferenceMode::Normal,
@@ -1427,8 +1447,8 @@ impl RiffReference {
         self.linked_to.clone()
     }
 
-    pub fn uuid(&self) -> Uuid {
-        self.uuid
+    pub fn uuid(&self) -> String {
+        self.uuid.clone()
     }
 
     pub fn mode(&self) -> &RiffReferenceMode {
@@ -1450,15 +1470,15 @@ impl RiffReference {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffSet {
-    uuid: Uuid,
-    name: String,
-    riff_refs: HashMap<String, RiffReference>, // track uuid, riff ref
+    pub uuid: String,
+    pub name: String,
+    pub riff_refs: HashMap<String, RiffReference>, // track uuid, riff ref
 }
 
 impl RiffSet {
     pub fn new() -> Self {
         RiffSet {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             name: "Unknown".to_owned(),
             riff_refs: HashMap::new(),
         }
@@ -1466,7 +1486,7 @@ impl RiffSet {
 
     pub fn new_with_uuid(uuid: Uuid) -> Self {
         RiffSet {
-            uuid,
+            uuid: uuid.to_string(),
             name: "Unknown".to_owned(),
             riff_refs: HashMap::new(),
         }
@@ -1507,15 +1527,15 @@ impl RiffSet {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffSequence {
-    uuid: Uuid,
-    name: String,
-    riff_sets: Vec<RiffItem>,
+    pub uuid: String,
+    pub name: String,
+    pub riff_sets: Vec<RiffItem>,
 }
 
 impl RiffSequence {
     pub fn new() -> Self {
         RiffSequence {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             name: "Unknown".to_owned(),
             riff_sets: vec![],
         }
@@ -1523,7 +1543,7 @@ impl RiffSequence {
 
     pub fn new_with_uuid(uuid: Uuid) -> Self {
         RiffSequence {
-            uuid,
+            uuid: uuid.to_string(),
             name: "Unknown".to_owned(),
             riff_sets: vec![],
         }
@@ -1560,7 +1580,7 @@ impl RiffSequence {
     pub fn riff_set_move_left(&mut self, reference_uuid: String) {
         let mut index_1 = -1;
         let mut index_2 = -1;
-        let mut count = 0;
+        let mut count = 0i32;
         for current_riff_set_reference in self.riff_sets.iter_mut() {
             if current_riff_set_reference.uuid() == reference_uuid {
                 index_1 = count;
@@ -1611,21 +1631,21 @@ impl RiffSequence {
     }
 
     pub fn set_uuid(&mut self, uuid: Uuid) {
-        self.uuid = uuid;
+        self.uuid = uuid.to_string();
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffGrid {
-    uuid: Uuid,
-    name: String,
-    tracks: HashMap<String, Vec<RiffReference>>,
+    pub uuid: String,
+    pub name: String,
+    pub tracks: HashMap<String, Vec<RiffReference>>,
 }
 
 impl RiffGrid {
     pub fn new() -> Self {
         RiffGrid {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             name: "Unknown".to_owned(),
             tracks: HashMap::new(),
         }
@@ -1633,7 +1653,7 @@ impl RiffGrid {
 
     pub fn new_with_uuid(uuid: Uuid) -> Self {
         RiffGrid {
-            uuid,
+            uuid: uuid.to_string(),
             name: "Unknown".to_owned(),
             tracks: HashMap::new(),
         }
@@ -1690,7 +1710,7 @@ impl RiffGrid {
 
 
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum RiffItemType {
     RiffSet,
     RiffSequence,
@@ -1699,15 +1719,15 @@ pub enum RiffItemType {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffItem {
-    uuid: Uuid,
-    item_type: RiffItemType,
-    item_uuid: String
+    pub uuid: String,
+    pub item_type: RiffItemType,
+    pub item_uuid: String
 }
 
 impl RiffItem {
     pub fn new(riff_item_type: RiffItemType, item_uuid: String) -> Self {
         RiffItem {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             item_type: riff_item_type,
             item_uuid,
         }
@@ -1715,7 +1735,7 @@ impl RiffItem {
 
     pub fn new_with_uuid(uuid: Uuid, riff_item_type: RiffItemType, item_uuid: String) -> Self {
         RiffItem {
-            uuid,
+            uuid: uuid.to_string(),
             item_type: riff_item_type,
             item_uuid,
         }
@@ -1723,7 +1743,7 @@ impl RiffItem {
 
     pub fn new_with_uuid_string(uuid: String, riff_item_type: RiffItemType, item_uuid: String) -> Self {
         RiffItem {
-            uuid: Uuid::parse_str(uuid.as_str()).unwrap(),
+            uuid,
             item_type: riff_item_type,
             item_uuid,
         }
@@ -1744,16 +1764,16 @@ impl RiffItem {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RiffArrangement {
-    uuid: Uuid,
-    name: String,
-    items: Vec<RiffItem>,
-    track_automation: HashMap<String, Automation>,
+    pub uuid: String,
+    pub name: String,
+    pub items: Vec<RiffItem>,
+    pub track_automation: HashMap<String, Automation>,
 }
 
 impl RiffArrangement {
     pub fn new() -> Self {
         RiffArrangement {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
@@ -1762,7 +1782,7 @@ impl RiffArrangement {
 
     pub fn new_with_uuid(uuid: Uuid) -> Self {
         RiffArrangement {
-            uuid,
+            uuid: uuid.to_string(),
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
@@ -1774,7 +1794,7 @@ impl RiffArrangement {
     }
 
     pub fn set_uuid(&mut self, uuid: Uuid) {
-        self.uuid = uuid;
+        self.uuid = uuid.to_string();
     }
 
     pub fn name(&self) -> &str {
@@ -1824,8 +1844,8 @@ impl RiffArrangement {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AutomationEnvelope {
-    event_details: TrackEvent,
-    events: Vec<TrackEvent>,
+    pub event_details: TrackEvent,
+    pub events: Vec<TrackEvent>,
 }
 
 impl AutomationEnvelope {
@@ -1861,18 +1881,18 @@ impl AutomationEnvelope {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Automation {
-	events: Vec<TrackEvent>, // discrete events
+    pub events: Vec<TrackEvent>, // discrete events
     #[serde(default = "Vec::new")]
-    envelopes: Vec<AutomationEnvelope>, // continuous events
+    pub envelopes: Vec<AutomationEnvelope>, // continuous events
 }
 
 impl Automation {
-	pub fn new() -> Automation {
-		Automation {
+    pub fn new() -> Automation {
+        Automation {
             events: vec![],
             envelopes: vec![],
-		}
-	}
+        }
+    }
 
     /// Get a reference to the automation's events.
     #[must_use]
@@ -1997,9 +2017,9 @@ impl VstHost {
     }
 
     pub fn add_track_event_outward_routing(&mut self, track_event_routing: TrackEventRouting, ring_buffer: SpscRb<TrackEvent>, producer: Producer<TrackEvent>) {
-        self.track_event_outward_ring_buffers.insert(track_event_routing.uuid(), ring_buffer);
-        self.track_event_outward_producers.insert(track_event_routing.uuid(), producer);
-        self.track_event_outward_routings.insert(track_event_routing.uuid(), track_event_routing);
+        self.track_event_outward_ring_buffers.insert(track_event_routing.uuid.clone(), ring_buffer);
+        self.track_event_outward_producers.insert(track_event_routing.uuid.clone(), producer);
+        self.track_event_outward_routings.insert(track_event_routing.uuid.clone(), track_event_routing);
     }
 
     pub fn remove_track_event_outward_routing(&mut self, route_uuid: String) {
@@ -2069,7 +2089,7 @@ impl Host for VstHost {
 
         let routable_events = DAWUtils::convert_vst_events_to_track_events_with_timing_in_frames(routable_events);
         for (route_uuid, producer) in self.track_event_outward_producers.iter() {
-            for event in routable_events.iter() {                
+            for event in routable_events.iter() {
                 if let Some(_midi_routing) = self.track_event_outward_routings.get(route_uuid) {
                     let event_array = [event.clone()];
                     let _ = producer.write(&event_array);
@@ -2081,7 +2101,7 @@ impl Host for VstHost {
     fn get_time_info(&self, _mask: i32) -> Option<TimeInfo> {
         // debug!("Vst plugin asked host for time info.");
         let mut flags = 0;
-        
+
         flags |= TimeInfoFlags::TRANSPORT_CHANGED.bits();
         flags |= TimeInfoFlags::TRANSPORT_PLAYING.bits(); // transport playing
         flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
@@ -2185,7 +2205,7 @@ pub fn get_plugin_details(instrument_details: String) -> (Option<String>, String
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginParameterDetail {
     pub index: i32,
     pub name: String,
@@ -2213,32 +2233,89 @@ impl PluginParameterDetail {
     }
 }
 
+struct MySerdeStringVisitor;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+impl<'de> Visitor<'de> for MySerdeStringVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("a String uuid")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+        Ok(v.to_string())
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default, PartialEq)]
+pub struct UuidWrapper {
+    pub uuid: Uuid,
+}
+
+impl  UuidWrapper {
+    pub fn new(uuid: Uuid) -> UuidWrapper {
+        Self { uuid }
+    }
+
+    pub fn new_v4() -> UuidWrapper {
+        Self { uuid: Uuid::new_v4() }
+    }
+
+    pub fn new_from_string(uuid: String) -> UuidWrapper {
+        Self {
+            uuid: Uuid::parse_str(uuid.as_str()).unwrap(),
+        }
+    }
+}
+
+impl Serialize for UuidWrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        serializer.serialize_str(&self.uuid.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for UuidWrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        if let Ok(uuid_string) =  deserializer.deserialize_string(MySerdeStringVisitor) {
+            if let Ok(uuid) = Uuid::parse_str(uuid_string.as_str()) {
+                return Ok(Self::new(uuid));
+            }
+        }
+        Result::Err(serde::de::Error::custom("Could not parse uuid.".to_string()))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginParameter {
-    #[serde(skip_serializing, skip_deserializing, default = "Uuid::new_v4")]
-    pub id: Uuid,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub id: UuidWrapper,
     pub index: i32,
-	pub position: f64,
+    pub position: f64,
     pub value: f32,
     pub instrument: bool,
-    pub plugin_uuid: Uuid,
+    pub plugin_uuid: UuidWrapper,
 }
 
 impl DAWItemID for PluginParameter {
     fn id(&self) -> String {
-        self.id.to_string()
+        self.id.uuid.to_string()
     }
 
     fn set_id(&mut self, uuid: String) {
         match Uuid::parse_str(uuid.as_str()) {
-            Ok(uuid) =>self.id = uuid,
+            Ok(uuid) =>self.id = UuidWrapper::new(uuid),
             Err(_) => {}
         }
     }
 
     fn id_mut(&mut self) -> String {
-        self.id.to_string()
+        self.id.uuid.to_string()
     }
 }
 
@@ -2274,7 +2351,7 @@ impl PluginParameter {
     /// Get a reference to the vst plugin parameter's plugin uuid.
     #[must_use]
     pub fn plugin_uuid(&self) -> String {
-        self.plugin_uuid.to_string()
+        self.plugin_uuid.uuid.to_string()
     }
 }
 
@@ -2304,10 +2381,13 @@ pub trait BackgroundProcessorAudioPlugin {
     fn sample_rate(&self) -> f64;
     fn set_sample_rate(&mut self, sample_rate: f64);
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32);
+
+    fn xid_sent_to_plugin(&self) -> bool;
 }
 pub enum BackgroundProcessorAudioPluginType {
     Vst24(BackgroundProcessorVst24AudioPlugin),
     Vst3(BackgroundProcessorVst3AudioPlugin),
+    Vst3a(BackgroundProcessorVst3aAudioPlugin),
     Clap(BackgroundProcessorClapAudioPlugin),
 }
 
@@ -2318,6 +2398,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.uuid()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.uuid()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.uuid()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2334,6 +2417,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.uuid_mut()
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.uuid_mut()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.uuid_mut()
             }
@@ -2346,6 +2432,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.xid()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.xid()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.xid()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2362,6 +2451,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.set_xid(xid);
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.set_xid(xid);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_xid(xid);
             }
@@ -2374,6 +2466,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.xid_mut()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.xid_mut()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.xid_mut()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2390,6 +2485,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.rx_from_host()
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.rx_from_host()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.rx_from_host()
             }
@@ -2402,6 +2500,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.rx_from_host_mut()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.rx_from_host_mut()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.rx_from_host_mut()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2418,6 +2519,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.stop_processing();
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.stop_processing();
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.stop_processing();
             }
@@ -2430,6 +2534,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.shutdown();
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.shutdown();
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.shutdown();
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2446,6 +2553,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.set_tempo(tempo);
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.set_tempo(tempo);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_tempo(tempo);
             }
@@ -2458,6 +2568,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.preset_data()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.preset_data()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.preset_data()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2474,6 +2587,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.set_preset_data(data);
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.set_preset_data(data);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_preset_data(data);
             }
@@ -2486,6 +2602,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.get_window_size()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.get_window_size()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.get_window_size()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2502,6 +2621,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.name()
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.name()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.name()
             }
@@ -2514,6 +2636,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.tempo()
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.tempo()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.tempo()
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2530,6 +2655,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.sample_rate()
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.sample_rate()
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.sample_rate()
             }
@@ -2542,6 +2670,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
                 vst24_plugin.set_sample_rate(sample_rate);
             }
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.set_sample_rate(sample_rate);
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
                 vst3_plugin.set_sample_rate(sample_rate);
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
@@ -2558,8 +2689,202 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                 vst3_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
             }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
+            }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_time_signature(time_signature_numerator, time_signature_denominator);
+            }
+        }
+    }
+
+    fn xid_sent_to_plugin(&self) -> bool {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                vst24_plugin.xid_sent_to_plugin()
+            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.xid_sent_to_plugin()
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                vst3_plugin.xid_sent_to_plugin()
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.xid_sent_to_plugin()
+            }
+        }
+    }
+}
+
+pub trait AudioPluginWindow {
+    fn create(&mut self);
+    fn destroy(&self);
+    fn show(&self);
+    fn hide(&self);
+    fn get_window_handle(&self) -> Option<u32>;
+    fn resize(&self, height: u32, width: u32);
+    fn handle_events(&self);
+}
+
+xcb::atoms_struct! {
+    #[derive(Debug)]
+    struct Atoms {
+        wm_protocols    => b"WM_PROTOCOLS",
+        wm_del_window   => b"WM_DELETE_WINDOW",
+        wm_state        => b"_NET_WM_STATE",
+        wm_state_maxv   => b"_NET_WM_STATE_MAXIMIZED_VERT",
+        wm_state_maxh   => b"_NET_WM_STATE_MAXIMIZED_HORZ",
+    }
+}
+pub struct XcbWindow {
+    connection: Connection,
+    screen_number: i32,
+    window: xcb::x::Window,
+}
+
+pub struct LinuxAudioPluginWindow {
+    xcb_window: Option<XcbWindow>,
+    title: String,
+}
+
+impl LinuxAudioPluginWindow {
+    pub fn new(title: String) -> Self {
+        Self {
+            xcb_window: None,
+            title,
+        }
+    }
+}
+
+impl AudioPluginWindow for LinuxAudioPluginWindow {
+    fn create(&mut self) {
+        if let Ok((connection, screen_number)) = Connection::connect(None) {
+            let setup = connection.get_setup();
+            let screen = setup.roots().nth(screen_number as usize).unwrap();
+            let window = connection.generate_id();
+
+            match connection.send_and_check_request(
+                &xcb::x::CreateWindow {
+                    depth: xcb::x::COPY_FROM_PARENT as u8,
+                    wid: window,
+                    parent: screen.root(),
+                    x: 0,
+                    y: 0,
+                    width: 150,
+                    height: 150,
+                    border_width: 10,
+                    class: xcb::x::WindowClass::InputOutput,
+                    visual: screen.root_visual(),
+                    value_list: &[
+                        xcb::x::Cw::BackPixel(screen.white_pixel()),
+                        xcb::x::Cw::EventMask(xcb::x::EventMask::EXPOSURE | xcb::x::EventMask::KEY_PRESS),
+                    ],
+
+                }
+            ) {
+                Ok(reply) => {
+                    connection.send_request(&xcb::x::ChangeProperty {
+                        mode: xcb::x::PropMode::Replace,
+                        window,
+                        property: xcb::x::ATOM_WM_NAME,
+                        r#type: xcb::x::ATOM_STRING,
+                        data: self.title.as_bytes(),
+                    });
+
+                    let _ = connection.flush();
+
+                    let atoms = Atoms::intern_all(&connection).unwrap();
+
+                    let _ = connection.send_and_check_request(&xcb::x::ChangeProperty {
+                        mode: xcb::x::PropMode::Replace,
+                        window,
+                        property: atoms.wm_protocols,
+                        r#type: xcb::x::ATOM_ATOM,
+                        data: &[atoms.wm_del_window],
+                    });
+
+                    let xcb_window_details = XcbWindow {
+                        connection,
+                        screen_number,
+                        window,
+                    };
+
+                    self.xcb_window = Some(xcb_window_details);
+                }
+                Err(error) => {}
+            }
+        }
+    }
+
+    fn destroy(&self) {
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            xcb_window.connection.send_request(&xcb::x::UnmapWindow { window: xcb_window.window.clone() });
+            let _ = xcb_window.connection.flush();
+
+            xcb_window.connection.send_request(&xcb::x::DestroyWindow{ window: xcb_window.window.clone() });
+            let _ = xcb_window.connection.flush();
+        }
+    }
+
+    fn show(&self) {
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            xcb_window.connection.send_request(&xcb::x::MapWindow { window: xcb_window.window.clone() });
+            let _ = xcb_window.connection.flush();
+        }
+    }
+
+    fn hide(&self) {
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            xcb_window.connection.send_request(&xcb::x::UnmapWindow { window: xcb_window.window.clone() });
+            let _ = xcb_window.connection.flush();
+        }
+    }
+
+    fn get_window_handle(&self) -> Option<u32> {
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            Some(xcb_window.window.resource_id())
+        }
+        else {
+            None
+        }
+    }
+
+    fn resize(&self, height: u32, width: u32) {
+
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            xcb_window.connection.send_request(
+                &xcb::x::ConfigureWindow{
+                    window: xcb_window.window.clone(),
+                    value_list: &[
+                        xcb::x::ConfigWindow::X(0),
+                        xcb::x::ConfigWindow::Y(0),
+                        xcb::x::ConfigWindow::Width(width),
+                        xcb::x::ConfigWindow::Height(height),
+                    ],
+                }
+            );
+            let _ = xcb_window.connection.flush();
+        }
+    }
+
+    fn handle_events(&self) {
+        if let Some(xcb_window) = self.xcb_window.as_ref() {
+            if let Ok(event) = xcb_window.connection.poll_for_event() {
+                if let Some(event) = event {
+                    match event {
+                        Event::X(xcb::x::Event::ClientMessage(client_message_event)) => {
+                            if let xcb::x::ClientMessageData::Data32([atom, ..]) = client_message_event.data() {
+                                let atoms = Atoms::intern_all(&xcb_window.connection).unwrap();
+
+                                if atom == atoms.wm_del_window.resource_id() {
+                                    self.hide();
+                                }
+                            }
+                        }
+                        Event::Unknown(_) => {}
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -2576,6 +2901,8 @@ pub struct BackgroundProcessorVst24AudioPlugin {
     editor: Option<Box<dyn Editor>>,
     vst_host_time_info: Arc<RwLock<TimeInfo>>,
     sample_rate: f64,
+    window: Option<Box<dyn AudioPluginWindow>>,
+    window_id_sent_to_plugin: bool,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
@@ -2594,6 +2921,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
             let (_plugin_window_width, _plugin_window_height) = editor.size();
             if let Some(xid) = self.xid.clone() {
                 editor.open(xid as *mut _);
+                self.window_id_sent_to_plugin = true;
             }
         }
     }
@@ -2686,6 +3014,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
             host.set_time_signature_denominator(time_signature_denominator);
         }
     }
+
+    fn xid_sent_to_plugin(&self) -> bool {
+        self.window_id_sent_to_plugin
+    }
 }
 
 impl BackgroundProcessorVst24AudioPlugin {
@@ -2722,7 +3054,15 @@ impl BackgroundProcessorVst24AudioPlugin {
         vst_plugin_instance.set_sample_rate(sample_rate as f32);
         vst_plugin_instance.set_block_size(block_size);
         // let vst_editor = vst_plugin_instance.get_editor();
-        Self {
+
+        let mut window_title = "VST24 ".to_string();
+        window_title.push_str(library_path.as_str());
+
+        let mut audio_plugin_window: Box<dyn AudioPluginWindow> = Box::new(LinuxAudioPluginWindow::new(window_title));
+
+        audio_plugin_window.create();
+
+        let mut background_processor = Self {
             uuid,
             host,
             vst_plugin_instance,
@@ -2732,7 +3072,11 @@ impl BackgroundProcessorVst24AudioPlugin {
             editor: None,
             vst_host_time_info,
             sample_rate,
-        }
+            window: Some(audio_plugin_window),
+            window_id_sent_to_plugin: false,
+        };
+
+        background_processor
     }
 
     /// Get a reference to the vst effect plugin's host.
@@ -2806,7 +3150,7 @@ pub struct BackgroundProcessorClapAudioPlugin {
     xid: Option<u32>,
     tx_from_clap_host: Sender<AudioPluginHostOutwardEvent>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
-    plugin: simple_clap_host_helper_lib::plugin::instance::Plugin, 
+    plugin: simple_clap_host_helper_lib::plugin::instance::Plugin,
     process_data: ProcessData,
     host_receiver: crossbeam_channel::Receiver<DAWCallback>,
     tempo: f64,
@@ -2814,6 +3158,10 @@ pub struct BackgroundProcessorClapAudioPlugin {
     block_size: i64,
     stop_now: bool,
     param_gesture_begin: HashMap<i32, bool>,
+    window: Option<Box<dyn AudioPluginWindow>>,
+    window_id_sent_to_plugin: bool,
+    window_required_width: i32,
+    window_required_height: i32,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
@@ -2850,6 +3198,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
                     };
                     if gui.set_parent(&self.plugin, &window_def) {
                         debug!("Successfully called clap gui set parent function.");
+                        self.window_id_sent_to_plugin = true;
                     }
                     else {
                         debug!("Failed to successfully call set parent.");
@@ -2860,6 +3209,11 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
                     else {
                         debug!("Failed to successfully show the plugin window.");
                     }
+                    let mut width = 0;
+                    let mut height = 0;
+                    gui.get_size(&self.plugin, &mut width, &mut height);
+                    self.window_required_width = width as i32;
+                    self.window_required_height = height as i32;
                 }
             }
         }
@@ -2930,8 +3284,8 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     }
 
     fn set_preset_data(&mut self, data: String) {
-        
-        
+
+
         use simple_clap_host_helper_lib::plugin::ext::state::State;
         if let Some(plugin_state) = self.plugin.get_extension::<State>() {
             if let Ok(preset_data) = base64::decode(data) {
@@ -2941,11 +3295,12 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     }
 
     fn get_window_size(&self) -> (i32, i32) {
-        (400, 300)
+        (self.window_required_width, self.window_required_height)
     }
 
     fn name(&self) -> String {
-        "To be done".to_string()
+        let name = unsafe {CStr::from_ptr((*self.plugin.desc).name)};
+        name.to_string_lossy().into_owned()
     }
 
     fn tempo(&self) -> f64 {
@@ -2964,6 +3319,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         self.process_data.config.time_sig_numerator = time_signature_numerator as u16;
         self.process_data.config.time_sig_denominator = time_signature_denominator as u16;
     }
+
+    fn xid_sent_to_plugin(&self) -> bool {
+        self.window_id_sent_to_plugin
+    }
 }
 
 impl BackgroundProcessorClapAudioPlugin {
@@ -2981,11 +3340,11 @@ impl BackgroundProcessorClapAudioPlugin {
     ) -> Self {
         let (tx_from_clap_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (plugin, process_data, host_receiver) = create_clap_audio_plugin(
-            clap_plugin_loaders, 
-            library_path.as_str(), 
+            clap_plugin_loaders,
+            library_path.as_str(),
             track_uuid.clone(),
-            uuid.to_string(), 
-            sub_plugin_id, 
+            uuid.to_string(),
+            sub_plugin_id,
             tx_from_clap_host.clone(),
             false,
             sample_rate,
@@ -2994,13 +3353,21 @@ impl BackgroundProcessorClapAudioPlugin {
             time_signature_numerator,
             time_signature_denominator,
         );
-        Self {
+
+        let mut window_title = "CLAP ".to_string();
+        window_title.push_str(library_path.as_str());
+
+        let mut audio_plugin_window: Box<dyn AudioPluginWindow> = Box::new(LinuxAudioPluginWindow::new(window_title));
+
+        audio_plugin_window.create();
+
+        let mut background_processor = Self {
             track_uuid,
             uuid,
             xid: None,
             tx_from_clap_host,
             rx_from_host,
-            plugin, 
+            plugin,
             process_data,
             host_receiver,
             tempo,
@@ -3008,7 +3375,13 @@ impl BackgroundProcessorClapAudioPlugin {
             block_size,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
-        }
+            window: Some(audio_plugin_window),
+            window_id_sent_to_plugin: false,
+            window_required_width: 400,
+            window_required_height: 300,
+        };
+
+        background_processor
     }
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
@@ -3041,11 +3414,11 @@ impl BackgroundProcessorClapAudioPlugin {
                     // copy the input data across
                     let audio_input_buffer = self.process_data.buffers.inputs_mut_ref();
                     let channel = &mut audio_input_buffer[0];
-                    
+
                     let (inputs, _) = background_processor_buffer.split();
                     let background_processor_left_channel = inputs.get(0);
                     let background_processor_right_channel = inputs.get(1);
-                    
+
                     {
                         let channel1 = &mut channel[0];
                         for index in 0..self.block_size as usize {
@@ -3063,7 +3436,7 @@ impl BackgroundProcessorClapAudioPlugin {
 
                 let num_samples = self.process_data.buffers.len();
                 let (inputs, outputs) = self.process_data.buffers.io_buffers();
-        
+
                 let process_data = clap_process {
                     steady_time: self.process_data.sample_pos as i64,
                     frames_count: num_samples as u32,
@@ -3155,6 +3528,8 @@ pub struct BackgroundProcessorVst3AudioPlugin {
     tempo: f64,
     time_signature_numerator: i32,
     time_signature_denominator: i32,
+    window: Option<Box<dyn AudioPluginWindow>>,
+    window_id_sent_to_plugin: bool,
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
@@ -3192,6 +3567,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
                     context
                 }
             );
+            self.window_id_sent_to_plugin = true;
         }
     }
 
@@ -3264,6 +3640,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
         self.time_signature_denominator = time_signature_denominator as i32;
         ffi::vst3_plugin_change_time_signature(self.daw_plugin_uuid.to_string(), time_signature_numerator, time_signature_denominator);
     }
+
+    fn xid_sent_to_plugin(&self) -> bool {
+        self.window_id_sent_to_plugin
+    }
 }
 
 impl BackgroundProcessorVst3AudioPlugin {
@@ -3292,7 +3672,15 @@ impl BackgroundProcessorVst3AudioPlugin {
             time_signature_numerator,
             time_signature_denominator,
         );
-        Self {
+
+        let mut window_title = "VST3 ".to_string();
+        window_title.push_str(library_path.as_str());
+
+        let mut audio_plugin_window: Box<dyn AudioPluginWindow> = Box::new(LinuxAudioPluginWindow::new(window_title));
+
+        audio_plugin_window.create();
+
+        let mut background_processor = Self {
             track_uuid: track_uuid.clone(),
             daw_plugin_uuid: daw_plugin_uuid.clone(),
             vst3_plugin_uid,
@@ -3306,7 +3694,11 @@ impl BackgroundProcessorVst3AudioPlugin {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
-        }
+            window: Some(audio_plugin_window),
+            window_id_sent_to_plugin: false,
+        };
+
+        background_processor
     }
 
     pub fn repaint(&self) {
@@ -3407,6 +3799,180 @@ impl BackgroundProcessorVst3AudioPlugin {
     }
 }
 
+#[derive()]
+pub struct BackgroundProcessorVst3aAudioPlugin {
+    track_uuid: String,
+    daw_plugin_uuid: Uuid,
+    vst3_plugin_uid: String,
+    library_path: String,
+    xid: Option<u32>,
+    tx_from_host: Sender<AudioPluginHostOutwardEvent>,
+    rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
+    instrument: bool,
+    sample_rate: f64,
+    block_size: i64,
+    tempo: f64,
+    time_signature_numerator: i32,
+    time_signature_denominator: i32,
+    window: Option<Box<dyn AudioPluginWindow>>,
+    window_id_sent_to_plugin: bool,
+    plugin: Option<vst3_host::plugin::Plugin>,
+}
+
+impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3aAudioPlugin {
+    fn uuid(&self) -> Uuid {
+        self.daw_plugin_uuid.clone()
+    }
+
+    fn uuid_mut(&mut self) -> Uuid {
+        self.daw_plugin_uuid.clone()
+    }
+
+    fn name(&self) -> String {
+        ffi::getVstPluginName(self.daw_plugin_uuid.to_string())
+    }
+
+    fn xid(&self) -> Option<u32> {
+        self.xid.clone()
+    }
+
+    fn set_xid(&mut self, xid: Option<u32>) {
+        self.xid = xid;
+        if let Some(xid) = self.xid.as_ref() {
+            // let vst3host = Box::new(Vst3Host(self.track_uuid.clone(), self.daw_plugin_uuid.to_string(), self.instrument, self.tx_from_host.clone()));
+            // showPluginEditor(
+            //     self.daw_plugin_uuid.to_string(),
+            //     *xid,
+            //     vst3host,
+            //     |context: Box<Vst3Host>, new_window_width: i32, new_window_height: i32| {
+            //         debug!("Vst3 plugin window resize.");
+            //         debug!("New size: width={},  height={}", new_window_width, new_window_height);
+            //         match context.3.send(AudioPluginHostOutwardEvent::SizeWindow(context.0.clone(), context.1.clone(), context.2, new_window_width, new_window_height)) {
+            //             Ok(_) => (),
+            //             Err(_error) => debug!("Problem sending plugin window resize from vst3 plugin."),
+            //         }
+            //         context
+            //     }
+            // );
+            self.window_id_sent_to_plugin = true;
+        }
+    }
+
+    fn xid_mut(&mut self) -> &mut Option<u32> {
+        &mut self.xid
+    }
+
+    fn get_window_size(&self) -> (i32, i32) {
+        (800, 600)
+    }
+
+    fn rx_from_host(&self) -> &Receiver<AudioPluginHostOutwardEvent> {
+        &self.rx_from_host
+    }
+
+    fn rx_from_host_mut(&mut self) -> &mut Receiver<AudioPluginHostOutwardEvent> {
+        &mut self.rx_from_host
+    }
+
+    fn set_tempo(&mut self, tempo: f64) {
+        self.tempo = tempo;
+    }
+
+    fn tempo(&self) -> f64 {
+        self.tempo
+    }
+
+    fn stop_processing(&mut self) {
+    }
+
+    fn shutdown(&mut self) {
+    }
+
+    fn preset_data(&mut self) -> String {
+        let mut data: [u8; 1000000] = [0; 1000000];
+        let data_length = data.len() as u32;
+        let bytes_written = ffi::vst3_plugin_get_preset(self.daw_plugin_uuid.to_string(), &mut data, data_length);
+
+        if bytes_written > 0 {
+            return base64::encode(&data[0..bytes_written as usize]);
+        }
+        "".to_string()
+    }
+
+    fn set_preset_data(&mut self, data: String) {
+        if let Ok(mut data) = base64::decode(&data) {
+            debug!("vst3 set_preset_data - data length={}", data.len());
+        }
+    }
+
+    fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.sample_rate = sample_rate;
+    }
+
+    fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
+        self.time_signature_numerator = time_signature_numerator as i32;
+        self.time_signature_denominator = time_signature_denominator as i32;
+    }
+
+    fn xid_sent_to_plugin(&self) -> bool {
+        self.window_id_sent_to_plugin
+    }
+}
+
+impl BackgroundProcessorVst3aAudioPlugin {
+    pub fn new_with_uuid(
+        track_uuid: String,
+        daw_plugin_uuid: Uuid,
+        vst3_plugin_uid: String,
+        library_path: String,
+        instrument: bool,
+        sample_rate: f64,
+        block_size: i64,
+        tempo: f64,
+        time_signature_numerator: i32,
+        time_signature_denominator: i32,
+        vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
+    ) -> Self {
+        let (tx_from_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
+        let mut plugin = None;
+
+        if let Ok(vst3_host) = vst3_host.lock().as_mut() {
+            let mut plugin_instance = vst3_host.load_plugin(library_path.clone()).unwrap();
+            let _ = plugin_instance.start_processing();
+            std::thread::sleep(Duration::from_millis(1000));
+            if (plugin_instance.has_editor()) {
+                plugin_instance.open_editor(WindowHandle::from_x11(0));
+            }
+            plugin = Some(plugin_instance);
+        }
+
+        let mut background_processor = Self {
+            track_uuid: track_uuid.clone(),
+            daw_plugin_uuid: daw_plugin_uuid.clone(),
+            vst3_plugin_uid,
+            library_path,
+            xid: None,
+            tx_from_host: tx_from_host.clone(),
+            rx_from_host,
+            instrument,
+            sample_rate,
+            block_size,
+            tempo,
+            time_signature_numerator,
+            time_signature_denominator,
+            window: None,
+            window_id_sent_to_plugin: false,
+            plugin,
+        };
+
+        background_processor
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum AudioPluginType {
     VST24,
@@ -3421,71 +3987,71 @@ pub enum AudioPluginCategory {
     MidiGenerator
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AudioPlugin {
-    uuid: Uuid,
-	name: String,
-    descriptive_name: String,
-    format: String,
-    category: String,
-    manufacturer: String,
-    version: String,
-    file: String,
-    uid: String,
-    is_instrument: bool,
-    file_time: String,
-    info_update_time: String,
-    num_inputs: i32,
-    num_outputs: i32,
-    plugin_type: String,
-    sub_plugin_id: Option<String>,
-    preset_data: String,
+    pub uuid: String,
+    pub name: String,
+    pub descriptive_name: String,
+    pub format: String,
+    pub category: String,
+    pub manufacturer: String,
+    pub version: String,
+    pub file: String,
+    pub uid: String,
+    pub is_instrument: bool,
+    pub file_time: String,
+    pub info_update_time: String,
+    pub num_inputs: i32,
+    pub num_outputs: i32,
+    pub plugin_type: String,
+    pub sub_plugin_id: Option<String>,
+    pub preset_data: String,
 }
 
 impl AudioPlugin {
-	pub fn new() -> AudioPlugin {
-		AudioPlugin {
-            uuid: Uuid::new_v4(),
-			name: String::from("Unknown"),
-			descriptive_name: String::from("Unknown"),
-			format: String::from("Unknown"),
-			category: String::from("Unknown"),
-			manufacturer: String::from("Unknown"),
-			version: String::from("Unknown"),
-			file: String::from("Unknown"),
-			uid: String::from("Unknown"),
-			is_instrument: false,
-			file_time: String::from("Unknown"),
-			info_update_time: String::from("Unknown"),
-			num_inputs: 0,
-			num_outputs: 0,
-			plugin_type: String::from("Unknown"),
-			sub_plugin_id: None,
+    pub fn new() -> AudioPlugin {
+        AudioPlugin {
+            uuid: Uuid::new_v4().to_string(),
+            name: String::from("Unknown"),
+            descriptive_name: String::from("Unknown"),
+            format: String::from("Unknown"),
+            category: String::from("Unknown"),
+            manufacturer: String::from("Unknown"),
+            version: String::from("Unknown"),
+            file: String::from("Unknown"),
+            uid: String::from("Unknown"),
+            is_instrument: false,
+            file_time: String::from("Unknown"),
+            info_update_time: String::from("Unknown"),
+            num_inputs: 0,
+            num_outputs: 0,
+            plugin_type: String::from("Unknown"),
+            sub_plugin_id: None,
             preset_data: String::from(""),
-		}
-	}
+        }
+    }
 
-	pub fn new_with_uuid(uuid: Uuid, name: String, file: String, sub_plugin_id: Option<String>, plugin_type: String) -> AudioPlugin {
-		AudioPlugin {
+    pub fn new_with_uuid(uuid: String, name: String, file: String, sub_plugin_id: Option<String>, plugin_type: String) -> AudioPlugin {
+        AudioPlugin {
             uuid,
-			name,
-			descriptive_name: String::from("Unknown"),
-			format: String::from("Unknown"),
-			category: String::from("Unknown"),
-			manufacturer: String::from("Unknown"),
-			version: String::from("Unknown"),
-			file,
-			uid: String::from("Unknown"),
-			is_instrument: false,
-			file_time: String::from("Unknown"),
-			info_update_time: String::from("Unknown"),
-			num_inputs: 0,
-			num_outputs: 0,
-			plugin_type,
-			sub_plugin_id,
+            name,
+            descriptive_name: String::from("Unknown"),
+            format: String::from("Unknown"),
+            category: String::from("Unknown"),
+            manufacturer: String::from("Unknown"),
+            version: String::from("Unknown"),
+            file,
+            uid: String::from("Unknown"),
+            is_instrument: false,
+            file_time: String::from("Unknown"),
+            info_update_time: String::from("Unknown"),
+            num_inputs: 0,
+            num_outputs: 0,
+            plugin_type,
+            sub_plugin_id,
             preset_data: String::from(""),
-		}
-	}
+        }
+    }
 
     pub fn set_file(&mut self, file: String) {
         self.file = file;
@@ -3522,18 +4088,18 @@ impl AudioPlugin {
     }
 
     /// Get a reference to the instrument track's uuid.
-    pub fn uuid(&self) -> Uuid {
-        self.uuid
+    pub fn uuid(&self) -> String {
+        self.uuid.clone()
     }
 
     /// Get a mutable reference to the instrument track's uuid.
-    pub fn uuid_mut(&mut self) -> &mut Uuid {
-        &mut self.uuid
+    pub fn uuid_mut(&mut self) -> String {
+        self.uuid.clone()
     }
 
     /// Set the instrument track's uuid.
     pub fn set_uuid(&mut self, uuid: Uuid) {
-        self.uuid = uuid;
+        self.uuid = uuid.to_string();
     }
 
     /// Get a reference to the vst audio plugin's name.
@@ -3560,11 +4126,12 @@ impl AudioPlugin {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum TrackBackgroundProcessorMode {
+pub enum AudioMode {
     AudioOut,
     Coast,
     Render
 }
+
 
 pub struct TrackBackgroundProcessorHelper {
     pub track_uuid: String,
@@ -3584,7 +4151,7 @@ pub struct TrackBackgroundProcessorHelper {
     pub tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
     pub rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
     pub tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-    pub track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+    pub track_thread_coast: Arc<Mutex<AudioMode>>,
     pub keep_alive: bool,
     pub jack_midi_out_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
     pub volume: f32,
@@ -3613,6 +4180,7 @@ pub struct TrackBackgroundProcessorHelper {
     pub tempo: f64,
     pub time_signature_numerator: i32,
     pub time_signature_denominator: i32,
+    pub vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
 }
 
 impl TrackBackgroundProcessorHelper {
@@ -3620,7 +4188,7 @@ impl TrackBackgroundProcessorHelper {
                tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
                tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-               track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+               track_thread_coast: Arc<Mutex<AudioMode>>,
                volume: f32,
                pan: f32,
                track_type: GeneralTrackType,
@@ -3631,6 +4199,7 @@ impl TrackBackgroundProcessorHelper {
                tempo: f64,
                time_signature_numerator: i32,
                time_signature_denominator: i32,
+               vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
     ) -> Self {
         Self {
             track_uuid,
@@ -3678,6 +4247,70 @@ impl TrackBackgroundProcessorHelper {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
+
+            vst3_host
+        }
+    }
+
+    pub fn audio_plugin_get_window_id(&self, audio_plugin_instance: &BackgroundProcessorAudioPluginType) -> Option<u32> {
+        match audio_plugin_instance {
+            BackgroundProcessorAudioPluginType::Vst24(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.get_window_handle()
+                }
+                else { None }
+            }
+            BackgroundProcessorAudioPluginType::Vst3(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.get_window_handle()
+                }
+                else { None }
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.get_window_handle()
+                }
+                else { None }
+            }
+            BackgroundProcessorAudioPluginType::Clap(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.get_window_handle()
+                }
+                else { None }
+            }
+        }
+    }
+
+    pub fn audio_plugin_window_id_sent(&self, audio_plugin_instance: &mut BackgroundProcessorAudioPluginType) -> bool {
+        audio_plugin_instance.xid_sent_to_plugin()
+    }
+
+    pub fn audio_plugin_set_xid(&self, audio_plugin_instance: &mut BackgroundProcessorAudioPluginType, xid: Option<u32>) {
+        audio_plugin_instance.set_xid(xid);
+    }
+
+    pub fn audio_plugin_show_window(&self, audio_plugin_instance: &mut BackgroundProcessorAudioPluginType) {
+        match audio_plugin_instance {
+            BackgroundProcessorAudioPluginType::Vst24(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.show();
+                }
+            }
+            BackgroundProcessorAudioPluginType::Vst3(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.show();
+                }
+            }
+            BackgroundProcessorAudioPluginType::Vst3a(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.show();
+                }
+            }
+            BackgroundProcessorAudioPluginType::Clap(plugin) => {
+                if let Some(window) = plugin.window.as_ref() {
+                    window.show();
+                }
+            }
         }
     }
 
@@ -3783,9 +4416,11 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::Kill => {
                     for effect in self.effect_plugin_instances.iter_mut() {
                         effect.stop_processing();
+                        effect.shutdown();
                     }
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.stop_processing();
+                        instrument_plugin.shutdown();
                     }
                     self.keep_alive = false;
                 },
@@ -3811,10 +4446,10 @@ impl TrackBackgroundProcessorHelper {
                     }
                     else if plugin_type == CLAP {
                         let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
-                            clap_plugin_loaders, 
-                            self.track_uuid.clone(), 
-                            uuid, 
-                            sub_plugin_id, 
+                            clap_plugin_loaders,
+                            self.track_uuid.clone(),
+                            uuid,
+                            sub_plugin_id,
                             library_path,
                             self.sample_rate,
                             self.block_size as i64,
@@ -3875,6 +4510,9 @@ impl TrackBackgroundProcessorHelper {
                             BackgroundProcessorAudioPluginType::Vst3(mut vst3_plugin) => {
                                 vst3_plugin.shutdown();
                             }
+                            BackgroundProcessorAudioPluginType::Vst3a(mut vst3_plugin) => {
+                                vst3_plugin.shutdown();
+                            }
                             BackgroundProcessorAudioPluginType::Clap(mut clap_plugin) => {
                                 clap_plugin.stop_processing();
                                 clap_plugin.shutdown();
@@ -3906,10 +4544,10 @@ impl TrackBackgroundProcessorHelper {
                     }
                     else if plugin_type == CLAP {
                         let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
-                            clap_plugin_loaders, 
-                            self.track_uuid.clone(), 
-                            uuid, 
-                            sub_plugin_id, 
+                            clap_plugin_loaders,
+                            self.track_uuid.clone(),
+                            uuid,
+                            sub_plugin_id,
                             library_path,
                             self.sample_rate,
                             self.block_size as i64,
@@ -3917,9 +4555,15 @@ impl TrackBackgroundProcessorHelper {
                             self.time_signature_numerator,
                             self.time_signature_denominator,
                         );
+                        let instrument_name = clap_plugin_instance.name();
+                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
+                            Ok(_) => debug!("Sent instrument name to main processing loop."),
+                            Err(_) => debug!("Failed to send instrument name to main processing loop."),
+                        }
+
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
-                    else {
+                    else if plugin_type == VST3 {
                         let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
                             vst_plugin_uid
                         }
@@ -3944,6 +4588,33 @@ impl TrackBackgroundProcessorHelper {
                             Err(_) => debug!("Failed to send instrument name to main processing loop."),
                         }
                         BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
+                    }
+                    else { // VST3a
+                        let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
+                            vst_plugin_uid
+                        }
+                        else {
+                            "0".to_string()
+                        };
+                        let vst3_plugin = BackgroundProcessorVst3aAudioPlugin::new_with_uuid(
+                            self.track_uuid.clone(),
+                            uuid,
+                            vst_plugin_uid,
+                            library_path,
+                            true,
+                            self.sample_rate,
+                            self.block_size as i64,
+                            self.tempo,
+                            self.time_signature_numerator,
+                            self.time_signature_denominator,
+                            self.vst3_host.clone(),
+                        );
+                        let instrument_name = vst3_plugin.name();
+                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
+                            Ok(_) => debug!("Sent instrument name to main processing loop."),
+                            Err(_) => debug!("Failed to send instrument name to main processing loop."),
+                        }
+                        BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin)
                     };
 
                     // FIXME the following commented out line causes a crash - or kills the track thread
@@ -4040,32 +4711,104 @@ impl TrackBackgroundProcessorHelper {
                     self.request_effect_params_for_uuid.clear();
                     self.request_effect_params_for_uuid.push_str(effect_uuid.as_str());
                 },
-                TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid) => {
-                    let instrument_plugin_uuid = if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
-                        instrument_plugin.uuid().to_string()
+                TrackBackgroundProcessorInwardEvent::ShowInstrument => {
+                    let mut window_id = None;
+                    let mut xid_sent_to_plugin = true;
+                    let mut plugin_window_height = 800;
+                    let mut plugin_window_width = 600;
+                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
+                        window_id = self.audio_plugin_get_window_id(instrument_plugin);
+                        xid_sent_to_plugin = instrument_plugin.xid_sent_to_plugin();
                     }
-                    else {
-                        "".to_string()
-                    };
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
-                        instrument_plugin.set_xid(Some(xid));
-                        let (plugin_window_width, plugin_window_height) = instrument_plugin.get_window_size();
-                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), plugin_window_width, plugin_window_height)) {
-                            Ok(_) => debug!("Instrument plugin window size sent for: track={}, instrument={}, name={}.", self.track_uuid.clone(), instrument_plugin_uuid, instrument_plugin.name()),
-                            Err(error) => debug!("Problem sending plugin window size from VST thread to state: {}", error),
+                        if (!xid_sent_to_plugin) {
+                            instrument_plugin.set_xid(window_id);
+                            let (window_width, window_height) = instrument_plugin.get_window_size();
+                            plugin_window_height = window_height;
+                            plugin_window_width = window_width;
+                        }
+                    }
+                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                        match instrument_plugin {
+                            BackgroundProcessorAudioPluginType::Vst24(plugin) => {
+                                if let Some(window) = plugin.window.as_ref() {
+                                    if (!xid_sent_to_plugin) {
+                                        window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                    }
+                                    window.show();
+                                }
+                            }
+                            BackgroundProcessorAudioPluginType::Vst3(plugin) => {
+                                if let Some(window) = plugin.window.as_ref() {
+                                    if (!xid_sent_to_plugin) {
+                                        window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                    }
+                                    window.show();
+                                }
+                            }
+                            BackgroundProcessorAudioPluginType::Vst3a(plugin) => {
+                            }
+                            BackgroundProcessorAudioPluginType::Clap(plugin) => {
+                                if let Some(window) = plugin.window.as_ref() {
+                                    if (!xid_sent_to_plugin) {
+                                        window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                    }
+                                    window.show();
+                                }
+                            }
                         }
                     }
                 },
-                TrackBackgroundProcessorInwardEvent::SetEffectWindowId(effect_uuid, xid) => {
-                    debug!("Received - VstThreadInwardEvent::SetEffectWindowId({}, {})", effect_uuid, xid);
+                TrackBackgroundProcessorInwardEvent::ShowEffect(effect_uuid) => {
+                    debug!("Received - VstThreadInwardEvent::ShowEffect({})", effect_uuid);
+                    let mut window_id = None;
+                    let mut xid_sent_to_plugin = true;
+                    let mut plugin_window_height = 800;
+                    let mut plugin_window_width = 600;
+                    for effect in self.effect_plugin_instances.iter() {
+                        if effect.uuid().to_string() == effect_uuid {
+                            window_id = self.audio_plugin_get_window_id(effect);
+                            xid_sent_to_plugin = effect.xid_sent_to_plugin();
+                            break;
+                        }
+                    }
                     for effect in self.effect_plugin_instances.iter_mut() {
                         if effect.uuid().to_string() == effect_uuid {
-                            effect.set_xid(Some(xid));
-                            let (plugin_window_width, plugin_window_height) = effect.get_window_size();
-                            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(self.track_uuid.clone(), effect_uuid.clone(), plugin_window_width, plugin_window_height)) {
-                                Ok(_) => debug!("Effect plugin window size sent sent for: track={}, effect={}.", self.track_uuid.clone(), effect_uuid),
-                                Err(error) => debug!("Problem sending effect plugin window size from VST thread to state: {}", error),
+                            if (!xid_sent_to_plugin) {
+                                effect.set_xid(window_id);
+                                let (window_width, window_height) = effect.get_window_size();
+                                plugin_window_height = window_height;
+                                plugin_window_width = window_width;
                             }
+                            match effect {
+                                BackgroundProcessorAudioPluginType::Vst24(plugin) => {
+                                    if let Some(window) = plugin.window.as_ref() {
+                                        if (!xid_sent_to_plugin) {
+                                            window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                        }
+                                        window.show();
+                                    }
+                                }
+                                BackgroundProcessorAudioPluginType::Vst3(plugin) => {
+                                    if let Some(window) = plugin.window.as_ref() {
+                                        if (!xid_sent_to_plugin) {
+                                            window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                        }
+                                        window.show();
+                                    }
+                                }
+                                BackgroundProcessorAudioPluginType::Vst3a(plugin) => {
+                                }
+                                BackgroundProcessorAudioPluginType::Clap(plugin) => {
+                                    if let Some(window) = plugin.window.as_ref() {
+                                        if (!xid_sent_to_plugin) {
+                                            window.resize(plugin_window_height as u32, plugin_window_width as u32)
+                                        }
+                                        window.show();
+                                    }
+                                }
+                            }
+                            break;
                         }
                     }
                 },
@@ -4160,6 +4903,7 @@ impl TrackBackgroundProcessorHelper {
                                         }
                                     }
                                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {}
                                     BackgroundProcessorAudioPluginType::Clap(_) => {
 
                                     }
@@ -4170,7 +4914,7 @@ impl TrackBackgroundProcessorHelper {
                             // Not sure if this is actually a reality
                         }
                     }
-            
+
                 }
                 TrackBackgroundProcessorInwardEvent::RemoveTrackEventSendRouting(route_uuid) => {
                     // remove the routing from the vst host
@@ -4182,6 +4926,7 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {}
                             BackgroundProcessorAudioPluginType::Clap(_) => {
 
                             }
@@ -4236,7 +4981,7 @@ impl TrackBackgroundProcessorHelper {
                 match instrument_plugin {
                     BackgroundProcessorAudioPluginType::Vst24(vst_24_plugin) => {
                         let mut all_note_offs: Vec<MidiEvent> = Vec::new();
-            
+
                         for note in self.event_processor.playing_notes().iter() {
                             let note_off = MidiEvent {
                                 data: [128, *note as u8, 0_u8],
@@ -4263,9 +5008,19 @@ impl TrackBackgroundProcessorHelper {
                         debug!("Sending note off events to the VST3 instrument: {}", all_note_offs.len());
                         vst3_plugin.process_events(&all_note_offs);
                     }
+                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                        let mut all_note_offs: Vec<TrackEvent> = Vec::new();
+
+                        for note in self.event_processor.playing_notes().iter() {
+                            let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, *note, 0);
+                            all_note_offs.push(TrackEvent::NoteOff(note_off));
+                        }
+                        debug!("Sending note off events to the VST3 instrument: {}", all_note_offs.len());
+                        // vst3_plugin.process_events(&all_note_offs);
+                    }
                     BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                         let mut all_note_offs: Vec<TrackEvent> = Vec::new();
-            
+
                         for note in self.event_processor.playing_notes().iter() {
                             let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, *note, 0);
                             all_note_offs.push(TrackEvent::NoteOff(note_off));
@@ -4293,6 +5048,9 @@ impl TrackBackgroundProcessorHelper {
                 BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                     vst3_plugin.repaint();
                 }
+                BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                    // vst3_plugin.repaint();
+                }
                 BackgroundProcessorAudioPluginType::Clap(_) => {
 
                 }
@@ -4311,7 +5069,12 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                 }
-                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    vst3_plugin.repaint();
+                }
+                BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                    // vst3_plugin.repaint();
+                }
                 BackgroundProcessorAudioPluginType::Clap(_) => {
 
                 }
@@ -4322,7 +5085,10 @@ impl TrackBackgroundProcessorHelper {
     pub fn handle_host_events_from_plugins(&self) {
         if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
             match instrument_plugin {
-                BackgroundProcessorAudioPluginType::Vst24(_) => {
+                BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                    if let Some(window) = vst24_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     match instrument_plugin.rx_from_host().try_recv() {
                         Ok(event) => match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
@@ -4342,6 +5108,31 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    if let Some(window) = vst3_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
+                    match vst3_plugin.rx_from_host().try_recv() {
+                        Ok(event) => match event {
+                            AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Vst3Host automation from VST3 thread to state: {}", error),
+                                }
+                            }
+                            AudioPluginHostOutwardEvent::SizeWindow(_, _, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width, height)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying instrument Vst3Host size window from VST3 thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => ()
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                    if let Some(window) = vst3_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     match vst3_plugin.rx_from_host().try_recv() {
                         Ok(event) => match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
@@ -4361,6 +5152,9 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    if let Some(window) = clap_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
                     match clap_plugin.rx_from_host().try_recv() {
                         Ok(event) => {
@@ -4390,7 +5184,10 @@ impl TrackBackgroundProcessorHelper {
 
         for effect_plugin in self.effect_plugin_instances.iter() {
             match effect_plugin {
-                BackgroundProcessorAudioPluginType::Vst24(_) => {
+                BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                    if let Some(window) = vst24_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     match effect_plugin.rx_from_host().try_recv() {
                         Ok(event) => match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
@@ -4410,6 +5207,31 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    if let Some(window) = vst3_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
+                    match vst3_plugin.rx_from_host().try_recv() {
+                        Ok(event) => match event {
+                            AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying effect Vst3Host automation from VST3 thread to state: {}", error),
+                                }
+                            }
+                            AudioPluginHostOutwardEvent::SizeWindow(_, plugin_uuid, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(self.track_uuid.clone(), plugin_uuid, width, height)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem relaying effect Vst3Host size window from VST3 thread to state: {}", error),
+                                }
+                            }
+                        }
+                        Err(_) => ()
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                    if let Some(window) = vst3_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     match vst3_plugin.rx_from_host().try_recv() {
                         Ok(event) => match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
@@ -4429,6 +5251,9 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    if let Some(window) = clap_plugin.window.as_ref() {
+                        window.handle_events();
+                    }
                     // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
                     match clap_plugin.rx_from_host().try_recv() {
                         Ok(event) => {
@@ -4492,7 +5317,7 @@ impl TrackBackgroundProcessorHelper {
                 BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
                     let instrument_info = instrument_plugin.vst_plugin_instance_mut().get_info();
                     let params = instrument_plugin.vst_plugin_instance_mut().get_parameter_object();
-        
+
                     for index in 0..instrument_info.parameters {
                         // param index, track uuid, instrument uuid, param name, param label, param value, param text
                         plugin_parameters.push((index, self.track_uuid.clone(), instrument_plugin.uuid(), params.get_parameter_name(index), params.get_parameter_label(index), params.get_parameter(index), params.get_parameter_text(index)));
@@ -4508,18 +5333,28 @@ impl TrackBackgroundProcessorHelper {
                         plugin_parameters.push(parameter);
                     }
                 }
+                BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                    // let parameterCount = vst3_plugin.get_parameter_count();
+                    //
+                    // for index in 0..parameterCount {
+                    //     let mut parameter = vst3_plugin.get_parameter(index);
+                    //     parameter.1 = self.track_uuid.clone();
+                    //     parameter.2 = vst3_plugin.uuid();
+                    //     plugin_parameters.push(parameter);
+                    // }
+                }
                 BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                     if let Some(params) = instrument_plugin.plugin.get_extension::<Params>() {
                         if let Ok(info) = params.info(&instrument_plugin.plugin) {
                             for (param_id, param) in info.iter() {
                                 debug!("Parameter: index={}, param={:?}", param_id, param);
                                 plugin_parameters.push((
-                                    *param_id as i32, 
-                                    self.track_uuid.clone(), 
-                                    instrument_plugin.uuid(), 
-                                    param.name.clone(), 
-                                    param.name.clone(), 
-                                    params.get(&instrument_plugin.plugin, *param_id).unwrap() as f32, 
+                                    *param_id as i32,
+                                    self.track_uuid.clone(),
+                                    instrument_plugin.uuid(),
+                                    param.name.clone(),
+                                    param.name.clone(),
+                                    params.get(&instrument_plugin.plugin, *param_id).unwrap() as f32,
                                     "".to_string()
                                 ));
                             }
@@ -4554,6 +5389,7 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                         BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                        BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {}
                         BackgroundProcessorAudioPluginType::Clap(effect) => {
                             if let Some(params) = effect.plugin.get_extension::<Params>() {
                                 if let Ok(info) = params.info(&effect.plugin) {
@@ -4689,6 +5525,9 @@ impl TrackBackgroundProcessorHelper {
                                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                         vst3_plugin.process_events(&effect_events);
                                     }
+                                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                                        // vst3_plugin.process_events(&effect_events);
+                                    }
                                     BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
                                         debug!("{} - process_plugin_events: sending events to clap effect plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
                                         effect_plugin.process_events(&effect_events);
@@ -4707,7 +5546,7 @@ impl TrackBackgroundProcessorHelper {
                 match instrument_plugin {
                     BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
                         let vst_midi_events = DAWUtils::convert_events_with_timing_in_frames_to_vst(
-                            &events, 
+                            &events,
                             0);
                         let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
                         self.midi_sender.store_events(vst_midi_events);
@@ -4726,6 +5565,9 @@ impl TrackBackgroundProcessorHelper {
                     }
                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                         vst3_plugin.process_events(&events);
+                    }
+                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                        // vst3_plugin.process_events(&events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                         // debug!("{} - process_plugin_events: sending events to clap instrument plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
@@ -4751,6 +5593,10 @@ impl TrackBackgroundProcessorHelper {
                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                         let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
                         vst3_plugin.process_param_events(&plugin_param_events);
+                    }
+                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
+                        // vst3_plugin.process_param_events(&plugin_param_events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                         if let Some(params) = instrument_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
@@ -4781,6 +5627,10 @@ impl TrackBackgroundProcessorHelper {
                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                         let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
                         vst3_plugin.process_param_events(&plugin_param_events);
+                    }
+                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
+                        // vst3_plugin.process_param_events(&plugin_param_events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
                         if let Some(params) = effect_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
@@ -4830,6 +5680,7 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {}
+                    BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {}
                     BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
 
                     }
@@ -4898,9 +5749,9 @@ impl TrackBackgroundProcessorHelper {
     pub fn coast(&self) -> bool {
         match self.track_thread_coast.lock() {
             Ok(mode) => match *mode {
-                TrackBackgroundProcessorMode::AudioOut => false,
-                TrackBackgroundProcessorMode::Coast => true,
-                TrackBackgroundProcessorMode::Render => true,
+                AudioMode::AudioOut => false,
+                AudioMode::Coast => true,
+                AudioMode::Render => true,
             }
             Err(_) => false
         }
@@ -5061,8 +5912,8 @@ pub struct AudioBlock {
 
 impl Default for AudioBlock {
     fn default() -> Self {
-        Self { 
-            block: 0, 
+        Self {
+            block: 0,
             audio_data_left: [0.0f32; BLOCK_SIZE_MAX as usize],
             audio_data_right: [0.0f32; BLOCK_SIZE_MAX as usize] }
     }
@@ -5073,8 +5924,8 @@ pub trait TrackBackgroundProcessor {
                         track_uuid: String,
                         tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                         rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                        tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        tx_track_background_thread: std::sync::mpsc::Sender<TrackBackgroundProcessorOutwardEvent>,
+                        track_thread_coast: Arc<Mutex<AudioMode>>,
                         volume: f32,
                         pan: f32,
                         vst_host_time_info: Arc<RwLock<TimeInfo>>,
@@ -5083,6 +5934,7 @@ pub trait TrackBackgroundProcessor {
                         tempo: f64,
                         time_signature_numerator: i32,
                         time_signature_denominator: i32,
+                        vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
     );
 }
 
@@ -5102,7 +5954,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                         rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
                         tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        track_thread_coast: Arc<Mutex<AudioMode>>,
                         volume: f32,
                         pan: f32,
                         vst_host_time_info: Arc<RwLock<TimeInfo>>,
@@ -5111,6 +5963,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         tempo: f64,
                         time_signature_numerator: i32,
                         time_signature_denominator: i32,
+                        vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("InstrumentTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5141,7 +5994,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
                 let mut audio_buffer_swapped = host_buffer_swapped.bind(&outputs, &mut inputs);
 
-                const ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS: i32 = 5;
+                const ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS: i32 = 50;
                 let mut iteration_count = 0;
 
                 let mut track_background_processor_helper =
@@ -5161,6 +6014,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         tempo,
                         time_signature_numerator,
                         time_signature_denominator,
+                        vst3_host
                     );
 
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
@@ -5206,6 +6060,9 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(&mut audio_buffer);
+                            }
+                            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                                // vst3_plugin.process(&mut audio_buffer);
                             }
                             BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                                 instrument_plugin.process(&mut audio_buffer, false);
@@ -5275,6 +6132,9 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(audio_buffer_in_use);
                             }
+                            BackgroundProcessorAudioPluginType::Vst3a(vst3_plugin) => {
+                                // vst3_plugin.process(audio_buffer_in_use);
+                            }
                             BackgroundProcessorAudioPluginType::Clap(effect) => {
                                 effect.process(audio_buffer_in_use, true);
 
@@ -5292,11 +6152,11 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                     let mode = match track_thread_coast.lock() {
                         Ok(mode) => match *mode {
-                            TrackBackgroundProcessorMode::AudioOut => TrackBackgroundProcessorMode::AudioOut,
-                            TrackBackgroundProcessorMode::Coast => TrackBackgroundProcessorMode::Coast,
-                            TrackBackgroundProcessorMode::Render => TrackBackgroundProcessorMode::Render,
+                            AudioMode::AudioOut => AudioMode::AudioOut,
+                            AudioMode::Coast => AudioMode::Coast,
+                            AudioMode::Render => AudioMode::Render,
                         }
-                        Err(_) => TrackBackgroundProcessorMode::AudioOut,
+                        Err(_) => AudioMode::AudioOut,
                     };
 
                     // swap to the last used audio buffer
@@ -5341,7 +6201,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     }
 
                     // transfer to the ring buffer
-                    if mode == TrackBackgroundProcessorMode::AudioOut || mode == TrackBackgroundProcessorMode::Render {
+                    if mode == AudioMode::AudioOut || mode == AudioMode::Render {
                         let audio_block = audio_block_buffer.get_mut(0).unwrap();
 
                         audio_block.block = *track_background_processor_helper.event_processor.block_index();
@@ -5368,7 +6228,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             audio_block.audio_data_right[index] = *right_frame;
                         }
 
-                        if mode == TrackBackgroundProcessorMode::AudioOut {
+                        if mode == AudioMode::AudioOut {
                             let _ = producer_ring_buffer_block.write_blocking(&audio_block_buffer);
                         }
                         else {
@@ -5378,7 +6238,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         // might be a good idea to do this every x number of blocks
                         let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
-                    else if mode == TrackBackgroundProcessorMode::Coast {
+                    else if mode == AudioMode::Coast {
                         thread::sleep(Duration::from_millis(100));
                     }
                 } // end loop
@@ -5391,7 +6251,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AudioTrackBackgroundProcessor{
 }
 
@@ -5409,7 +6269,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                         rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
                         tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        track_thread_coast: Arc<Mutex<AudioMode>>,
                         volume: f32,
                         pan: f32,
                         vst_host_time_info: Arc<RwLock<TimeInfo>>,
@@ -5418,6 +6278,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         tempo: f64,
                         time_signature_numerator: i32,
                         time_signature_denominator: i32,
+                        vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("AudioTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5464,6 +6325,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         tempo,
                         time_signature_numerator,
                         time_signature_denominator,
+                        vst3_host
                     );
 
                 let mut use_sample_audio = true;
@@ -5547,6 +6409,9 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                             BackgroundProcessorAudioPluginType::Vst3(effect) => {
 
                             }
+                            BackgroundProcessorAudioPluginType::Vst3a(effect) => {
+
+                            }
                             BackgroundProcessorAudioPluginType::Clap(effect) => {
 
                             }
@@ -5555,11 +6420,11 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                     let mode = match track_thread_coast.lock() {
                         Ok(mode) => match *mode {
-                            TrackBackgroundProcessorMode::AudioOut => TrackBackgroundProcessorMode::AudioOut,
-                            TrackBackgroundProcessorMode::Coast => TrackBackgroundProcessorMode::Coast,
-                            TrackBackgroundProcessorMode::Render => TrackBackgroundProcessorMode::Render,
+                            AudioMode::AudioOut => AudioMode::AudioOut,
+                            AudioMode::Coast => AudioMode::Coast,
+                            AudioMode::Render => AudioMode::Render,
                         }
-                        Err(_) => TrackBackgroundProcessorMode::AudioOut,
+                        Err(_) => AudioMode::AudioOut,
                     };
 
                     // transfer to the ring buffer
@@ -5572,7 +6437,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     else {
                         &mut audio_buffer
                     };
-                    if mode == TrackBackgroundProcessorMode::AudioOut {
+                    if mode == AudioMode::AudioOut {
                         let audio_block = audio_block_buffer.get_mut(0).unwrap();
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
@@ -5598,14 +6463,14 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                         let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
-                    else if mode == TrackBackgroundProcessorMode::Coast {
+                    else if mode == AudioMode::Coast {
                         thread::sleep(Duration::from_millis(100));
                     }
-                    else if mode == TrackBackgroundProcessorMode::Render {
+                    else if mode == AudioMode::Render {
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         render_producer_block.write_blocking(&render_audio_block_buffer);
                     }
-                    
+
                 } // end loop
 
                 debug!("#####################Dropped out of Vst loop.")
@@ -5616,7 +6481,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MidiTrackBackgroundProcessor{
 }
 
@@ -5634,7 +6499,7 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                         tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                         rx_track_background_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
                         tx_track_background_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                        track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                        track_thread_coast: Arc<Mutex<AudioMode>>,
                         volume: f32,
                         pan: f32,
                         vst_host_time_info: Arc<RwLock<TimeInfo>>,
@@ -5643,6 +6508,7 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                         tempo: f64,
                         time_signature_numerator: i32,
                         time_signature_denominator: i32,
+                        vst3_host: Arc<Mutex<vst3_host::Vst3Host>>,
     ) {
         match ThreadBuilder::default()
             .name(format!("MidiTrackBackgroundProcessor: {}", track_uuid.as_str()))
@@ -5675,6 +6541,7 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                         tempo,
                         time_signature_numerator,
                         time_signature_denominator,
+                        vst3_host
                     );
 
                 track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
@@ -5710,23 +6577,23 @@ pub trait Track {
     fn riff_refs(&self) -> &Vec<RiffReference>;
     fn automation_mut(&mut self) -> &mut Automation;
     fn automation(&self) -> &Automation;
-    fn uuid(&self) -> Uuid;
-    fn uuid_mut(&mut self) -> &mut Uuid;
+    fn uuid(&self) -> String;
+    fn uuid_mut(&mut self) -> String;
     fn uuid_string(&mut self) -> String;
     fn set_uuid(&mut self, uuid: Uuid);
-    fn start_background_processing(&self,
-                                   tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                                   rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                                   tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                                   track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                                   volume: f32,
-                                   pan: f32,
-                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
-                                   sample_rate: f64,
-                                   block_size: f64,
-                                   tempo: f64,
-                                   time_signature_numerator: i32,
-                                   time_signature_denominator: i32);
+    // fn start_background_processing(&self,
+    //                                tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+    //                                rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
+    //                                tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+    //                                track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+    //                                volume: f32,
+    //                                pan: f32,
+    //                                vst_host_time_info: Arc<RwLock<TimeInfo>>,
+    //                                sample_rate: f64,
+    //                                block_size: f64,
+    //                                tempo: f64,
+    //                                time_signature_numerator: i32,
+    //                                time_signature_denominator: i32);
     fn volume(&self) -> f32;
     fn volume_mut(&mut self) -> f32;
     fn set_volume(&mut self, volume: f32); // 0.0 to 1.0
@@ -5747,59 +6614,86 @@ pub trait AudioEffectTrack {
     fn set_effects(&mut self, effects: Vec<AudioPlugin>);
 
     /// Get a mutable reference to the instrument track's effects.
-     fn effects_mut(&mut self) -> &mut Vec<AudioPlugin>;
+    fn effects_mut(&mut self) -> &mut Vec<AudioPlugin>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct InstrumentTrack {
-    uuid: Uuid,
-	name: String,
-	mute: bool,
-	solo: bool,
-	red: f64,
-	green: f64,
-	blue: f64,
-    alpha: f64,
-	instrument: AudioPlugin,
-	pub effects: Vec<AudioPlugin>,
-    riffs: Vec<Riff>,
-    riff_refs: Vec<RiffReference>,
-    automation: Automation,
-    #[serde(skip_serializing, skip_deserializing)]
-    track_background_processor: InstrumentTrackBackgroundProcessor,
-    volume: f32,
-    pan: f32,
-    midi_routings: Vec<TrackEventRouting>,
-    audio_routings: Vec<AudioRouting>,
+    pub uuid: String,
+    pub name: String,
+    pub mute: bool,
+    pub solo: bool,
+    pub red: f64,
+    pub green: f64,
+    pub blue: f64,
+    pub alpha: f64,
+    pub instrument: AudioPlugin,
+    pub effects: Vec<AudioPlugin>,
+    pub riffs: Vec<Riff>,
+    pub riff_refs: Vec<RiffReference>,
+    pub automation: Automation,
+    // #[serde(skip_serializing, skip_deserializing)]
+    // track_background_processor: InstrumentTrackBackgroundProcessor,
+    pub volume: f32,
+    pub pan: f32,
+    pub midi_routings: Vec<TrackEventRouting>,
+    pub audio_routings: Vec<AudioRouting>,
 }
 
 impl InstrumentTrack {
-	pub fn new() -> Self {
-		let mut track = Self {
-            uuid: Uuid::new_v4(),
-			name: String::from("Unknown"),
-			mute: false,
-			solo: false,
-			red: 1.0,
-			green: 0.0,
-			blue: 0.0,
-			alpha: 0.5,
-			instrument: AudioPlugin::new(),
+    pub fn new() -> Self {
+        let mut track = Self {
+            uuid: Uuid::new_v4().to_string(),
+            name: String::from("Unknown"),
+            mute: false,
+            solo: false,
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 0.5,
+            instrument: AudioPlugin::new(),
             effects: vec![],
-			riffs: vec![],
-			riff_refs: vec![],
-			automation: Automation::new(),
-            track_background_processor: InstrumentTrackBackgroundProcessor::new(),
+            riffs: vec![],
+            riff_refs: vec![],
+            automation: Automation::new(),
+            // track_background_processor: InstrumentTrackBackgroundProcessor::new(),
             volume: 1.0,
             pan: 0.0,
-            midi_routings: vec!{},
+            midi_routings: vec! {},
             audio_routings: vec![],
-		};
+        };
 
         track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
 
         track
-	}
+    }
+
+    pub fn new_with_name(name: String) -> Self {
+        let mut track = Self {
+            uuid: Uuid::new_v4().to_string(),
+            name,
+            mute: false,
+            solo: false,
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 0.5,
+            instrument: AudioPlugin::new(),
+            effects: vec![],
+            riffs: vec![],
+            riff_refs: vec![],
+            automation: Automation::new(),
+            // track_background_processor: InstrumentTrackBackgroundProcessor::new(),
+            volume: 1.0,
+            pan: 0.0,
+            midi_routings: vec! {},
+            audio_routings: vec![],
+        };
+
+        track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
+
+        track
+    }
 
     pub fn instrument_mut(&mut self) -> &mut AudioPlugin {
         &mut self.instrument
@@ -5814,13 +6708,13 @@ impl InstrumentTrack {
         &self.instrument
     }
 
-    pub fn track_background_processor(&self) -> &InstrumentTrackBackgroundProcessor {
-        &self.track_background_processor
-    }
-
-    pub fn track_background_processor_mut(&mut self) -> &mut InstrumentTrackBackgroundProcessor {
-        &mut self.track_background_processor
-    }
+    // pub fn track_background_processor(&self) -> &InstrumentTrackBackgroundProcessor {
+    //     &self.track_background_processor
+    // }
+    //
+    // pub fn track_background_processor_mut(&mut self) -> &mut InstrumentTrackBackgroundProcessor {
+    //     &mut self.track_background_processor
+    // }
 }
 
 impl LuaUserData for InstrumentTrack {
@@ -5905,46 +6799,22 @@ impl Track for InstrumentTrack {
     }
 
     /// Get a reference to the instrument track's uuid.
-    fn uuid(&self) -> Uuid {
-        self.uuid
+    fn uuid(&self) -> String {
+        self.uuid.clone()
     }
 
     /// Get a mutable reference to the instrument track's uuid.
-    fn uuid_mut(&mut self) -> &mut Uuid {
-        &mut self.uuid
+    fn uuid_mut(&mut self) -> String {
+        self.uuid.clone()
     }
 
     /// Set the instrument track's uuid.
     fn set_uuid(&mut self, uuid: Uuid) {
-        self.uuid = uuid;
+        self.uuid = uuid.to_string();
     }
 
     fn uuid_string(&mut self) -> String {
         self.uuid.to_string()
-    }
-
-    fn start_background_processing(&self,
-                                   tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                                   rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                                   tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                                   track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                                   volume: f32,
-                                   pan: f32,
-                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
-                                   sample_rate: f64,
-                                   block_size: f64,
-                                   tempo: f64,
-                                   time_signature_numerator: i32,
-                                   time_signature_denominator: i32,
-    ) {
-        self.track_background_processor().start_processing(
-            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info,
-            sample_rate,
-            block_size,
-            tempo,
-            time_signature_numerator,
-            time_signature_denominator,
-        );
     }
 
     fn volume(&self) -> f32 {
@@ -6005,15 +6875,15 @@ impl AudioEffectTrack for InstrumentTrack {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum MidiDeviceType {
     Jack,
     Alsa,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct MidiDevice {
-	name: String,
+    name: String,
     midi_device_type: MidiDeviceType,
     midi_channel: i32,
 }
@@ -6044,17 +6914,17 @@ impl MidiDevice {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct MidiTrack {
     uuid: Uuid,
-	name: String,
-	mute: bool,
-	solo: bool,
-	red: f64,
-	green: f64,
-	blue: f64,
+    name: String,
+    mute: bool,
+    solo: bool,
+    red: f64,
+    green: f64,
+    blue: f64,
     alpha: f64,
-	midi_device: MidiDevice,
+    midi_device: MidiDevice,
     riffs: Vec<Riff>,
     riff_refs: Vec<RiffReference>,
     automation: Automation,
@@ -6067,31 +6937,31 @@ pub struct MidiTrack {
 }
 
 impl MidiTrack {
-	pub fn new() -> Self {
-		let mut track = Self {
+    pub fn new() -> Self {
+        let mut track = Self {
             uuid: Uuid::new_v4(),
-			name: String::from("Unknown"),
-			mute: false,
-			solo: false,
-			red: 1.0,
-			green: 0.0,
-			blue: 0.0,
+            name: String::from("Unknown"),
+            mute: false,
+            solo: false,
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
             alpha: 0.0,
-			midi_device: MidiDevice::new(),
-			riffs: vec![],
-			riff_refs: vec![],
-			automation: Automation::new(),
+            midi_device: MidiDevice::new(),
+            riffs: vec![],
+            riff_refs: vec![],
+            automation: Automation::new(),
             track_background_processor: MidiTrackBackgroundProcessor::new(),
             volume: 1.0,
             pan: 0.0,
             midi_routings: vec![],
             audio_routings: vec![],
-		};
+        };
 
         track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
 
         track
-	}
+    }
 
     pub fn midi_device(&self) -> &MidiDevice {
         &self.midi_device
@@ -6179,13 +7049,13 @@ impl Track for MidiTrack {
     }
 
     /// Get a reference to the track's uuid.
-    fn uuid(&self) -> Uuid {
-        self.uuid
+    fn uuid(&self) -> String {
+        self.uuid.to_string()
     }
 
     /// Get a mutable reference to the track's uuid.
-    fn uuid_mut(&mut self) -> &mut Uuid {
-        &mut self.uuid
+    fn uuid_mut(&mut self) -> String {
+        self.uuid.to_string()
     }
 
     /// Set the track's uuid.
@@ -6195,30 +7065,6 @@ impl Track for MidiTrack {
 
     fn uuid_string(&mut self) -> String {
         self.uuid.to_string()
-    }
-
-    fn start_background_processing(&self,
-                                   tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-                                   rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-                                   tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-                                   track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                                   volume: f32,
-                                   pan: f32,
-                                   vst_host_time_info: Arc<RwLock<TimeInfo>>,
-                                   sample_rate: f64,
-                                   block_size: f64,
-                                   tempo: f64,
-                                   time_signature_numerator: i32,
-                                   time_signature_denominator: i32,
-    ) {
-        self.track_background_processor().start_processing(
-            self.uuid().to_string(), tx_audio, rx_vst_thread, tx_vst_thread, track_thread_coast, volume, pan, vst_host_time_info,
-            sample_rate,
-            block_size,
-            tempo,
-            time_signature_numerator,
-            time_signature_denominator,
-        );
     }
 
     fn volume(&self) -> f32 {
@@ -6262,16 +7108,16 @@ impl Track for MidiTrack {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AudioTrack {
     uuid: Uuid,
-	name: String,
-	mute: bool,
-	solo: bool,
-	red: f64,
-	green: f64,
-	blue: f64,
-	alpha: f64,
+    name: String,
+    mute: bool,
+    solo: bool,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
     riffs: Vec<Riff>,
     riff_refs: Vec<RiffReference>,
     automation: Automation,
@@ -6285,19 +7131,19 @@ pub struct AudioTrack {
 }
 
 impl AudioTrack {
-	pub fn new() -> Self {
-		let mut track = Self {
+    pub fn new() -> Self {
+        let mut track = Self {
             uuid: Uuid::new_v4(),
-			name: String::from("Unknown"),
-			mute: false,
-			solo: false,
-			red: 1.0,
-			green: 0.0,
-			blue: 0.0,
-			alpha: 0.5,
-			riffs: vec![],
-			riff_refs: vec![],
-			automation: Automation::new(),
+            name: String::from("Unknown"),
+            mute: false,
+            solo: false,
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 0.5,
+            riffs: vec![],
+            riff_refs: vec![],
+            automation: Automation::new(),
             effects: vec![],
             volume: 1.0,
             pan: 0.0,
@@ -6309,7 +7155,7 @@ impl AudioTrack {
         track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
 
         track
-	}
+    }
 
     pub fn track_background_processor(&self) -> &AudioTrackBackgroundProcessor {
         &self.track_background_processor
@@ -6389,13 +7235,13 @@ impl Track for AudioTrack {
     }
 
     /// Get a reference to the track's uuid.
-    fn uuid(&self) -> Uuid {
-        self.uuid
+    fn uuid(&self) -> String {
+        self.uuid.to_string()
     }
 
     /// Get a mutable reference to the track's uuid.
-    fn uuid_mut(&mut self) -> &mut Uuid {
-        &mut self.uuid
+    fn uuid_mut(&mut self) -> String {
+        self.uuid.to_string()
     }
 
     /// Set the track's uuid.
@@ -6405,24 +7251,6 @@ impl Track for AudioTrack {
 
     fn uuid_string(&mut self) -> String {
         self.uuid.to_string()
-    }
-
-    fn start_background_processing(
-        &self,
-        _tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
-        _rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
-        _tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
-        _track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-        _volume: f32,
-        _pan: f32,
-        _vst_host_time_info: Arc<RwLock<TimeInfo>>,
-        sample_rate: f64,
-        block_size: f64,
-        tempo: f64,
-        time_signature_numerator: i32,
-        time_signature_denominator: i32,
-    ) {
-        // TODO implement
     }
 
     fn volume(&self) -> f32 {
@@ -6483,45 +7311,45 @@ impl AudioEffectTrack for AudioTrack {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Loop {
-    uuid: Uuid,
-	name: String,
-	start_position: f64,
-	end_position: f64,
+    pub uuid: String,
+    pub name: String,
+    pub start_position: f64,
+    pub end_position: f64,
 }
 
 impl Loop {
-	pub fn new() -> Loop {
-		Loop {
-            uuid: Uuid::new_v4(),
-			name: String::from("unkown"),
-			start_position: 0.0,
-			end_position: 0.0
-		}
-	}
+    pub fn new() -> Loop {
+        Loop {
+            uuid: Uuid::new_v4().to_string(),
+            name: String::from("unkown"),
+            start_position: 0.0,
+            end_position: 0.0
+        }
+    }
 
-	pub fn new_with_uuid(uuid: Uuid) -> Loop {
-		Loop {
-            uuid,
-			name: String::from("unkown"),
-			start_position: 0.0,
-			end_position: 0.0
-		}
-	}
+    pub fn new_with_uuid(uuid: Uuid) -> Loop {
+        Loop {
+            uuid: uuid.to_string(),
+            name: String::from("unkown"),
+            start_position: 0.0,
+            end_position: 0.0
+        }
+    }
 
-	pub fn new_with_uuid_and_name(uuid: Uuid, name: String) -> Loop {
-		Loop {
-            uuid,
-			name,
-			start_position: 0.0,
-			end_position: 0.0
-		}
-	}
+    pub fn new_with_uuid_and_name(uuid: Uuid, name: String) -> Loop {
+        Loop {
+            uuid: uuid.to_string(),
+            name,
+            start_position: 0.0,
+            end_position: 0.0
+        }
+    }
 
     /// Get the loop's uuid.
-    pub fn uuid(&self) -> Uuid {
-        self.uuid
+    pub fn uuid(&self) -> String {
+        self.uuid.clone()
     }
 
     /// Get a reference to the loop's name.
@@ -6570,15 +7398,21 @@ impl Loop {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+impl std::fmt::Display for Loop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name.as_str())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Song {
-	name: String,
-	tempo: f64,
-	time_signature_numerator: f64,
-	time_signature_denominator: f64,
+    name: String,
+    pub tempo: f64,
+    time_signature_numerator: f64,
+    time_signature_denominator: f64,
     tracks: Vec<TrackType>,
-	length_in_beats: u64,
-	loops: Vec<Loop>,
+    length_in_beats: u64,
+    loops: Vec<Loop>,
     riff_sets: Vec<RiffSet>,
     riff_sequences: Vec<RiffSequence>,
     #[serde(default)]
@@ -6588,33 +7422,33 @@ pub struct Song {
 }
 
 impl Song {
-	pub fn new() -> Song {
-		Song {
-			name: String::from("unknown"),
-			tempo: 140.0,
+    pub fn new() -> Song {
+        Song {
+            name: String::from("unknown"),
+            tempo: 140.0,
             time_signature_numerator: 4.0,
             time_signature_denominator: 4.0,
             tracks: vec![TrackType::InstrumentTrack(InstrumentTrack::new())],
-			length_in_beats: 100,
-			loops: vec![],
+            length_in_beats: 100,
+            loops: vec![],
             riff_sets: vec![],
             riff_sequences: vec![],
             riff_grids: vec![],
             riff_arrangements: vec![],
             samples: HashMap::new(),
-		}
-	}
+        }
+    }
 
-	pub fn add_loop(&mut self, a_loop: Loop) {
-		self.loops.push(a_loop);
-	}
+    pub fn add_loop(&mut self, a_loop: Loop) {
+        self.loops.push(a_loop);
+    }
 
-	pub fn delete_loop(&mut self, uuid: Uuid) {
-		self.loops.retain(|current_loop| current_loop.uuid() != uuid);
-	}
+    pub fn delete_loop(&mut self, uuid: Uuid) {
+        self.loops.retain(|current_loop| current_loop.uuid() != uuid.to_string());
+    }
 
     pub fn change_loop_name(&mut self, uuid: Uuid, name: String) {
-        match self.loops.iter_mut().find(|current_loop| current_loop.uuid() == uuid) {
+        match self.loops.iter_mut().find(|current_loop| current_loop.uuid() == uuid.to_string()) {
             Some(current_loop) => current_loop.set_name(name),
             None => debug!("Could not find loop with uuid: {}", uuid),
         }
@@ -6651,7 +7485,7 @@ impl Song {
     }
 
     pub fn track_mut(&mut self, uuid: &Uuid) -> Option<&mut TrackType> {
-        self.tracks_mut().iter_mut().find(|track| track.uuid().eq(uuid))
+        self.tracks_mut().iter_mut().find(|track| track.uuid() == uuid.to_string())
     }
 
     pub fn track(&self, uuid: String) -> Option<&TrackType> {
@@ -6967,17 +7801,17 @@ impl Song {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Project {
-	song: Song,
+    pub song: Song,
 }
 
 impl Project {
-	pub fn new() -> Project {
-		Project {
-			song: Song::new(),
-		}
-	}
+    pub fn new() -> Project {
+        Project {
+            song: Song::new(),
+        }
+    }
 
     /// Set the project's song.
     pub fn set_song(&mut self, song: Song) {
@@ -7093,6 +7927,8 @@ pub struct DAWConfiguration {
     pub clap_plugin_paths: Vec<String>,
     #[serde(default = "Vec::new")]
     pub vst3_plugin_paths: Vec<String>,
+    #[serde(default = "Vec::new")]
+    pub bookmark_paths: Vec<String>,
 }
 
 impl DAWConfiguration {
@@ -7106,12 +7942,13 @@ impl DAWConfiguration {
             vst24_plugin_paths: vec![],
             clap_plugin_paths: vec![],
             vst3_plugin_paths: vec![],
+            bookmark_paths: vec![],
         }
     }
 
     pub fn load_config() -> DAWConfiguration {
         if let Some(mut config_path) = dirs::config_dir() {
-            config_path.push(CONFIGURATION_FILE_NAME);
+            config_path.push(CONFIGURATION_FILE_NAME.to_string());
             if let Ok(mut file) = std::fs::File::open(config_path) {
                 let mut json_text = String::new();
 
@@ -7130,7 +7967,7 @@ impl DAWConfiguration {
     pub fn save(&self) {
         debug!("Entering save configuration...");
         if let Some(mut config_path) = dirs::config_dir() {
-            config_path.push(CONFIGURATION_FILE_NAME);
+            config_path.push(CONFIGURATION_FILE_NAME.to_string());
 
             match serde_json::to_string_pretty(self) {
                 Ok(json_text) => {
@@ -7158,7 +7995,7 @@ pub struct AudioConfiguration {
 impl AudioConfiguration {
     pub fn new() -> Self {
         Self {
-            block_size: 1024,
+            block_size: 2048,
             sample_rate: 44100,
         }
     }
@@ -7203,16 +8040,16 @@ impl MidiOutputConnections {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum TrackEventRoutingNodeType {
     Track(String), // track uuid
     Instrument(String, String), // track uuid, instrument uuid
     Effect(String, String), // track uuid, effect uuid
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct TrackEventRouting{
-    uuid: Uuid,
+    uuid: String,
     pub description: String,
     pub channel: u8,
     pub note_range: (u8, u8), // start note, end no
@@ -7225,9 +8062,9 @@ impl TrackEventRouting {
         description: String,
         source: TrackEventRoutingNodeType,
         destination: TrackEventRoutingNodeType,
-        ) -> Self {
+    ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             channel: 1,
             note_range: (0, 127),
@@ -7243,7 +8080,7 @@ impl TrackEventRouting {
         destination: TrackEventRoutingNodeType,
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             channel: 1,
             note_range,
@@ -7260,7 +8097,7 @@ impl TrackEventRouting {
         destination: TrackEventRoutingNodeType,
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             channel,
             note_range,
@@ -7270,20 +8107,20 @@ impl TrackEventRouting {
     }
 
     pub fn uuid(&self) -> String {
-        self.uuid.to_string()
+        self.uuid.clone()
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum AudioRoutingNodeType {
     Track(String), // track uuid
-    Instrument(String, String, i32, i32), // track uuid, instrument uuid, left audio input index, right audio input index 
+    Instrument(String, String, i32, i32), // track uuid, instrument uuid, left audio input index, right audio input index
     Effect(String, String, i32, i32), // track uuid, effect uuid, left audio input index, right audio input index
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct AudioRouting{
-    uuid: Uuid,
+    uuid: String,
     pub description: String,
     pub source: AudioRoutingNodeType,
     pub destination: AudioRoutingNodeType,
@@ -7294,9 +8131,9 @@ impl AudioRouting {
         description: String,
         source: AudioRoutingNodeType,
         destination: AudioRoutingNodeType,
-        ) -> Self {
+    ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             source,
             destination,
@@ -7309,7 +8146,7 @@ impl AudioRouting {
         destination: AudioRoutingNodeType,
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             source,
             destination,
@@ -7322,7 +8159,7 @@ impl AudioRouting {
         destination: AudioRoutingNodeType,
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::new_v4().to_string(),
             description,
             source,
             destination,
@@ -7330,7 +8167,7 @@ impl AudioRouting {
     }
 
     pub fn uuid(&self) -> String {
-        self.uuid.to_string()
+        self.uuid.clone()
     }
 }
 
@@ -7905,518 +8742,5 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
 
     fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crossbeam_channel::unbounded;
-    use flexi_logger::Logger;
-
-    use crate::domain::*;
-    use crate::state::MidiPolyphonicExpressionNoteId;
-
-    #[test]
-    fn can_serialise() {
-        let mut project = Project::new();
-        let pattern = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_owned(), 1.0);
-        let part = RiffReference::new(pattern.uuid().to_string(), 0.0);
-        let _song = project.song_mut();
-        let tracks = project.song_mut().tracks_mut();
-
-        match tracks.get_mut(0) {
-            Some(track) => {
-                let patterns = track.riffs_mut();
-                patterns.push(pattern);
-
-                let parts = track.riff_refs_mut();
-                parts.push(part);
-                assert_eq!(1, project.song_mut().tracks_mut().len());
-                match serde_json::to_string(&project) {
-                    Ok(json_text) => debug!("can_serialise success: {}", json_text),
-                    Err(error) => debug!("can_serialise failure: {}",error)
-                }
-            },
-            None => (),
-        }
-    }
-
-    #[test]
-    fn can_deserialise() {
-        let json_text = include_str!("../test_data/test.fdaw");
-        let mut project: Project = serde_json::from_str(json_text).unwrap();
-        debug!("can_deserialise_from_file success: {}", project.song_mut().name_mut());
-    }
-
-    #[test]
-    fn generate_some_uuids() {
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-        debug!("{}", Uuid::new_v4());
-    }
-
-    #[test]
-    fn serialise_configuration() {
-        match serde_json::to_string_pretty(&DAWConfiguration::new()) {
-            Ok(json_text) => debug!("DAWConfiguration serialise success: {}", json_text),
-            Err(error) => debug!("DAWConfiguration serialise failure: {}",error)
-        }
-    }
-
-    #[test]
-    fn test_transition_between_riff_sets() {
-        let bpm = 140.0;
-        let sample_rate = 44100.0;
-        let block_size = 1024.0;
-        let song_length_in_beats = 10.0;
-        let (tx_to_audio, _rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
-        let (tx_to_vst, rx_to_vst) = channel::<TrackBackgroundProcessorInwardEvent>();
-        let _tx_to_vst_ref = tx_to_vst;
-        let (tx_from_vst, _rx_from_vst) = channel::<TrackBackgroundProcessorOutwardEvent>();
-        let track_thread_coast: Arc<Mutex<TrackBackgroundProcessorMode>> = Arc::new(Mutex::new(TrackBackgroundProcessorMode::AudioOut));
-        let _track_uuid = Uuid::new_v4();
-        let automation = Automation::new();
-        let mut riffs: Vec<Riff> = vec![];
-        let mut riff_refs: Vec<RiffReference> = vec![];
-        let transition_automation = Automation::new();
-        let mut transition_riffs: Vec<Riff> = vec![];
-        let mut transition_riff_refs: Vec<RiffReference> = vec![];
-        let vst_host_time_info = Arc::new(RwLock::new(TimeInfo {
-            sample_pos: 0.0,
-            sample_rate: 44100.0,
-            nanoseconds: 0.0,
-            ppq_pos: 0.0,
-            tempo: 140.0,
-            bar_start_pos: 0.0,
-            cycle_start_pos: 0.0,
-            cycle_end_pos: 0.0,
-            time_sig_numerator: 4,
-            time_sig_denominator: 4,
-            smpte_offset: 0,
-            smpte_frame_rate: vst::api::SmpteFrameRate::Smpte24fps,
-            samples_to_next_clock: 0,
-            flags: 3,
-        }));
-        let time_signature_numerator = 4.0;
-        let time_signature_denominator = 4.0;
-
-        let mut track_helper = TrackBackgroundProcessorHelper::new(
-            Uuid::new_v4().to_string(),
-            tx_to_audio,
-            rx_to_vst,
-            tx_from_vst,
-            track_thread_coast,
-            1.0,
-            1.0,
-            GeneralTrackType::InstrumentTrack,
-            vst_host_time_info,
-            Box::new(RiffBufferTrackEventProcessor::new(1024.0)),
-            44100.0,
-            1924.0,
-            140.0,
-            4,
-            4
-        );
-
-        // create a 1 bar riff with a long note
-        let mut riff_one_bar_with_long_note = Riff::new_with_name_and_length(Uuid::new_v4(), "dark under current".to_string(), 4.0);
-        let note = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 69, 127, 3.4285714285714284);
-        riff_one_bar_with_long_note.events_mut().push(TrackEvent::Note(note));
-        riffs.push(riff_one_bar_with_long_note.clone());
-
-        // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "dark under current".to_string(), 4.0);
-        transition_riffs.push(riff_one_bar_empty.clone());
-
-        // create a riff ref for the long note bar
-        let mut riff_ref_riff_one_bar_with_long_note = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_one_bar_with_long_note.set_linked_to(riff_one_bar_with_long_note.uuid().to_string());
-        riff_refs.push(riff_ref_riff_one_bar_with_long_note.clone());
-
-        // create a riff ref for the empty
-        let mut riff_ref_riff_one_bar_empty = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_one_bar_empty.set_linked_to(riff_one_bar_empty.uuid().to_string());
-        transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
-
-        // do the conversion
-        let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
-
-        // do the transition conversion
-        let (transition_event_blocks, _transition_param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
-
-        track_helper.event_processor.set_track_event_blocks(Some(event_blocks.clone()));
-        track_helper.event_processor.set_play(true);
-        track_helper.event_processor.set_play_loop_on(true);
-        track_helper.event_processor.set_block_index(0);
-        track_helper.event_processor.set_play_left_block_index(0);
-        track_helper.event_processor.set_play_right_block_index(event_blocks.len() as i32 - 1);
-
-        // fas forward past the note events
-        for _block_index in 0..64 {
-            track_helper.process_plugin_events();
-        }
-
-        track_helper.event_processor.set_track_event_blocks_transition_to(Some(transition_event_blocks));
-
-        for block_index in 64..event_blocks.len() {
-            if let Some(events) = event_blocks.get(block_index) {
-                if !events.is_empty() {
-                    // do some checks
-                    debug!("Doing some checks...");
-                }
-
-                // TODO need some assertions
-                assert_eq!(0, track_helper.event_processor.playing_notes().len());
-
-                track_helper.process_plugin_events();
-            }
-        }
-
-        debug!("");
-    }
-
-    #[test]
-    fn test_riff_buffer_track_event_processor() {
-        // setup logging
-        let logger_init_result = Logger::try_with_str("debug");
-        let _logger = if let Ok(logger) = logger_init_result {
-            let logger = logger
-                // .log_to_file(FileSpec::default())
-                // .write_mode(WriteMode::Async)
-                .start();
-            Some(logger)
-        }
-        else {
-            None
-        };
-
-        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new(1024.0);
-
-        let bpm = 140.0;
-        let sample_rate = 44100.0;
-        let block_size = 1024.0;
-        let midi_channel = 0;
-        let time_signature_numerator = 4.0;
-        let time_signature_denominator = 4.0;
-
-        let mut riffs: Vec<Riff> = vec![];
-        let mut riff_refs: Vec<RiffReference> = vec![];
-        let mut transition_riffs: Vec<Riff> = vec![];
-        let mut transition_riff_refs: Vec<RiffReference> = vec![];
-
-        let mut transition_happened = false;
-        let mut start_sample = 0;
-        let mut end_sample = block_size as i32;
-
-        let riff_size_in_samples = 75600 * 4;
-
-        // create a 4 bar riff with two long notes
-        let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
-        riffs.push(riff_four_bar_with_two_long_notes.clone());
-
-        // create a riff ref for 4 bar riff with two long notes
-        let mut riff_ref_riff_four_bar_with_two_long_notes = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_four_bar_with_two_long_notes.set_linked_to(riff_four_bar_with_two_long_notes.uuid().to_string());
-        riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
-
-        // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
-        transition_riffs.push(riff_one_bar_empty.clone());
-
-        // create a riff ref for the one bar empty transition riff
-        let mut riff_ref_riff_one_bar_empty = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_one_bar_empty.set_linked_to(riff_one_bar_empty.uuid().to_string());
-        transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
-
-        // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
-        // let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel);
-
-        let mut track_events: Vec<TrackEvent> = vec![];
-        let mut param_events: Vec<PluginParameter> = vec![];
-        let mut param_event_blocks_ref: Option<Vec<Vec<PluginParameter>>> = None;
-
-        // riff_buffer_track_event_processor.set_track_event_blocks(Some(track_event_blocks));
-        riff_buffer_track_event_processor.set_block_index(0);
-        riff_buffer_track_event_processor.set_play(true);
-
-        for x in 0..1000 {
-            let mut has_tail = false;
-            let mut tail_size = 0;
-
-            {
-                let start_sample = start_sample % riff_size_in_samples;
-                let mut end_sample = start_sample + block_size as i32;
-
-                if end_sample > riff_size_in_samples {
-                    has_tail = true;
-                    tail_size = end_sample - riff_size_in_samples;
-                    end_sample = riff_size_in_samples;
-                }
-
-                debug!("Block: {}, start_sample: {}, end_sample: {}", x, start_sample, end_sample);
-                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample, 0);
-            }
-
-            if has_tail {
-                let start_sample = 0;
-                let mut end_sample = tail_size;
-
-                debug!("Block: {}, start_sample: {}, end_sample: {}", x, start_sample, end_sample);
-                riff_buffer_track_event_processor.extract_events(&mut track_events, &mut param_events, &mut param_event_blocks_ref, transition_happened, 0, &riff_converted_track_events, &start_sample, &end_sample, 0);
-            }
-
-            start_sample = start_sample + block_size as i32;
-            end_sample = start_sample + block_size as i32;
-            riff_buffer_track_event_processor.set_block_index(riff_buffer_track_event_processor.block_index() + 1);
-        }
-    }
-
-    #[test]
-    fn test_riff_buffer_track_event_processor_process_events() {
-        // setup logging
-        let logger_init_result = Logger::try_with_str("debug");
-        let _logger = if let Ok(logger) = logger_init_result {
-            let logger = logger
-                // .log_to_file(FileSpec::default())
-                // .write_mode(WriteMode::Async)
-                .start();
-            Some(logger)
-        }
-        else {
-            None
-        };
-
-        let mut riff_buffer_track_event_processor = RiffBufferTrackEventProcessor::new(1024.0);
-
-        let bpm = 140.0;
-        let sample_rate = 44100.0;
-        let block_size = 1024.0;
-        let midi_channel = 0;
-        let time_signature_numerator = 4.0;
-        let time_signature_denominator = 4.0;
-
-        let mut riffs: Vec<Riff> = vec![];
-        let mut riff_refs: Vec<RiffReference> = vec![];
-        let mut transition_riffs: Vec<Riff> = vec![];
-        let mut transition_riff_refs: Vec<RiffReference> = vec![];
-
-        let mut transition_happened = false;
-        let mut start_sample = 0;
-        let mut end_sample = block_size as i32;
-
-        let riff_size_in_samples = 75600 * 4;
-
-        // create a 4 bar riff with two long notes
-        let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
-        riffs.push(riff_four_bar_with_two_long_notes.clone());
-
-        // create a riff ref for 4 bar riff with two long notes
-        let mut riff_ref_riff_four_bar_with_two_long_notes = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_four_bar_with_two_long_notes.set_linked_to(riff_four_bar_with_two_long_notes.uuid().to_string());
-        riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
-
-        // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
-        transition_riffs.push(riff_one_bar_empty.clone());
-
-        // create a riff ref for the one bar empty transition riff
-        let mut riff_ref_riff_one_bar_empty = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_one_bar_empty.set_linked_to(riff_one_bar_empty.uuid().to_string());
-        transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
-
-        // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
-        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
-
-        // dump out the converted events
-        for event in riff_converted_track_events.iter() {
-            match event {
-                TrackEvent::Note(note) => debug!("Note: position={}, note={}, length={}", note.position(), note.note(), note.length()),
-                TrackEvent::NoteOn(note_on) => debug!("Note on: position={}, note={}", note_on.position(), note_on.note()),
-                TrackEvent::NoteOff(note_off) => debug!("Note off: position={}, note={}", note_off.position(), note_off.note()),
-                TrackEvent::Measure(_) => {}
-                _ => {}
-            }
-        }
-
-        let mut track_events: Vec<TrackEvent> = vec![];
-        let mut param_events: Vec<PluginParameter> = vec![];
-        let mut param_event_blocks_ref: Option<Vec<Vec<PluginParameter>>> = None;
-
-        riff_buffer_track_event_processor.set_track_event_blocks(Some(vec![riff_converted_track_events]));
-        riff_buffer_track_event_processor.set_block_index(0);
-        riff_buffer_track_event_processor.set_play(true);
-
-        for x in 0..1000 {
-            riff_buffer_track_event_processor.process_events();
-
-            // if x == 140 {
-            if x == 220 {
-            // if x == 221 {
-                riff_buffer_track_event_processor.set_track_event_blocks_transition_to(Some(vec![
-                    // DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel)
-                    transistion_converted_track_events.clone()
-                ]));
-            }
-
-            // depending on the block check for events.
-        }
-    }
-
-    #[test]
-    fn test_riff_buffer_track_event_processor2_process_events() {
-        // setup logging
-        let logger_init_result = Logger::try_with_str("debug");
-        let _logger = if let Ok(logger) = logger_init_result {
-            let logger = logger
-                // .log_to_file(FileSpec::default())
-                // .write_mode(WriteMode::Async)
-                .start();
-            Some(logger)
-        }
-        else {
-            None
-        };
-
-        let mut riff_buffer_track_event_processor2 = RiffBufferTrackEventProcessor::new(1024.0);
-
-        let bpm = 140.0;
-        let sample_rate = 44100.0;
-        let block_size = 1024.0;
-        let midi_channel = 0;
-        let time_signature_numerator = 4.0;
-        let time_signature_denominator = 4.0;
-
-        let mut riffs: Vec<Riff> = vec![];
-        let mut riff_refs: Vec<RiffReference> = vec![];
-        let mut transition_riffs: Vec<Riff> = vec![];
-        let mut transition_riff_refs: Vec<RiffReference> = vec![];
-
-        let mut transition_happened = false;
-        let mut start_sample = 0;
-        let mut end_sample = block_size as i32;
-
-        let riff_size_in_samples = 75600 * 4;
-
-        // create a 4 bar riff with two long notes
-        let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, 60, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note1));
-        let note2 = Note::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 8.0, 67, 127, 7.99);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Note(note2));
-        riffs.push(riff_four_bar_with_two_long_notes.clone());
-
-        // create a riff ref for 4 bar riff with two long notes
-        let mut riff_ref_riff_four_bar_with_two_long_notes = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_four_bar_with_two_long_notes.set_linked_to(riff_four_bar_with_two_long_notes.uuid().to_string());
-        riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
-
-        // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
-        transition_riffs.push(riff_one_bar_empty.clone());
-
-        // create a riff ref for the one bar empty transition riff
-        let mut riff_ref_riff_one_bar_empty = RiffReference::new(Uuid::new_v4().to_string(), 0.0);
-        riff_ref_riff_one_bar_empty.set_linked_to(riff_one_bar_empty.uuid().to_string());
-        transition_riff_refs.push(riff_ref_riff_one_bar_empty.clone());
-
-        // convert the events
-        let mut riff_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
-        let mut transistion_converted_track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
-
-        // dump out the converted events
-        for event in riff_converted_track_events.iter() {
-            match event {
-                TrackEvent::Note(note) => debug!("Note: position={}, note={}, length={}", note.position(), note.note(), note.length()),
-                TrackEvent::NoteOn(note_on) => debug!("Note on: position={}, note={}", note_on.position(), note_on.note()),
-                TrackEvent::NoteOff(note_off) => debug!("Note off: position={}, note={}", note_off.position(), note_off.note()),
-                TrackEvent::Measure(_) => {}
-                _ => {}
-            }
-        }
-
-        let mut track_events: Vec<TrackEvent> = vec![];
-        let mut param_events: Vec<PluginParameter> = vec![];
-        let mut param_event_blocks_ref: Option<Vec<Vec<PluginParameter>>> = None;
-
-        riff_buffer_track_event_processor2.set_track_event_blocks(Some(vec![riff_converted_track_events]));
-        riff_buffer_track_event_processor2.set_block_index(0);
-        riff_buffer_track_event_processor2.set_play(true);
-
-        for x in 0..230000 {
-            riff_buffer_track_event_processor2.process_events();
-
-            // if x == 140 {
-            // if x == 220 {
-            if x == (220 * 1000) {
-            // if x == 221 {
-                riff_buffer_track_event_processor2.set_track_event_blocks_transition_to(Some(vec![
-                    // DAWUtils::extract_riff_ref_events(&transition_riffs, &transition_riff_refs, bpm, sample_rate, midi_channel)
-                    transistion_converted_track_events.clone()
-                ]));
-            }
-
-            // depending on the block check for events.
-        }
-    }
-
-    #[test]
-    fn test_track_event_sort() -> Result<(), String> {
-        let mut riff_four_bar_with_two_long_notes = Riff::new_with_name_and_length(Uuid::new_v4(), "repro-1".to_string(), 4.0 * 4.0);
-        let note1_on = NoteOn::new_with_params(-1, 0.0, 60, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note1_on));
-        let note1_off = NoteOff::new_with_params(-1, 7.99, 60, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note1_off));
-        let note2_on = NoteOn::new_with_params(-1, 8.0, 67, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note2_on));
-        let note2_off = NoteOff::new_with_params(-1, 15.99, 67, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note2_off));
-        let note3_on = NoteOn::new_with_params(-1, 16.0, 60, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note3_on));
-        let measure = Measure::new(16.0);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::Measure(measure));
-        let note3_off = NoteOff::new_with_params(-1, 23.99, 60, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note3_off));
-        let note4_on = NoteOn::new_with_params(-1, 24.0, 67, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOn(note4_on));
-        let note4_off = NoteOff::new_with_params(-1, 31.99, 67, 127);
-        riff_four_bar_with_two_long_notes.events_mut().push(TrackEvent::NoteOff(note4_off));
-
-        riff_four_bar_with_two_long_notes.events_mut().sort_by(&DAWUtils::sort_track_events);
-
-        for track_event in riff_four_bar_with_two_long_notes.events() {
-            match track_event {
-                TrackEvent::NoteOn(note_on) => debug!("Note on: position={}", note_on.position()),
-                TrackEvent::NoteOff(note_off) => debug!("Note off: position={}", note_off.position()),
-                TrackEvent::Measure(measure) => debug!("Measure: position={}", measure.position()),
-                _ => ()
-            }
-        }
-
-        if let Some(track_event) = riff_four_bar_with_two_long_notes.events().get(5) {
-            match track_event {
-                TrackEvent::Measure(_) => Ok(()),
-                _ => Err("The sixth element is not a measure.".to_string())
-            }
-        }
-        else {
-            Err("There is no fifth element.".to_string())
-        }
     }
 }

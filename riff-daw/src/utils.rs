@@ -8,9 +8,8 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation, DAWItemID};
-use crate::DAWState;
-use crate::state::MidiPolyphonicExpressionNoteId;
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation, DAWItemID, PitchBend};
+use crate::state::{MidiPolyphonicExpressionNoteId, RiffDAWState};
 
 pub struct CalculatedSnap {
     pub snapped_value: f64,
@@ -239,7 +238,7 @@ impl DAWUtils {
         debug!("Automation envelopes for track: {}", automation.envelopes().len());
         // TODO need to make sure that this doesn't cross over into the next measure
         // let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate - block_size_in_samples;
-        let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate; 
+        let passage_length_in_frames = passage_length_in_beats / bpm * 60.0 * sample_rate;
 
         debug!("util - convert_to_event_blocks: passage_length_in_frames={}", passage_length_in_frames);
 
@@ -478,16 +477,16 @@ impl DAWUtils {
         for event in vst_events.iter() {
             if 128 <= event.data[0] && event.data[0] <= 143 { // note off
                 track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
-            } 
+            }
             else if 144 <= event.data[0] && event.data[0] <= 159  { // note on
                 track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
-            } 
+            }
             else if 176 <= event.data[0] && event.data[0] <= 191 { // controller
                 track_events.push(TrackEvent::Controller(Controller::new(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
             }
             else if 224 <= event.data[0] && event.data[0] <= 239 { // pitch bend
                 track_events.push(TrackEvent::PitchBend(PitchBend::new_from_midi_bytes(event.delta_frames as f64, event.data[1], event.data[2])));
-            } 
+            }
             else {
                 debug!("Attempted to convert unknown VST24 event: frame={}, midi type={}", event.delta_frames , event.data[0]);
             }
@@ -762,7 +761,7 @@ impl DAWUtils {
 
         for riff_ref in riff_refs {
             for riff in riffs.iter() {
-                if riff.uuid().to_string() == riff_ref.linked_to() {
+                if riff.uuid.uuid.to_string() == riff_ref.linked_to {
                     debug!("util-extract_riff_ref_events: riff name={}", riff.name());
                     let mut use_notes = match riff_ref.mode() {
                         RiffReferenceMode::Normal => true,
@@ -843,15 +842,15 @@ impl DAWUtils {
         )
     }
 
-    pub fn copy_riff_set_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
-        match state.lock() {
-            Ok(mut state) => {
+    pub fn copy_riff_set_to_position(uuid: String, position_in_beats: f64, state: &mut RiffDAWState) -> f64 {
+        match state.project.lock() {
+            Ok(mut project) => {
                 // find the riff set
-                let riff_set = state.get_project().song_mut().riff_sets_mut().iter_mut().find(|riff_set| riff_set.uuid() == uuid).map(|riff_set| riff_set.clone());
+                let riff_set = project.song_mut().riff_sets_mut().iter_mut().find(|riff_set| riff_set.uuid() == uuid).map(|riff_set| riff_set.clone());
 
                 if let Some(riff_set) = riff_set {
                     let mut riff_lengths = vec![];
-                    for track_type in state.get_project().song_mut().tracks_mut().iter_mut() {
+                    for track_type in project.song_mut().tracks_mut().iter_mut() {
                         if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
                             if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
                                 if riff.name() != "empty" {
@@ -860,9 +859,9 @@ impl DAWUtils {
                             }
                         }
                     }
-                    let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-                    let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
-                    for track_type in state.get_project().song_mut().tracks_mut().iter_mut() {
+                    let (product, unique_riff_lengths) = RiffDAWState::get_length_product(riff_lengths);
+                    let lowest_common_factor_in_beats = RiffDAWState::get_lowest_common_factor(unique_riff_lengths, product);
+                    for track_type in project.song_mut().tracks_mut().iter_mut() {
                         if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
                             if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
                                 let riff_length = riff.length();
@@ -889,11 +888,11 @@ impl DAWUtils {
         }
     }
 
-    pub fn copy_riff_sequence_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
+    pub fn copy_riff_sequence_to_position(uuid: String, position_in_beats: f64, state: &mut RiffDAWState) -> f64 {
         let mut riff_set_references = vec![];
-        match state.lock() {
-            Ok(state) => {
-                if let Some(riff_sequence) = state.project().song().riff_sequence(uuid) {
+        match state.project.lock() {
+            Ok(project) => {
+                if let Some(riff_sequence) = project.song().riff_sequence(uuid) {
                     for riff_set_uuid in riff_sequence.riff_sets() {
                         riff_set_references.push(riff_set_uuid.clone());
                     }
@@ -904,22 +903,25 @@ impl DAWUtils {
 
         let mut running_position_in_beats = position_in_beats;
         for riff_set_reference in riff_set_references.iter() {
-            running_position_in_beats = DAWUtils::copy_riff_set_to_position(riff_set_reference.item_uuid().to_string(), running_position_in_beats, state.clone());
+            running_position_in_beats = DAWUtils::copy_riff_set_to_position(riff_set_reference.item_uuid().to_string(), running_position_in_beats, state);
         }
 
         running_position_in_beats
     }
 
-    pub fn get_riff_grid_length(riff_grid: &RiffGrid, state: &DAWState) -> f64 {
+    pub fn get_riff_grid_length(riff_grid: &RiffGrid, state: &RiffDAWState) -> f64 {
         let mut riff_grid_actual_play_length = 0.0;
-        for track_uuid in riff_grid.tracks() {
-            if let Some(track) =  state.project().song().track(track_uuid.clone()) {
-                for track_riff_references in riff_grid.track_riff_references(track_uuid.clone()).iter() {
-                    for riff_ref in track_riff_references.iter() {
-                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                            let length = riff_ref.position() + riff.length();
-                            if length > riff_grid_actual_play_length {
-                                riff_grid_actual_play_length = length;
+
+        if let Ok(project) = state.project.lock() {
+            for track_uuid in riff_grid.tracks() {
+                if let Some(track) = project.song().track(track_uuid.clone()) {
+                    for track_riff_references in riff_grid.track_riff_references(track_uuid.clone()).iter() {
+                        for riff_ref in track_riff_references.iter() {
+                            if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                let length = riff_ref.position() + riff.length();
+                                if length > riff_grid_actual_play_length {
+                                    riff_grid_actual_play_length = length;
+                                }
                             }
                         }
                     }
@@ -930,12 +932,12 @@ impl DAWUtils {
         riff_grid_actual_play_length
     }
 
-    pub fn copy_riff_grid_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
+    pub fn copy_riff_grid_to_position(uuid: String, position_in_beats: f64, state: &mut RiffDAWState) -> f64 {
         let mut tracks_riff_refs = HashMap::new();
         let mut riff_grid_length = 0.0;
-        match state.lock() {
-            Ok(state) => {
-                if let Some(riff_grid) = state.project().song().riff_grid(uuid) {
+        match state.project.lock() {
+            Ok(project) => {
+                if let Some(riff_grid) = project.song().riff_grid(uuid) {
                     for track_uuid in riff_grid.tracks() {
                         let mut riff_references = vec![];
                         for track_riff_ref in riff_grid.track_riff_references(track_uuid.clone()).unwrap().iter() {
@@ -944,7 +946,7 @@ impl DAWUtils {
                             riff_references.push(reference);
 
                             // get the end position of the riff grid track
-                            if let Some(track) = state.project().song().track(track_uuid.clone()) {
+                            if let Some(track) = project.song().track(track_uuid.clone()) {
                                 if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == track_riff_ref.linked_to()) {
                                     let riff_grid_track_end_position = track_riff_ref.position() + riff.length();
 
@@ -961,9 +963,9 @@ impl DAWUtils {
             Err(_) => {}
         }
 
-        match state.lock() {
-            Ok(mut state) => {
-                for track in state.get_project().song_mut().tracks_mut() {
+        match state.get_project().lock() {
+            Ok(mut project) => {
+                for track in project.song_mut().tracks_mut() {
                     if let Some(track_riff_refs) = tracks_riff_refs.get_mut(&track.uuid().to_string()) {
                         for track_riff_ref in track_riff_refs.iter() {
                             let riff_ref = RiffReference::new(track_riff_ref.linked_to(), track_riff_ref.position());
@@ -979,15 +981,15 @@ impl DAWUtils {
         position_in_beats + riff_grid_length
     }
 
-    pub fn copy_riff_arrangement_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) {
+    pub fn copy_riff_arrangement_to_position(uuid: String, position_in_beats: f64, state: &mut RiffDAWState) {
         struct ArrangementElement {
             uuid: String,
             element_type: RiffItemType,
         }
         let mut arrangement_elements = vec![];
-        match state.lock() {
-            Ok(state) => {
-                if let Some(riff_arrangement) = state.project().song().riff_arrangement(uuid) {
+        match state.project.lock() {
+            Ok(project) => {
+                if let Some(riff_arrangement) = project.song().riff_arrangement(uuid) {
                     for item in riff_arrangement.items() {
                         arrangement_elements.push(ArrangementElement {
                             uuid: item.item_uuid().to_string(),
@@ -1003,13 +1005,13 @@ impl DAWUtils {
         for element in arrangement_elements.iter() {
             match element.element_type {
                 RiffItemType::RiffSet => {
-                    running_position_in_beats = DAWUtils::copy_riff_set_to_position(element.uuid.clone(), running_position_in_beats, state.clone());
+                    running_position_in_beats = DAWUtils::copy_riff_set_to_position(element.uuid.clone(), running_position_in_beats, state);
                 }
                 RiffItemType::RiffSequence => {
-                    running_position_in_beats = DAWUtils::copy_riff_sequence_to_position(element.uuid.clone(), running_position_in_beats, state.clone());
+                    running_position_in_beats = DAWUtils::copy_riff_sequence_to_position(element.uuid.clone(), running_position_in_beats, state);
                 }
                 RiffItemType::RiffGrid => {
-                    running_position_in_beats = DAWUtils::copy_riff_grid_to_position(element.uuid.clone(), running_position_in_beats, state.clone());
+                    running_position_in_beats = DAWUtils::copy_riff_grid_to_position(element.uuid.clone(), running_position_in_beats, state);
                 }
             }
         }
@@ -1118,6 +1120,44 @@ impl DAWUtils {
             None
         }
     }
+
+    pub fn convert_i32_to_midi_polyphonic_expression_id(value: i32) -> MidiPolyphonicExpressionNoteId {
+        if value == -1 {
+            return MidiPolyphonicExpressionNoteId::ALL;
+        }
+        if value == 0 {
+            return MidiPolyphonicExpressionNoteId::NoteId0;
+        }
+        if value == 1 {
+            return MidiPolyphonicExpressionNoteId::NoteId1;
+        }
+        if value == 2 {
+            return MidiPolyphonicExpressionNoteId::NoteId2;
+        }
+        if value == 3 {
+            return MidiPolyphonicExpressionNoteId::NoteId3;
+        }
+        if value == 4 {
+            return MidiPolyphonicExpressionNoteId::NoteId4;
+        }
+        if value == 5 {
+            return MidiPolyphonicExpressionNoteId::NoteId5;
+        }
+        if value == 6 {
+            return MidiPolyphonicExpressionNoteId::NoteId6;
+        }
+        if value == 7 {
+            return MidiPolyphonicExpressionNoteId::NoteId7;
+        }
+        if value == 8 {
+            return MidiPolyphonicExpressionNoteId::NoteId8;
+        }
+        if value == 9 {
+            return MidiPolyphonicExpressionNoteId::NoteId9;
+        }
+
+        return MidiPolyphonicExpressionNoteId::NoteId10;
+    }
 }
 
 
@@ -1126,7 +1166,7 @@ mod tests {
     use uuid::Uuid;
     use log::*;
 
-    use crate::DAWUtils;
+    use crate::utils::DAWUtils;
     // use {DAWEventPosition, Riff, RiffReference, Track, TrackEvent, VstPluginParameter};
     use crate::domain::{Automation, AutomationEnvelope, DAWItemPosition, Measure, Note, NoteOff, NoteOn, PluginParameter, Riff, RiffReference, TrackEvent};
     use crate::event::TranslationEntityType::AudioPluginParameter;

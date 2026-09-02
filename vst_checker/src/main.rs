@@ -564,7 +564,7 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                     Err(_) => (),
                 }
             },
-            Err(_) => println!("Couldn't load library: {}", vst_plugin_path),
+            Err(error) => println!("Couldn't load library: error={}, path={}", error, vst_plugin_path),
         }
     }
 }

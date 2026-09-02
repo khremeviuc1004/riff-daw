@@ -1,9 +1,9 @@
-use std::{collections::HashMap, sync::{Arc, mpsc::Sender, Mutex}};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 use std::{path::Path};
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use crossbeam_channel::SendError;
+use std::sync::mpsc::Sender;
 use log::*;
 
 use pathsearch::find_executable_in_path;
@@ -35,17 +35,17 @@ pub fn create_vst24_audio_plugin(
     let mut path_buf = PathBuf::new();
     let mut path = Path::new(library_path.clone());
     let host = Arc::new(Mutex::new(VstHost::new(
-        track_uuid, 
+        track_uuid,
         match &sub_plugin_id {
             Some(shell_id) => match shell_id.parse::<isize>() {
                 Ok(shell_id) => Some(shell_id),
                 Err(_) => None,
             },
             None => None,
-        }, 
-        sender, 
-        vst_plugin_uuid, 
-        instrument, 
+        },
+        sender,
+        vst_plugin_uuid,
+        instrument,
         vst_host_time_info,
         tempo,
         time_signature_numerator as u32,
@@ -176,7 +176,7 @@ pub fn create_vst24_audio_plugin(
                 match instance.can_do(vst::prelude::CanDo::MidiSingleNoteTuningChange) {
                     vst::prelude::Supported::Yes => "Yes".to_string(),
                     vst::prelude::Supported::Maybe => "Maybe".to_string(),
-                    vst::prelude::Supported::No => "No".to_string(),                
+                    vst::prelude::Supported::No => "No".to_string(),
                     vst::prelude::Supported::Custom(custom) => format!("Custom: {}", custom),
                 },
                 match instance.can_do(vst::prelude::CanDo::MidiKeyBasedInstrumentControl) {
@@ -217,7 +217,7 @@ pub fn create_vst24_audio_plugin(
             panic!()
         },
     }
- }
+}
 
 pub fn create_vst3_audio_plugin(
     library_path: String,
@@ -252,7 +252,7 @@ pub fn create_vst3_audio_plugin(
     );
 }
 
- pub fn create_clap_audio_plugin(
+pub fn create_clap_audio_plugin(
     plugin_libraries: Arc<Mutex<HashMap<String, PluginLibrary>>>,
     audio_plugin_path: &str,
     _track_uuid: String,
@@ -265,7 +265,7 @@ pub fn create_vst3_audio_plugin(
     tempo: f64,
     time_signature_numerator: i32,
     time_signature_denominator: i32,
- ) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
+) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
     let path = Path::new(audio_plugin_path.clone());
 
     debug!("Loading {}...", path.to_str().unwrap());
@@ -289,20 +289,20 @@ pub fn create_vst3_audio_plugin(
                     };
                     plugin_library.unwrap()
                 };
-    
+
                 let (host_sender, host_receiver) = crossbeam_channel::unbounded();
                 let host = simple_clap_host_helper_lib::host::Host::new(host_sender);
-            
+
                 let plugin = if let Ok(plugin) = plugin_library.create_plugin(clap_plugin_id.as_str(), host) {
                     plugin
                 }
                 else {
                     panic!("Couldn't create the plugin.");
                 };
-            
-            
+
+
                 let _ = plugin.init();
-            
+
                 let audio_ports_config = match plugin.get_extension::<AudioPorts>() {
                     Some(audio_ports) => if let Ok(config) = audio_ports.config(&plugin) {
                         config
@@ -314,16 +314,16 @@ pub fn create_vst3_audio_plugin(
                         panic!("No 'audio-ports' found");
                     }
                 };
-            
+
                 // // host.handle_callbacks_once();
-            
+
                 let process_config = ProcessConfig {
                     sample_rate,
                     tempo,
                     time_sig_numerator: time_signature_numerator as u16,
                     time_sig_denominator: time_signature_denominator as u16,
                 };
-            
+
                 let (input_buffers, output_buffers) = audio_ports_config.create_buffers(block_size as usize);
                 let audio_buffers = if let Ok(buffers) = OutOfPlaceAudioBuffers::new(
                     input_buffers,
@@ -334,12 +334,12 @@ pub fn create_vst3_audio_plugin(
                 else {
                     panic!("Couldn't allocate audio buffers.");
                 };
-            
+
                 let _ = plugin.activate(sample_rate, 1, block_size as usize);
                 let _ = plugin.start_processing();
-            
+
                 let process_data = ProcessData::new(audio_buffers, process_config);
-            
+
                 return (plugin, process_data, host_receiver);
             }
             else {
@@ -350,14 +350,14 @@ pub fn create_vst3_audio_plugin(
     }
 }
 
-pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>, vst3_paths: &Vec<String>, tx_from_ui:  crossbeam_channel::Sender<DAWEvents>) -> (HashMap<String, String>, HashMap<String, String>) {
+pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>, vst3_paths: &Vec<String>) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut instrument_audio_plugins: HashMap<String, String> = HashMap::new();
     let mut effect_audio_plugins: HashMap<String, String> = HashMap::new();
 
     if let Some(vst24_checker) = find_executable_in_path(VST24_CHECKER_EXECUTABLE_NAME) {
         if let Some(vst24_checker) = vst24_checker.to_str() {
             for vst_path in vst_paths.iter() {
-                scan_for_audio_plugins_of_type(vst24_checker, vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins, &tx_from_ui);
+                scan_for_audio_plugins_of_type(vst24_checker, vst_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
             }
         }
     }
@@ -365,7 +365,7 @@ pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>,
     if let Some(clap_checker) = find_executable_in_path(CLAP_CHECKER_EXECUTABLE_NAME) {
         if let Some(clap_checker) = clap_checker.to_str() {
             for clap_path in clap_paths.iter() {
-                scan_for_audio_plugins_of_type(clap_checker, clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins, &tx_from_ui);
+                scan_for_audio_plugins_of_type(clap_checker, clap_path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
             }
         }
     }
@@ -373,7 +373,7 @@ pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>,
     if let Some(vst3_checker) = find_executable_in_path(VST3_CHECKER_EXECUTABLE_NAME) {
         if let Some(vst3_checker) = vst3_checker.to_str() {
             for path in vst3_paths.iter() {
-                scan_for_audio_plugins_of_type(vst3_checker, path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins, &tx_from_ui);
+                scan_for_audio_plugins_of_type(vst3_checker, path.as_str(), &mut instrument_audio_plugins, &mut effect_audio_plugins);
             }
         }
     }
@@ -382,11 +382,10 @@ pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>,
 }
 
 pub fn scan_for_audio_plugins_of_type(
-    audio_plugin_checker: &str, 
-    shared_library_path: &str, 
-    instrument_audio_plugins: &mut HashMap<String, String>, 
+    audio_plugin_checker: &str,
+    shared_library_path: &str,
+    instrument_audio_plugins: &mut HashMap<String, String>,
     effect_audio_plugins: &mut HashMap<String, String>,
-    tx_from_ui:  &crossbeam_channel::Sender<DAWEvents>
 ) {
     if let Ok(read_dir) = std::fs::read_dir(shared_library_path) {
         for dir_entry in read_dir {
@@ -395,11 +394,11 @@ pub fn scan_for_audio_plugins_of_type(
                     if let Ok(file_type) = entry.file_type() {
                         if file_type.is_file() || file_type.is_symlink() {
                             debug!("Found shared library: {}", path);
-                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string(), tx_from_ui);
+                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string());
                         }
                         else if file_type.is_dir() && path.ends_with(".vst3") && audio_plugin_checker.ends_with(VST3_CHECKER_EXECUTABLE_NAME) {
                             debug!("Found vst3 library: {}", path);
-                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string(), tx_from_ui);
+                            do_plugin_check(audio_plugin_checker, instrument_audio_plugins, effect_audio_plugins, path.to_string());
                         }
                     }
                 }
@@ -413,10 +412,8 @@ fn do_plugin_check(
     instrument_audio_plugins: &mut HashMap<String, String>,
     effect_audio_plugins: &mut HashMap<String, String>,
     plugin_path: String,
-    tx_from_ui:  &crossbeam_channel::Sender<DAWEvents>
 ) {
     let update_message = format!("Scanning: {}", plugin_path.as_str());
-    let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage(update_message));
 
     if let Ok(child) = Command::new(audio_plugin_checker)
         .arg(plugin_path.as_str())

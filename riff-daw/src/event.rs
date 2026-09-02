@@ -2,19 +2,21 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-
+use std::sync::mpsc::Sender;
 use jack::{MidiOut, Port};
 use rb::{Consumer, Producer, SpscRb};
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
 use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
-use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost};
-use crate::state::{MidiPolyphonicExpressionNoteId};
+use crate::{};
+use crate::constants::BLOCK_SIZE_MAX;
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, MidiConsumerDetails, SampleData, Riff, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost, AudioMode};
+use crate::state::MidiPolyphonicExpressionNoteId;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum CurrentView {
     Track,
     RiffSet,
@@ -23,7 +25,7 @@ pub enum CurrentView {
     RiffArrangement,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum NotificationType {
     Info,
     Warning,
@@ -32,7 +34,7 @@ pub enum NotificationType {
     Other,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ShowType {
     Velocity,
     NoteExpression,
@@ -42,13 +44,13 @@ pub enum ShowType {
     EffectParameter,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum AutomationEditType {
     Track,
     Riff,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum LoopChangeType {
     LoopOn,
     LoopOff,
@@ -60,7 +62,7 @@ pub enum LoopChangeType {
     NameChanged(String), // new loop name
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum OperationModeType {
     Add,
     Delete,
@@ -72,7 +74,7 @@ pub enum OperationModeType {
     WindowedZoom,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TranslateDirection {
     Up,
     Down,
@@ -80,7 +82,7 @@ pub enum TranslateDirection {
     Right,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TranslationEntityType {
     ActiveSense,
     AfterTouch,
@@ -97,7 +99,7 @@ pub enum TranslationEntityType {
     Any,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum GeneralTrackType {
     InstrumentTrack,
     AudioTrack,
@@ -105,22 +107,22 @@ pub enum GeneralTrackType {
     MasterTrack,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum NoteExpressionData {
     Type(NoteExpressionType),
-    NoteId(i32), 
-    PortIndex(i32), 
-    Channel(i32), 
+    NoteId(i32),
+    PortIndex(i32),
+    Channel(i32),
     Key(i32),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum AutomationChangeData {
     ParameterType(i32),
-    NoteExpression(NoteExpressionData), 
+    NoteExpression(NoteExpressionData),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum RiffGridChangeType {
     RiffReferenceAdd{ track_index: i32, position: f64 },
     RiffReferenceDragCopy(Vec<(f64, String)>), // position: f64, original_riff_ref_uuid: String
@@ -139,7 +141,7 @@ pub enum RiffGridChangeType {
     RiffSelectWithTrackIndex{ track_index: i32, position: f64 },
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TrackChangeType {
     Added(GeneralTrackType),
     Deleted,
@@ -175,7 +177,7 @@ pub enum TrackChangeType {
     TrackColourChanged(f64, f64, f64, f64), // red, green, blue, alpha
     RiffColourChanged(String, f64, f64, f64, f64), // uuid, red, green, blue, alpha
 
-    RiffAdd(Uuid, String, f64),     // uuid, name, length
+    RiffAdd(String, String, f64),     // uuid, name, length
     RiffAddWithTrackIndex(String, f64, i32),     // uuid, length, track index
     RiffCopy(String, Uuid, String), // uuid to copy, uuid, name
     RiffDelete(String),             // riff uuid
@@ -246,7 +248,7 @@ pub enum TrackChangeType {
     UpdateTrackDetails,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum TransportChangeType {
     GotoStart,
     Rewind,
@@ -257,6 +259,25 @@ pub enum TransportChangeType {
     GotoEnd,
     Pause,
     SampleRate,
+}
+
+pub enum  AudioLayerEvent {
+    AudioLayerInward(AudioLayerInwardEvent),
+    AudioLayerOutward(AudioLayerOutwardEvent),
+    AudioLayerTimeCriticalOutwardEvent(AudioLayerTimeCriticalOutwardEvent),
+    TrackBackgroundProcessorInward(TrackBackgroundProcessorInwardEvent, String), // event, uuid
+    TrackBackgroundProcessorOutward(String, TrackBackgroundProcessorOutwardEvent),
+    AddTrackBackgroundProcessor(GeneralTrackType, String),
+    DeleteTrackBackgroundProcessor(String),
+    SelectTrackBackgroundProcessor(String),
+    AudioMode(AudioMode),
+    Shutdown,
+}
+
+impl Debug for AudioLayerEvent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
 }
 
 pub enum AudioLayerInwardEvent {
@@ -274,6 +295,9 @@ pub enum AudioLayerInwardEvent {
     RemoveTrack(String),                           // track uuid
     NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
 
+    TrackBackgroundProcessorSender(String, Sender<TrackBackgroundProcessorInwardEvent>), // track_uuid
+    SelectTrackBackgroundProcessor(String), // track_uuid
+
     PreviewSample(String), // absolute path sample file name
 }
 
@@ -282,7 +306,7 @@ pub enum EventProcessorType {
     BlockEventProcessor,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum DAWEvents {
     NewFile,
     Notification(NotificationType, String),
@@ -423,6 +447,8 @@ pub enum DAWEvents {
     RunLuaScript(String), // Lua script text
 
     TrackGridVerticalScaleChanged(f64), // scale
+    TrackGridEditCursorPositionChanged(f64), // in beats
+
     RiffGridVerticalScaleChanged(f64), // scale
 
     Shutdown,
@@ -436,6 +462,8 @@ pub enum DAWEvents {
     RepaintRiffSequencesBox,
 
     AudioConfigurationChanged(i32, i32),
+
+    Noop,
 }
 
 pub enum TrackBackgroundProcessorInwardEvent {
@@ -468,7 +496,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         String,
     ), // vst24 plugin loaders map, clap plugin loaders map, window id, effect uuid, absolute path to shared library (details - includes shell plugin id if exists)
     DeleteEffect(String),           // effect uuid,
-    SetEffectWindowId(String, u32), // effect uuid, window id
+    ShowEffect(String), // effect uuid
 
     ChangeInstrument(
         Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
@@ -476,7 +504,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         Uuid,
         String,
     ), // vst24 plugin loaders map, clap plugin loaders map, window id, instrument uuid, absolute path to shared library (details - includes shell plugin id if exists)
-    SetInstrumentWindowId(u32),
+    ShowInstrument,
     SetInstrumentParameter(i32, f32), // parameter index, value
 
     SetPresetData(String, Vec<String>), // instrument preset data, vector of effect preset data
@@ -496,7 +524,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
 
     Volume(f32), // volume
     Pan(f32),    // pan
-    
+
     Tempo(f64),
     TimeSignatureChange(u32, u32),
 
@@ -517,7 +545,7 @@ pub enum TrackBackgroundProcessorOutwardEvent {
     InstrumentParameters(Vec<(i32, String, Uuid, String, String, f32, String)>), // param index, track uuid, instrument uuid, param name, param label, param value, param text
     InstrumentName(String),
     EffectParameters(Vec<(String, i32, String, String, f32, String)>), // vector of plugin uuid, param index, param name, param label, param value, param text
-    GetPresetData(String, Vec<String>),
+    GetPresetData(String, Vec<String>), // instrument preset data, effects preset data
     InstrumentPluginWindowSize(String, i32, i32), // track uuid, width, height
     EffectPluginWindowSize(String, String, i32, i32), // track uuid, plugin uuid, width, height
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0
@@ -544,7 +572,7 @@ pub enum AudioPluginHostOutwardEvent {
     SizeWindow(String, String, bool, i32, i32), // track uuid, audio plugin uuid, is instrument, width, height
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MasterChannelChangeType {
     VolumeChange(f64), // volume
     PanChange(f64),    // pan

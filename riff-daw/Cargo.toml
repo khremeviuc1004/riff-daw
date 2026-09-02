@@ -1,13 +1,20 @@
 [package]
 name = "riff-daw"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-gladis = "1.0.1"
-gdk = "0.14.3"
-gtk = "0.14.3"
-gio = "0.14.3"
+masonry = "0.4.0"
+masonry_core = "0.4.0"
+masonry_winit = "0.4.0"
+xilem = "0.4.0"
+xilem_core = "0.4.0"
+tracing = "0.1.41"
+vello = "0.6.0"
+vello_svg = "0.8.0"
+image = "0.25.8"
+rtrb = "0.2"
+raw-window-handle = "0.4"
 serde = { version = "1.0.132", features = ["derive"] }
 serde_json = { version = "1.0.73", features = ["preserve_order"] }
 cairo-rs = "0.14.9"
@@ -45,6 +52,15 @@ state = "0.6.0"
 cxx = "1.0.136"
 widestring = "1.1.0"
 rayon = "1.10.0"
+xcb = "1.7.0"
+rfd = "0.17.2"
+audrey = "0.3.0" #reads/writes multiple audio file formats
+vst3-host = "0.5.0"
+dawproject = "0.10.3"
+
+[dev-dependencies]
+masonry = { version = "0.4.0", features = ["testing"] }
+
 
 [build-dependencies]
 cxx-build = "1.0.136"
@@ -57,3 +73,7 @@ codegen-units = 1
 lto = true
 # lto = "thin"
 opt-level = 2
+# One debuginfo file per dependency, to reduce file size of tests/examples.
+# Note that this value is not supported on Windows.
+# See https://doc.rust-lang.org/cargo/reference/profiles.html#split-debuginfo
+split-debuginfo="unpacked"

@@ -6,24 +6,24 @@ use itertools::Itertools;
 use log::*;
 use uuid::Uuid;
 
-use crate::domain::{DAWItemLength, DAWItemID, Riff};
-use crate::{DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent};
+use crate::domain::{DAWItemLength, DAWItemID, Riff, DAWItemPosition, Note, PlayMode, Track, TrackEvent};
 use crate::event::{DAWEvents, TrackChangeType, TranslateDirection, TranslationEntityType};
+use crate::state::RiffDAWState;
 use crate::utils::DAWUtils;
 
 /// Command pattern variation with undo
 /// Memento pattern not used to hold state - a bit heavy
 pub trait HistoryAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String>;
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String>;
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String>;
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String>;
 
-    fn check_riff_changed_and_playing(&self, riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>, riff_changed: bool) {
+    fn check_riff_changed_and_playing(&self, riff_uuid: String, state: &mut RiffDAWState, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>, riff_changed: bool) {
         if riff_changed && playing {
             self.play_riff_set_update_track(riff_uuid, state, track_uuid, play_mode, playing_riff_set)
         }
     }
 
-    fn play_riff_set_update_track(&self, _riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, play_mode: PlayMode, playing_riff_set: Option<String>) {
+    fn play_riff_set_update_track(&self, _riff_uuid: String, state: &mut RiffDAWState, track_uuid: String, play_mode: PlayMode, playing_riff_set: Option<String>) {
         match play_mode {
             PlayMode::Song => {}
             PlayMode::RiffSet => {
@@ -38,30 +38,23 @@ pub trait HistoryAction {
         }
     }
 
-    fn check_playing(&self, riff_uuid: String, state: &mut MutexGuard<DAWState>, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>) {
+    fn check_playing(&self, riff_uuid: String, state: &mut RiffDAWState, track_uuid: String, playing: bool, play_mode: PlayMode, playing_riff_set: Option<String>) {
         if playing {
             self.play_riff_set_update_track(riff_uuid, state, track_uuid, play_mode, playing_riff_set)
         }
     }
 }
 
-fn get_selected_track_riff_uuid(state: &mut Arc<Mutex<DAWState>>) -> (Option<String>, Option<String>) {
+fn get_selected_track_riff_uuid(state: &mut RiffDAWState) -> (Option<String>, Option<String>) {
     let mut selected_riff_uuid = None;
-    let mut selected_riff_track_uuid = None;
+    let mut selected_riff_track_uuid = state.selected_track().clone();
 
-    match state.lock() {
-        Ok(state) => {
-            selected_riff_track_uuid = state.selected_track();
-
-            match selected_riff_track_uuid {
-                Some(track_uuid) => {
-                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
-                    selected_riff_track_uuid = Some(track_uuid);
-                },
-                None => (),
-            }
+    match selected_riff_track_uuid {
+        Some(track_uuid) => {
+            selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
+            selected_riff_track_uuid = Some(track_uuid);
         },
-        Err(_) => debug!("could not get lock on state"),
+        None => (),
     }
     (selected_riff_uuid, selected_riff_track_uuid)
 }
@@ -71,6 +64,8 @@ pub struct HistoryManager {
     head_index: i32,
 }
 
+unsafe impl Send for HistoryManager {}
+
 impl HistoryManager {
     pub fn new() -> Self {
         Self {
@@ -79,7 +74,7 @@ impl HistoryManager {
         }
     }
 
-    pub fn apply(&mut self, state: &mut Arc<Mutex<DAWState>>, mut action: Box<dyn HistoryAction>) -> Result<Vec<DAWEvents>, String> {
+    pub fn apply(&mut self, state: &mut RiffDAWState, mut action: Box<dyn HistoryAction>) -> Result<Vec<DAWEvents>, String> {
         debug!("History - apply: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         if self.head_index >= 0 && !self.history.is_empty() && (self.head_index as usize) != (self.history.len() - 1) {
             // delete everything above the head_index
@@ -93,7 +88,7 @@ impl HistoryManager {
         result
     }
 
-    pub fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    pub fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         debug!("History - undo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // decrement the current top of the history
         if self.history.len() > self.head_index as usize && self.head_index >= 0 {
@@ -112,7 +107,7 @@ impl HistoryManager {
         }
     }
 
-    pub fn redo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    pub fn redo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         debug!("History - redo: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
         // get the current top of the history
         if self.head_index == -1 || ((self.head_index as usize) < (self.history.len() - 1)) {
@@ -149,7 +144,7 @@ impl RiffAddNoteAction {
         note: i32,
         velocity: i32,
         duration: f64,
-        state: &mut Arc<Mutex<DAWState>>
+        state: &mut RiffDAWState
     ) -> Self {
         let (riff_id, track_id) = get_selected_track_riff_uuid(state);
         Self {
@@ -200,9 +195,9 @@ unsafe impl Send for RiffAddNoteAction {
 }
 
 impl HistoryAction for RiffAddNoteAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
                 let track_id = self.track_id().clone();
                 let riff_id = self.riff_id().clone();
@@ -214,7 +209,7 @@ impl HistoryAction for RiffAddNoteAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                        for track in project.song_mut().tracks_mut().iter_mut() {
                             if track.uuid().to_string() == *track_uuid {
                                 match riff_id {
                                     Some(riff_uuid) => {
@@ -229,8 +224,8 @@ impl HistoryAction for RiffAddNoteAction {
 
                                                         note.note() == self.note() && (
                                                             (current_note_start <= new_note_start && new_note_start <= current_note_end) ||
-                                                            (current_note_start <= new_note_end && new_note_end <= current_note_end) ||
-                                                            (new_note_start < current_note_start && current_note_end < new_note_end)
+                                                                (current_note_start <= new_note_end && new_note_end <= current_note_end) ||
+                                                                (new_note_start < current_note_start && current_note_end < new_note_end)
                                                         )
                                                     }
                                                     else {
@@ -268,18 +263,16 @@ impl HistoryAction for RiffAddNoteAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
-                let mut state = state;
-
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_id() {
                     Some(track_uuid) => {
                         let playing = state.playing();
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                        for track in project.song_mut().tracks_mut().iter_mut() {
                             if track.uuid().to_string() == *track_uuid {
                                 match self.riff_id() {
                                     Some(riff_uuid) => {
@@ -290,7 +283,7 @@ impl HistoryAction for RiffAddNoteAction {
                                                     _ => true,
                                                 });
 
-                                                self.check_playing(riff_uuid.clone(), &mut state, track_uuid.clone(), playing, play_mode, playing_riff_set);
+                                                self.check_playing(riff_uuid.clone(), state, track_uuid.clone(), playing, play_mode, playing_riff_set);
                                                 break;
                                             }
                                         }
@@ -331,7 +324,7 @@ impl RiffDeleteNoteAction {
     pub fn new(
         position: f64,
         note: i32,
-        state: &mut Arc<Mutex<DAWState>>
+        state: &mut RiffDAWState
     ) -> Self {
         let (riff_id, track_id) = get_selected_track_riff_uuid(state);
         Self {
@@ -360,9 +353,9 @@ impl RiffDeleteNoteAction {
 }
 
 impl HistoryAction for RiffDeleteNoteAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
                 let track_id = self.track_id.clone();
                 let riff_id = self.riff_id.clone();
@@ -374,7 +367,7 @@ impl HistoryAction for RiffDeleteNoteAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                        for track in project.song_mut().tracks_mut().iter_mut() {
                             if track.uuid().to_string() == track_uuid {
                                 match riff_id {
                                     Some(riff_uuid) => {
@@ -428,9 +421,9 @@ impl HistoryAction for RiffDeleteNoteAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
 
                 match self.track_id.clone() {
@@ -442,7 +435,7 @@ impl HistoryAction for RiffDeleteNoteAction {
 
                         match self.riff_id.clone() {
                             Some(riff_uuid) => {
-                                for track in state.get_project().song_mut().tracks_mut().iter_mut() {
+                                for track in project.song_mut().tracks_mut().iter_mut() {
                                     if track.uuid().to_string() == track_uuid {
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
@@ -483,6 +476,10 @@ pub struct RiffCutSelectedAction {
     riff_uuid: Option<String>,
 }
 
+unsafe impl Send for RiffCutSelectedAction {
+
+}
+
 impl RiffCutSelectedAction {
     pub fn new(
         track_uuid: Option<String>,
@@ -499,16 +496,16 @@ impl RiffCutSelectedAction {
 }
 
 impl HistoryAction for RiffCutSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(mut state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(mut project) => {
                 match self.track_uuid.clone() {
                     Some(track_uuid) => {
                         let playing = state.playing();
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -550,7 +547,7 @@ impl HistoryAction for RiffCutSelectedAction {
                                             }
                                         }
 
-                                        self.check_riff_changed_and_playing(riff_uuid, &mut state, track_uuid, playing, play_mode, playing_riff_set, riff_changed);
+                                        self.check_riff_changed_and_playing(riff_uuid, state, track_uuid, playing, play_mode, playing_riff_set, riff_changed);
 
                                         if riff_changed {
                                             state.dirty = true;
@@ -571,16 +568,16 @@ impl HistoryAction for RiffCutSelectedAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(mut state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_uuid.clone() {
                     Some(track_uuid) => {
                         let playing = state.playing();
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -597,7 +594,7 @@ impl HistoryAction for RiffCutSelectedAction {
                                             }
                                         }
 
-                                        self.check_riff_changed_and_playing(riff_uuid, &mut state, track_uuid, playing, play_mode, playing_riff_set, riff_changed);
+                                        self.check_riff_changed_and_playing(riff_uuid, state, track_uuid, playing, play_mode, playing_riff_set, riff_changed);
 
                                         if riff_changed {
                                             state.dirty = true;
@@ -630,6 +627,10 @@ pub struct RiffTranslateSelectedAction {
     tempo: f64,
 }
 
+unsafe impl Send for RiffTranslateSelectedAction {
+
+}
+
 impl RiffTranslateSelectedAction {
     pub fn new(
         track_uuid: Option<String>,
@@ -653,11 +654,11 @@ impl RiffTranslateSelectedAction {
 }
 
 impl HistoryAction for RiffTranslateSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 if self.tempo < 0.0 {
-                    self.tempo = state.project().song().tempo();
+                    self.tempo = project.song().tempo();
                 }
 
                 let mut state = state;
@@ -670,7 +671,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -752,9 +753,9 @@ impl HistoryAction for RiffTranslateSelectedAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
                 let snap_position_in_secs = self.snap_in_beats / self.tempo * 60.0;
 
@@ -765,7 +766,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -858,6 +859,10 @@ pub struct RiffChangeLengthOfSelectedAction {
     tempo: f64,
 }
 
+unsafe impl Send for RiffChangeLengthOfSelectedAction {
+
+}
+
 impl RiffChangeLengthOfSelectedAction {
     pub fn new(
         track_uuid: Option<String>,
@@ -879,11 +884,11 @@ impl RiffChangeLengthOfSelectedAction {
 }
 
 impl HistoryAction for RiffChangeLengthOfSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 if self.tempo < 0.0 {
-                    self.tempo = state.project().song().tempo();
+                    self.tempo = project.song().tempo();
                 }
 
                 let mut state = state;
@@ -896,7 +901,7 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -944,9 +949,9 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
                 let length_increment_in_secs = self.length_increment_in_beats / self.tempo * 60.0;
 
@@ -957,7 +962,7 @@ impl HistoryAction for RiffChangeLengthOfSelectedAction {
                         let playing_riff_set = state.playing_riff_set().clone();
                         let mut riff_changed = false;
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.clone() {
                                     Some(riff_uuid) => {
@@ -1011,6 +1016,10 @@ pub struct RiffPasteSelectedAction {
     riff_uuid: Option<String>,
 }
 
+unsafe impl Send for RiffPasteSelectedAction {
+
+}
+
 impl RiffPasteSelectedAction {
     pub fn new(
         track_uuid: Option<String>,
@@ -1027,9 +1036,9 @@ impl RiffPasteSelectedAction {
 }
 
 impl HistoryAction for RiffPasteSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut copy_buffer: Vec<TrackEvent> = vec![];
                 let mut pasted_events_buffer: Vec<Note> = vec![];
 
@@ -1052,7 +1061,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
@@ -1085,7 +1094,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                                                         TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffPasteSelectedNotes Sample not yet implemented!"),
                                                         TrackEvent::Measure(_) => {}
                                                         TrackEvent::NoteExpression(_) => {}
-                                                        
+
                                                     }
                                                 });
                                                 break;
@@ -1116,9 +1125,9 @@ impl HistoryAction for RiffPasteSelectedAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(mut state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
 
                 match self.track_uuid.as_ref() {
                     Some(track_uuid) => {
@@ -1126,7 +1135,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
@@ -1143,7 +1152,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                                             state.dirty = true;
                                         }
 
-                                        self.check_riff_changed_and_playing(riff_uuid.to_string(), &mut state, track_uuid.to_string(), playing, play_mode, playing_riff_set, riff_changed);
+                                        self.check_riff_changed_and_playing(riff_uuid.to_string(), state, track_uuid.to_string(), playing, play_mode, playing_riff_set, riff_changed);
                                     },
                                     None => debug!("Main - rx_ui processing loop - riff undo paste selected - problem getting selected riff index"),
                                 }
@@ -1172,6 +1181,10 @@ pub struct RiffQuantiseSelectedAction {
     snap_end: bool,
 }
 
+unsafe impl Send for RiffQuantiseSelectedAction {
+
+}
+
 impl RiffQuantiseSelectedAction {
     pub fn new(
         riff_event_uuids: Vec<String>,
@@ -1197,9 +1210,9 @@ impl RiffQuantiseSelectedAction {
 }
 
 impl HistoryAction for RiffQuantiseSelectedAction {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
 
                 match self.track_uuid.as_ref() {
@@ -1208,7 +1221,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
@@ -1279,9 +1292,9 @@ impl HistoryAction for RiffQuantiseSelectedAction {
         Ok(vec![])
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
-        match state.lock() {
-            Ok(state) => {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 let mut state = state;
 
                 match self.track_uuid.as_ref() {
@@ -1290,7 +1303,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                         let play_mode = state.play_mode();
                         let playing_riff_set = state.playing_riff_set().clone();
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
@@ -1384,7 +1397,7 @@ impl RiffAdd {
         id: Uuid,
         name: String,
         duration: f64,
-        state: &mut Arc<Mutex<DAWState>>
+        state: &mut RiffDAWState
     ) -> Self {
         let (_, track_id) = get_selected_track_riff_uuid(state);
         Self {
@@ -1399,7 +1412,6 @@ impl RiffAdd {
         id: Uuid,
         name: String,
         duration: f64,
-        state: &mut Arc<Mutex<DAWState>>,
         track_id: Option<String>,
     ) -> Self {
         Self {
@@ -1414,17 +1426,17 @@ impl RiffAdd {
 unsafe impl Send for RiffAdd {}
 
 impl HistoryAction for RiffAdd {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         let mut daw_events_to_propagate = vec![];
 
-        match state.lock() {
-            Ok(mut state) => {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_id.clone() {
                     Some(track_uuid) => {
                         state.set_selected_track(Some(track_uuid.clone()));
                         state.set_selected_riff_uuid(track_uuid.clone(), self.id.to_string());
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 track.riffs_mut().push(Riff::new_with_name_and_length(self.id.clone(), self.name.clone(), self.duration));
                                 state.set_dirty(true);
@@ -1442,17 +1454,17 @@ impl HistoryAction for RiffAdd {
         Ok(daw_events_to_propagate)
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         let mut daw_events_to_propagate = vec![];
 
-        match state.lock() {
-            Ok(mut state) => {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_id.clone() {
                     Some(track_uuid) => {
                         state.set_selected_track(Some(track_uuid.clone()));
                         state.set_selected_riff_uuid(track_uuid.clone(), self.id.to_string());
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 track.riffs_mut().retain(|riff| riff.id() != self.id.to_string().clone());
                                 daw_events_to_propagate.push(DAWEvents::TrackChange(TrackChangeType::UpdateTrackDetails, Some(track_uuid)));
@@ -1494,17 +1506,17 @@ impl RiffDelete {
 unsafe impl Send for RiffDelete {}
 
 impl HistoryAction for RiffDelete {
-    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    fn execute(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         let mut daw_events_to_propagate = vec![];
 
-        match state.lock() {
-            Ok(mut state) => {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_id.clone() {
                     Some(track_uuid) => {
                         state.set_selected_track(Some(track_uuid.clone()));
                         state.set_selected_riff_uuid(track_uuid.clone(), self.id.to_string());
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 // get the riff index
 
@@ -1533,17 +1545,17 @@ impl HistoryAction for RiffDelete {
         Ok(daw_events_to_propagate)
     }
 
-    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+    fn undo(&mut self, state: &mut RiffDAWState) -> Result<Vec<DAWEvents>, String> {
         let mut daw_events_to_propagate = vec![];
 
-        match state.lock() {
-            Ok(mut state) => {
+        match state.get_project().lock().as_mut() {
+            Ok(project) => {
                 match self.track_id.clone() {
                     Some(track_uuid) => {
                         state.set_selected_track(Some(track_uuid.clone()));
                         state.set_selected_riff_uuid(track_uuid.clone(), self.id.to_string());
 
-                        match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                        match project.song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 if let Some(riff) = self.riff.take() {
                                     track.riffs_mut().push(riff);

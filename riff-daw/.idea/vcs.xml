@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$/.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/simple-clap-host-helper-lib" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst-rs" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/base" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/cmake" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/doc" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/pluginterfaces" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/public.sdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/tutorials" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../lib/vst3sdk/vstgui4" vcs="Git" />
+  </component>
+</project>

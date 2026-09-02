@@ -374,6 +374,7 @@ impl AudioLayerManager {
                 AudioLayerEvent::Shutdown => {
                     println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ audio layer manager - shutdown audio layer");
                     self.audio_layer.stop_jack();
+                    return false;
                 }
                 AudioLayerEvent::AudioMode(audio_mode_value) => {
                     println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ audio layer manager - audio mode");

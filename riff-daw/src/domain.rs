@@ -6030,6 +6030,10 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 loop {
                     track_background_processor_helper.handle_incoming_events();
 
+                    if !track_background_processor_helper.keep_alive {
+                        break;
+                    }
+
                     if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
                         track_background_processor_helper.refresh_instrument_plugin_editor();
                         track_background_processor_helper.refresh_effect_plugin_editors();
@@ -6345,6 +6349,11 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                 loop {
                     track_background_processor_helper.handle_incoming_events();
+
+                    if !track_background_processor_helper.keep_alive {
+                        break;
+                    }
+
                     track_background_processor_helper.process_audio_events();
                     track_background_processor_helper.refresh_effect_plugin_editors();
                     track_background_processor_helper.handle_request_plugin_preset_data();
@@ -6548,6 +6557,11 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
 
                 loop {
                     track_background_processor_helper.handle_incoming_events();
+
+                    if !track_background_processor_helper.keep_alive {
+                        break;
+                    }
+
                     // track_background_processor_helper.dump_play_info();
                     track_background_processor_helper.process_jack_midi_out_events(&mut producer_midi);
                 } // end loop

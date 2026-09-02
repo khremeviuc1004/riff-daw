@@ -40,7 +40,7 @@ use masonry::kurbo::{Point, Rect, Size, Vec2};
 use masonry::peniko::Color;
 use masonry::util::fill_color;
 use masonry::vello::Scene;
-use xilem::core::{MessageContext, MessageResult, Mut, View, ViewMarker};
+use xilem::core::{MessageContext, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, label};
 use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, Pod, ViewCtx, WidgetView, WindowOptions, Xilem};
@@ -435,6 +435,14 @@ pub struct SyncedScroll<State, Action, V> {
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
+/// Routing id for this view's child content. `message` consumes one path
+/// element (via `take_first`) to distinguish child messages from this view's
+/// own `Scrolled` actions, so `build` must push the matching id around the
+/// child. Without it every descendant's recorded id path is one element too
+/// short, and message routing into nested sequences (e.g. the track panel's
+/// `Vec` of rows) reads a stale index and panics.
+const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
+
 /// A two-axis scroll area around `child`, synchronised per axis through the app state.
 ///
 /// The horizontal axis reads from and writes to the state variable `x_var`
@@ -477,7 +485,8 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child, child_state) = self.child.build(ctx, app_state);
+        let (child, child_state) =
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.child.build(ctx, app_state));
         let element = ctx.with_action_widget(|_| Pod::new(SyncScrollArea::new(child.new_widget)));
         (element, child_state)
     }

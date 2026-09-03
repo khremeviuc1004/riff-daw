@@ -269,6 +269,11 @@ fn app_logic(data: &mut RiffDAWState) -> impl Iterator<Item = WindowView<RiffDAW
         )
             .with_options(|o| o.on_close(|state: &mut RiffDAWState| {
                 state.running = false;
+                state.configuration.bookmark_paths = state.file_dialog.bookmarks.items
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect();
+                state.configuration.save();
                 if let Some(sender) = state.audio_layer_sender.as_mut() {
                     let _ = sender.send(AudioLayerEvent::Shutdown);
                 }

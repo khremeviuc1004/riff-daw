@@ -118,7 +118,7 @@ fn check_audio_plugin(audio_plugin_path: &str) {
                                                     ptr = ptr.offset(1);
                                                 }
         
-                                                println!("##########{}:{}:{}:{}:CLAP", plugin_name, audio_plugin_path, CStr::from_ptr(plugin_descriptor_ref.id).to_str().unwrap(), plugin_type);
+                                                println!("##########{}:{}:{}:{}::CLAP", plugin_name, audio_plugin_path, CStr::from_ptr(plugin_descriptor_ref.id).to_str().unwrap(), plugin_type);
 
                                                 (plugin_descriptor_ref.id, plugin_name, plugin_type)
                                             }

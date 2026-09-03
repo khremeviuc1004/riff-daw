@@ -24,7 +24,7 @@ vst = { path = "../lib/vst-rs" }
 simple-clap-host-helper-lib = { path = "../lib/simple-clap-host-helper-lib" }
 uuid = { version = "0.8.2", features = ["serde", "v4"] }
 thread-priority = "0.7.0"
-base64 = "0.13.0"
+base64 = "0.22.1"
 regex = "1.5.5"
 apres = "0.3.1"
 itertools = "0.10.2"
@@ -56,7 +56,7 @@ xcb = "1.7.0"
 rfd = "0.17.2"
 audrey = "0.3.0" #reads/writes multiple audio file formats
 vst3-host = "0.5.0"
-dawproject = "0.10.3"
+dawproject = "0.11.0"
 
 [dev-dependencies]
 masonry = { version = "0.4.0", features = ["testing"] }

@@ -4,11 +4,12 @@ use xilem_core::MessageResult;
 use masonry::properties::types::AsUnit;
 use masonry_winit::app::WindowId;
 use crate::actions::{daw_events_ExportMidiFile, daw_events_ExportRiffsToMidiFile, daw_events_ExportRiffsToSeparateMidiFiles, daw_events_ExportWaveFile, daw_events_ImportDAWProjectFile, daw_events_ImportMidiFile, daw_events_NewFile, daw_events_OpenFile, daw_events_Save, daw_events_SaveAs};
-use crate::icons::{ICON_DATABASE_EXPORT, ICON_DEVICE_FLOPPY, ICON_FILE_DOWNLOAD, ICON_FILE_EXPORT, ICON_FILE_IMPORT, ICON_FILE_PLUS, ICON_FOLDER_OPEN, ICON_PACKAGE_EXPORT, ICON_TABLE_EXPORT};
+use crate::dawproject_parser::{parse_dawproject, write_dawproject};
 use crate::state::RiffDAWState;
 use crate::views::{icon, DialogMode, Icon};
+use crate::icons::{ICON_DATABASE_EXPORT, ICON_DEVICE_FLOPPY, ICON_FILE_DOWNLOAD, ICON_FILE_EXPORT, ICON_FILE_IMPORT, ICON_FILE_PLUS, ICON_FOLDER_OPEN, ICON_PACKAGE_EXPORT, ICON_SETTINGS_COG, ICON_TABLE_EXPORT};
 
-pub fn file_toolbar() -> Flex<(Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>), RiffDAWState> {
+pub fn file_toolbar() -> Flex<(Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>, Button<impl Fn(&mut RiffDAWState, Option<PointerButton>) -> MessageResult<()> + Send, Icon>), RiffDAWState> {
     flex_row((
         button(icon(ICON_FILE_PLUS.to_string()), |state: &mut RiffDAWState| {
             daw_events_NewFile(state);
@@ -50,18 +51,6 @@ pub fn file_toolbar() -> Flex<(Button<impl Fn(&mut RiffDAWState, Option<PointerB
 
             if let Some(path) = res {
                 daw_events_ImportMidiFile(state, path.as_os_str().to_os_string().into_string().unwrap());
-            }
-        }),
-        button(icon(ICON_FILE_IMPORT.to_string()), |state: &mut RiffDAWState| {
-            let path = std::env::current_dir().unwrap();
-            let res = rfd::FileDialog::new()
-                .set_title("Import DAWProject File")
-                .add_filter("DAWProject", &["dawproject"])
-                .set_directory(&path)
-                .pick_file();
-
-            if let Some(path) = res {
-                daw_events_ImportDAWProjectFile(state, path.as_os_str().to_os_string().into_string().unwrap());
             }
         }),
         button(icon(ICON_FILE_EXPORT.to_string()), |state: &mut RiffDAWState| {
@@ -115,7 +104,32 @@ pub fn file_toolbar() -> Flex<(Button<impl Fn(&mut RiffDAWState, Option<PointerB
             if let Some(path) = res {
                 daw_events_ExportWaveFile(state, path.as_os_str().to_os_string().into_string().unwrap());
             }
-        })
+        }),
+        button(icon(ICON_FILE_IMPORT.to_string()), |state: &mut RiffDAWState| {
+            state.file_dialog.dialog.filter_extension = String::from("dawproject");
+            state.file_dialog.dialog.confirm_callback = Some(|state: &mut RiffDAWState, path: String| {
+                match parse_dawproject(path.as_str()) {
+                    Ok(round_tripped) => state.set_project(round_tripped),
+                    Err(error) => eprintln!("Failed to parse: {}", error),
+                }
+            });
+            open_dialog(state, DialogMode::Open);
+        }),
+        button(icon(ICON_FILE_EXPORT.to_string()), |state: &mut RiffDAWState| {
+            state.file_dialog.dialog.filter_extension = String::from("dawproject");
+            state.file_dialog.dialog.confirm_callback = Some(|state: &mut RiffDAWState, path: String| {
+                if let Ok(project) = state.project().lock() {
+                    match write_dawproject(project, path.as_str()) {
+                        Ok(()) => (),
+                        Err(error) => eprintln!("Failed to parse: {}", error),
+                    }
+                }
+            });
+            open_dialog(state, DialogMode::Save);
+        }),
+        button(icon(ICON_SETTINGS_COG.to_string()), |state: &mut RiffDAWState| {
+            state.settings_window.insert(state.settings_window_id, true);
+        }),
     )).gap(1.px())
 }
 fn normalized_filter(filter_extension: String) -> String {

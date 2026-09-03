@@ -405,16 +405,16 @@ fn copy_string(dst: *mut c_void, src: &str, max: usize) -> isize {
     1 // Success
 }
 
-fn copy_time_info(dst: *mut c_void) -> isize {
-    unsafe {
-        use libc::{memcpy, memset};
-
-        memset(dst, 0, std::mem::size_of::<TimeInfo>());
-        memcpy(dst, std::mem::transmute(&TIME_INFO), std::mem::size_of::<TimeInfo>());
-    }
-
-    std::mem::size_of::<TimeInfo>() as isize // Success
-}
+// fn copy_time_info(dst: *mut c_void) -> isize {
+//     unsafe {
+//         use libc::{memcpy, memset};
+//
+//         memset(dst, 0, std::mem::size_of::<TimeInfo>());
+//         memcpy(dst, std::mem::transmute(&TIME_INFO), std::mem::size_of::<TimeInfo>());
+//     }
+//
+//     std::mem::size_of::<TimeInfo>() as isize // Success
+// }
 
 static mut TIME_INFO: TimeInfo = TimeInfo {
     sample_pos: 0.0,
@@ -434,6 +434,22 @@ static mut TIME_INFO: TimeInfo = TimeInfo {
 };
 
 extern "C" fn vst_host_callback(effect: *mut AEffect, op_code: i32, _index: i32, _value: isize, ptr: *mut c_void, _optional: f32) -> isize {
+    let mut time_info = TimeInfo {
+        sample_pos: 0.0,
+        sample_rate: 44100.0,
+        nano_seconds: 0.0,
+        ppq_pos: 0.0,
+        tempo: 140.0,
+        bar_start_pos: 0.0,
+        cycle_start_pos: 0.0,
+        cycle_end_pos: 0.0,
+        time_sig_numerator: 4,
+        time_sig_denominator: 4,
+        smpte_offset: 0,
+        smpte_frame_rate: 0,
+        samples_to_next_clock: 0,
+        flags: 3,
+    };
     unsafe {
         if op_code == host_opcodes::VERSION {
             println!("Opcode=VERSION");
@@ -465,7 +481,7 @@ extern "C" fn vst_host_callback(effect: *mut AEffect, op_code: i32, _index: i32,
             // copy_time_info(ptr)
 
             // TODO this needs to increments the ppq_pos beats properly
-            TIME_INFO.ppq_pos += 1.0;
+            time_info.ppq_pos += 1.0;
 
             let mut flags = transport::CHANGED;
 
@@ -474,9 +490,9 @@ extern "C" fn vst_host_callback(effect: *mut AEffect, op_code: i32, _index: i32,
             flags |= time_info_flags::TIME_SIG_VALID; // time signature valid
             flags |= time_info_flags::PPQ_POS_VALID; // ppq position valid
 
-            TIME_INFO.flags = flags;
-    
-            std::mem::transmute(&TIME_INFO)
+            time_info.flags = flags;
+
+            std::mem::transmute(&time_info)
         }
         else if op_code == host_opcodes::GET_CURRENT_PROCESS_LEVEL {
             println!("Opcode=GET_CURRENT_PROCESS_LEVEL");
@@ -527,25 +543,25 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                             // println!("shell=true");
                             loop {
                                 let buffer: [u8; 40] = [0; 40];
-                                let plug_id = dispatcher(effect, effect_opcodes::SHELL_GET_NEXT_PLUGIN, 0 , 0, std::mem::transmute(&buffer), 0.0);
-                                if plug_id == 0 {
+                                let shell_plugin_id = dispatcher(effect, effect_opcodes::SHELL_GET_NEXT_PLUGIN, 0, 0, std::mem::transmute(&buffer), 0.0);
+                                if shell_plugin_id == 0 {
                                     break;
                                 }
                                 else {
-                                    PLUG_ID = plug_id;
+                                    PLUG_ID = shell_plugin_id;
                                 }
                                 if PLUG_ID != 0 {
-                                    let shell_plug_effect = vst_main(vst_host_callback);
+                                    let shell_plugin = vst_main(vst_host_callback);
 
-                                    plugin_category = dispatcher(shell_plug_effect, effect_opcodes::GET_PLUG_CATEGORY, 0 , 0, core::ptr::null_mut(), 0.0);
+                                    plugin_category = dispatcher(shell_plugin, effect_opcodes::GET_PLUG_CATEGORY, 0, 0, core::ptr::null_mut(), 0.0);
 
-                                    println!("shell_plugin_id={}", plug_id);
+                                    println!("shell_plugin_id={}", shell_plugin_id);
                                     println!("shell_plugin_name={}", std::str::from_utf8(&buffer).expect("msg").trim_matches(char::from(0)));
                                     println!("shell_plugin_category={}", plugin_category);
-                                    println!("##########{}:{}:{}:{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, plug_id, plugin_category);
+                                    println!("##########{}:{}:{}:{}:{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, (*effect).unique_id, shell_plugin_id, plugin_category);
 
                                     if num_outputs > 0 {
-                                        check_plugin_process_replacing(&shell_plug_effect, dispatcher, process);
+                                        check_plugin_process_replacing(&shell_plugin, dispatcher, process);
                                     }
                                 }
                             }
@@ -554,7 +570,7 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                             let buffer: [u8; 40] = [0; 40];
                             println!("plugin_category={}", plugin_category);
                             dispatcher(effect, effect_opcodes::GET_EFFECT_NAME, 0 , 0, std::mem::transmute(&buffer), 0.0);
-                            println!("##########{}:{}::{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, plugin_category);
+                            println!("##########{}:{}:{}::{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, (*effect).unique_id, plugin_category);
 
                             if num_outputs > 0 {
                                 check_plugin_process_replacing(&effect, dispatcher, process);

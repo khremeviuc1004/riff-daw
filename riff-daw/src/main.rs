@@ -35,12 +35,13 @@ use crate::state::{AutomationViewMode, EventEditView, MidiPolyphonicExpressionNo
 use crate::audio_layer_manager::AudioLayerManager;
 use crate::constants::MUSICAL_ITEM_LENGTH_OPTIONS;
 use crate::history::HistoryManager;
-use crate::views::{close_dialog, dialog_view, main_view, portal, track_details_panel};
+use crate::views::{close_dialog, dialog_view, main_view, portal, settings_dialog, track_details_panel};
 
 mod vst3_cxx_bridge;
 mod audio_layer_manager;
 mod actions;
 mod history;
+mod dawproject_parser;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -386,6 +387,27 @@ fn app_logic(data: &mut RiffDAWState) -> impl Iterator<Item = WindowView<RiffDAW
                             options.on_close(|state: &mut RiffDAWState| {
                                 println!("Attempted to close an track details window.");
                             })
+                        });
+                    window
+                }),
+        )
+        .chain(
+            data
+                .settings_window
+                .iter()
+                .find(|(window_id, show_window)| **show_window)
+                .map(|(window_id, _)|  {
+                    let window_id = *window_id;
+                    let window = window(
+                        window_id.clone(),
+                        "Settings",
+                        settings_dialog(window_id.clone()),
+                    )
+                        .with_options(move |options| {
+                            options.on_close(move |state: &mut RiffDAWState| {
+                                state.settings_window.insert(window_id, false);
+                            })
+                                .with_initial_inner_size(xilem::dpi::LogicalSize::new(400.0, 300.0))
                         });
                     window
                 }),

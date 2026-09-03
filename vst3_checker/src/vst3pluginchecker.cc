@@ -44,7 +44,7 @@ void checkPlugin(char* vst3_plugin_path)
                 }
             }
 
-            std::cout << "##########" << classInfo.name() << ":" << path << ":" << classInfo.ID().toString() << ":" << (instrument ? 2 : 1) << ":VST3" << std::endl;
+            std::cout << "##########" << classInfo.name() << ":" << path << ":" << classInfo.ID().toString() << "::" << (instrument ? 2 : 1) << ":VST3" << std::endl;
 
             plugProvider = Steinberg::owned(new Steinberg::Vst::PlugProvider(module->getFactory(), classInfo, true));
             std::cout << "Created PlugProvider." << std::endl;

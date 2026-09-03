@@ -8016,6 +8016,11 @@ impl AudioConfiguration {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ScannedPluginDetails {
+
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ScannedPlugins {
     pub successfully_scanned: HashMap<String, String>, // key=id (path:shell id:bool), value=name
 }

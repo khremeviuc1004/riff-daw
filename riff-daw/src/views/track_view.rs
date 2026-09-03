@@ -6,7 +6,7 @@ use crate::domain::GeneralTrackType;
 use crate::event::{OperationModeType};
 use crate::icons::{ICON_ARROW_LOOP_RIGHT, ICON_AUTOMATION, ICON_CLIPBOARD, ICON_COPY, ICON_CUT, ICON_DESELECT, ICON_EDIT, ICON_MINUS, ICON_MUSIC, ICON_PLAYER_SKIP_BACK, ICON_PLUS, ICON_POINTER, ICON_ROLLERCOASTER, ICON_SCALE, ICON_SELECT_ALL, ICON_ZOOM};
 use crate::state::RiffDAWState;
-use crate::views::{dropdown_view, icon, synced_scroll, track_grid_snap_quantize_selector, track_grid_with_size, track_panel_sequence, BeatGrid, SyncedScroll};
+use crate::views::{beat_grid_ruler, dropdown_view, icon, synced_scroll, track_grid_snap_quantize_selector, track_grid_with_size, track_panel_sequence, BeatGrid, BeatGridRuler, SyncedScroll};
 
 
 pub fn track_view_toolbar(
@@ -71,7 +71,7 @@ pub fn track_view_toolbar(
 
 pub fn track_view(
     state: &RiffDAWState,
-) -> Split<SyncedScroll<RiffDAWState, (), Flex<(impl FlexSequence<RiffDAWState, ()>, FlexSpacer), RiffDAWState>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>, RiffDAWState> {
+) -> Split<SyncedScroll<RiffDAWState, (), Flex<(impl FlexSequence<RiffDAWState, ()>, FlexSpacer), RiffDAWState>>, Flex<(SyncedScroll<RiffDAWState, (), BeatGridRuler<RiffDAWState, ()>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>), RiffDAWState>, RiffDAWState> {
     split(
         synced_scroll(
             flex_col(
@@ -85,25 +85,32 @@ pub fn track_view(
             "track_panel_sequence_horizontal",
             "track_view_vertical"
         ),
-        synced_scroll(
-            track_grid_with_size(state.project.clone(),
-                                 60000.0,
-                                 60000.0,
-                                 state.track_grid_state.selected_track_grid_riff_references.clone(),
-                                 state.track_grid_state.track_grid_operation_mode.clone(),
-                                 state.track_grid_state.clone(),
+        flex_col((
+            synced_scroll(
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                "track_grid_horizontal",
+                "track_grid_ruler_vertical"
+            ),
+            synced_scroll(
+                track_grid_with_size(state.project.clone(),
+                                     60000.0,
+                                     60000.0,
+                                     state.track_grid_state.selected_track_grid_riff_references.clone(),
+                                     state.track_grid_state.track_grid_operation_mode.clone(),
+                                     state.track_grid_state.clone(),
+                )
+                    .on_select_multiple(Box::new(|data, x: &f64, y: &i32, x2: &f64, y2: &i32, add_to_select: &bool| track_change_type_RiffReferencesSelectMultiple(data, *x, *y, *x2, *y2, *add_to_select)))
+                    .on_add_riff_reference(Box::new(|data, position: &f64, track_index: &i32| track_change_type_RiffReferenceAdd(data, *track_index, *position, None)))
+                    .on_delete_riff_reference(Box::new(|data, position: &f64, track_index: &i32| track_change_type_RiffReferenceDelete(data, *track_index, *position, None)))
+                    .on_cut(Box::new(|data| track_change_type_RiffReferenceCutSelected(data)))
+                    .on_copy(Box::new(|data| track_change_type_RiffReferenceCopySelected(data)))
+                    .on_paste(Box::new(|data| track_change_type_RiffReferencePaste(data)))
+                    .on_edit_cursor_position_change(Box::new(|data, position| {
+                        data.track_grid_state.track_grid_edit_cursor_position = position;
+                    })),
+                "track_grid_horizontal",
+                "track_view_vertical"
             )
-                .on_select_multiple(Box::new(|data, x: &f64, y: &i32, x2: &f64, y2: &i32, add_to_select: &bool| track_change_type_RiffReferencesSelectMultiple(data, *x, *y, *x2, *y2, *add_to_select)))
-                .on_add_riff_reference(Box::new(|data, position: &f64, track_index: &i32| track_change_type_RiffReferenceAdd(data, *track_index, *position, None)))
-                .on_delete_riff_reference(Box::new(|data, position: &f64, track_index: &i32| track_change_type_RiffReferenceDelete(data, *track_index, *position, None)))
-                .on_cut(Box::new(|data| track_change_type_RiffReferenceCutSelected(data)))
-                .on_copy(Box::new(|data| track_change_type_RiffReferenceCopySelected(data)))
-                .on_paste(Box::new(|data| track_change_type_RiffReferencePaste(data)))
-                .on_edit_cursor_position_change(Box::new(|data, position| {
-                    data.track_grid_state.track_grid_edit_cursor_position = position;
-                })),
-            "track_grid_horizontal",
-            "track_view_vertical"
-        )
+        )),
     ).split_point(0.2)
 }

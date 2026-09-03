@@ -442,11 +442,15 @@ fn do_plugin_check(
                                 Some(id) => *id,
                                 None => "",
                             };
-                            let plugin_category = match elements.get(3) {
+                            let sub_plugin_id = match elements.get(3) {
+                                Some(id) => *id,
+                                None => "",
+                            };
+                            let plugin_category = match elements.get(4) {
                                 Some(category) => (*category).parse::<isize>().unwrap_or(0),
                                 None => 0,
                             };
-                            let plugin_type = match elements.get(4) {
+                            let plugin_type = match elements.get(5) {
                                 Some(plugin_type) => *plugin_type,
                                 None => "unknown",
                             };
@@ -454,25 +458,25 @@ fn do_plugin_check(
 
                             if !plugin_name.is_empty() &&
                                 !library_path.is_empty() {
-                                let id = format!("{}:{}:{}", library_path, plugin_id, plugin_type);
+                                let plugin_details = format!("{}:{}:{}:{}", library_path, plugin_id, sub_plugin_id, plugin_type);
                                 let plugin_name = format!("{} ({})", plugin_name, plugin_type);
 
                                 match plugin_category {
                                     // unknown
                                     0 => {
-                                        effect_audio_plugins.insert(id, plugin_name);
+                                        effect_audio_plugins.insert(plugin_details, plugin_name);
                                     }
                                     // effect
                                     1 => {
-                                        effect_audio_plugins.insert(id, plugin_name);
+                                        effect_audio_plugins.insert(plugin_details, plugin_name);
                                     }
                                     // instrument
                                     2 => {
-                                        instrument_audio_plugins.insert(id, plugin_name);
+                                        instrument_audio_plugins.insert(plugin_details, plugin_name);
                                     }
                                     // generator
                                     11 => {
-                                        instrument_audio_plugins.insert(id, plugin_name);
+                                        instrument_audio_plugins.insert(plugin_details, plugin_name);
                                     }
                                     _ => {}
                                 }

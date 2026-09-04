@@ -1,6 +1,6 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, MainAxisAlignment};
 use uuid::Uuid;
-use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_input, Flex, FlexSequence, FlexSpacer};
+use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_input, Flex, FlexExt, FlexSequence, FlexSpacer};
 use crate::actions::daw_events_RiffSetAdd;
 use crate::icons::ICON_PLUS;
 use crate::state::RiffDAWState;
@@ -47,7 +47,7 @@ pub fn riff_set_view(data: &RiffDAWState) -> Flex<impl FlexSequence<RiffDAWState
                         .main_axis_alignment(MainAxisAlignment::Start)
                         .cross_axis_alignment(CrossAxisAlignment::Start),
                 ),
-            ).split_point(0.2),
+            ).split_point(0.2).flex(1.0),
             split (
                 portal(
                     flex_col(
@@ -64,7 +64,8 @@ pub fn riff_set_view(data: &RiffDAWState) -> Flex<impl FlexSequence<RiffDAWState
                         riff_set_riffs_panel_sequence::<RiffDAWState>(data)
                     )
                 )
-            ).split_point(0.2),
+            ).split_point(0.2).flex(1.0),
         )
     )
+        .must_fill_major_axis(true)
 }

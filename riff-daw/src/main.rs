@@ -67,7 +67,8 @@ fn app_logic(data: &mut RiffDAWState) -> impl Iterator<Item = WindowView<RiffDAW
                     main_view(data)
                 )
                     .main_axis_alignment(MainAxisAlignment::Start)
-                    .cross_axis_alignment(CrossAxisAlignment::Start),
+                    .cross_axis_alignment(CrossAxisAlignment::Start)
+                    .must_fill_major_axis(true),
                 worker(
                     |proxy, mut rx| async move {
                         let mut audio_layer_manager = AudioLayerManager::new();

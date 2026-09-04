@@ -1,5 +1,5 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, Length, MainAxisAlignment};
-use xilem::view::{flex_col, flex_row, indexed_stack, split, text_button, FlexSequence};
+use xilem::view::{flex_col, flex_row, indexed_stack, split, text_button, FlexExt, FlexSequence};
 use crate::state::{EventEditView, RiffDAWMainView, RiffDAWState};
 use crate::views::*;
 use masonry_core::core::Axis;
@@ -88,11 +88,12 @@ pub fn main_view(
                             mixer_view(data),
                             scripting_view(data),
                         )
-                    ).active(data.event_edit_view.clone() as usize)
+                    ).active(data.event_edit_view.clone() as usize).flex(1.0)
                 )
             )
                 .main_axis_alignment(MainAxisAlignment::Start)
-                .cross_axis_alignment(CrossAxisAlignment::Start),
-        ).split_axis(Axis::Vertical),
+                .cross_axis_alignment(CrossAxisAlignment::Start)
+                .must_fill_major_axis(true),
+        ).split_axis(Axis::Vertical).flex(1.0),
     )
 }

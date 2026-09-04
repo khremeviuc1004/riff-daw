@@ -1,5 +1,6 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, Length, MainAxisAlignment};
-use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_button, Flex, FlexSequence, FlexSpacer, Portal, Split};
+use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_button, Flex, FlexExt, FlexSequence, FlexSpacer};
+use xilem::WidgetView;
 use crate::actions::{track_change_type_RiffReferenceAdd, track_change_type_RiffReferenceCopySelected, track_change_type_RiffReferenceCutSelected, track_change_type_RiffReferenceDelete, track_change_type_RiffReferencePaste, track_change_type_RiffReferencesDeselectAll, track_change_type_RiffReferencesSelectAll, track_change_type_RiffReferencesSelectMultiple};
 use crate::constants::MUSICAL_ITEM_LENGTH_OPTIONS;
 use crate::domain::GeneralTrackType;
@@ -71,7 +72,7 @@ pub fn track_view_toolbar(
 
 pub fn track_view(
     state: &RiffDAWState,
-) -> Split<SyncedScroll<RiffDAWState, (), Flex<(impl FlexSequence<RiffDAWState, ()>, FlexSpacer), RiffDAWState>>, Flex<(SyncedScroll<RiffDAWState, (), BeatGridRuler<RiffDAWState, ()>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>), RiffDAWState>, RiffDAWState> {
+) -> impl WidgetView<RiffDAWState, ()> + 'static {
     split(
         synced_scroll(
             flex_col(
@@ -111,6 +112,8 @@ pub fn track_view(
                 "track_grid_horizontal",
                 "track_view_vertical"
             )
-        )),
+                .flex(1.0)
+        ))
+            .must_fill_major_axis(true),
     ).split_point(0.2)
 }

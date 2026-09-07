@@ -2,14 +2,15 @@ use masonry::properties::types::{AsUnit, Length};
 use strum::IntoEnumIterator;
 use tracing::Instrument;
 use uuid::Uuid;
-use xilem::view::{button, flex_col, flex_row, indexed_stack, label, text_button, Flex, FlexSequence, FlexSpacer};
+use xilem::view::{button, flex_col, flex_row, indexed_stack, label, text_button, Flex, FlexExt, FlexSequence, FlexSpacer};
+use xilem::WidgetView;
 use crate::actions::{handle_automation_controller_copy, handle_automation_controller_cut, handle_automation_controller_paste, handle_automation_controller_translate_selected, handle_automation_effect_copy, handle_automation_effect_cut, handle_automation_effect_paste, handle_automation_effect_translate_selected, handle_automation_instrument_copy, handle_automation_instrument_cut, handle_automation_instrument_paste, handle_automation_instrument_translate_selected, handle_automation_note_expression_copy, handle_automation_note_expression_cut, handle_automation_note_expression_paste, handle_automation_note_expression_translate_selected, handle_automation_note_velocities_translate_selected, handle_automation_pitch_bend_copy, handle_automation_pitch_bend_cut, handle_automation_pitch_bend_paste, handle_automation_pitch_bend_translate_selected, track_change_type_RiffQuantiseSelected};
 use crate::constants::{CONTROLLER_TYPES, MUSICAL_ITEM_LENGTH_OPTIONS};
 use crate::domain::{AudioEffectTrack, AudioPlugin, NoteExpressionType, PluginParameterDetail, Track, TrackBackgroundProcessorInwardEvent, TrackType};
 use crate::event::{AudioLayerEvent, AutomationEditType, OperationModeType, TranslateDirection};
 use crate::icons::{ICON_ARROW_DOWN, ICON_ARROW_LEFT, ICON_ARROW_RIGHT, ICON_ARROW_UP, ICON_CLIPBOARD, ICON_COPY, ICON_CUT, ICON_DESELECT, ICON_EDIT, ICON_MINUS, ICON_PLAYER_SKIP_BACK, ICON_PLUS, ICON_POINTER, ICON_SELECT_ALL, ICON_ZOOM};
 use crate::state::{AutomationViewMode, MidiPolyphonicExpressionNoteId, NoteExpressionChannel, NoteExpressionKey, NoteExpressionPortIndex, RiffDAWState};
-use crate::views::{automation_grid_with_size, generic_selector, icon, BeatGrid, DrawMode};
+use crate::views::{automation_grid_with_size, beat_grid_ruler, generic_selector, icon, synced_scroll, DrawMode};
 
 
 fn get_effects_data(track_uuid: String, effects: &[AudioPlugin], state: &RiffDAWState) -> (String, Vec<PluginParameterDetail>, Vec<(String, String)>) {
@@ -1077,16 +1078,29 @@ pub fn automation_view_toolbar(
 
 pub fn automation_view(
     data: &RiffDAWState
-) -> BeatGrid<RiffDAWState, ()> {
-    automation_grid_with_size(
-        data.project.clone(),
-        1280.0,
-        60000.0,
-        data.piano_roll_state.piano_roll_mpe_note_id.clone(),
-        data.selected_track.as_ref().unwrap_or(&"".to_string()).clone(),
-        data.selected_riff_uuid.clone(),
-        data.selected_riff_events.clone(),
-        OperationModeType::PointMode,
-        data.automation_view_state.clone(),
-    )
+) -> impl WidgetView<RiffDAWState, ()> + 'static {
+    flex_col(
+        (
+            synced_scroll(
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                "automation_roll_horizontal",
+                "automation_ruler_vertical"
+            ),
+            synced_scroll(
+                automation_grid_with_size(
+                    data.project.clone(),
+                    1280.0,
+                    60000.0,
+                    data.piano_roll_state.piano_roll_mpe_note_id.clone(),
+                    data.selected_track.as_ref().unwrap_or(&"".to_string()).clone(),
+                    data.selected_riff_uuid.clone(),
+                    data.selected_riff_events.clone(),
+                    OperationModeType::PointMode,
+                    data.automation_view_state.clone(),
+                ),
+                "automation_roll_horizontal",
+                "automation_view_vertical"
+            ).flex(1.0),
+        )
+    ).must_fill_major_axis(true)
 }

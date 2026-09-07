@@ -2,9 +2,6 @@
 
 mod piano_keyboard;
 mod icon;
-mod masonry_portal;
-mod masonry_scrollbar;
-mod xilem_portal;
 mod widgets;
 mod toggle_button_view;
 mod beat_grid;
@@ -54,9 +51,6 @@ pub mod synced_scroll;
 
 pub use self::piano_keyboard::*;
 pub use self::icon::*;
-pub use self::masonry_portal::*;
-pub use self::masonry_scrollbar::*;
-pub use self::xilem_portal::*;
 pub use self::toggle_button_view::*;
 pub use self::beat_grid::*;
 pub use self::beat_grid_ruler::*;

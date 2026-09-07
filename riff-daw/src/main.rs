@@ -35,7 +35,7 @@ use crate::state::{AutomationViewMode, EventEditView, MidiPolyphonicExpressionNo
 use crate::audio_layer_manager::AudioLayerManager;
 use crate::constants::MUSICAL_ITEM_LENGTH_OPTIONS;
 use crate::history::HistoryManager;
-use crate::views::{close_dialog, dialog_view, main_view, portal, settings_dialog, track_details_panel};
+use crate::views::{close_dialog, dialog_view, main_view, settings_dialog, track_details_panel};
 
 mod vst3_cxx_bridge;
 mod audio_layer_manager;

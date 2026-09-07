@@ -1,5 +1,5 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, Length, MainAxisAlignment};
-use xilem::view::{button, flex, flex_col, flex_row, indexed_stack, label, sized_box, text_button, text_input, Flex, FlexSequence};
+use xilem::view::{button, flex, flex_col, flex_row, indexed_stack, label, portal, sized_box, text_button, text_input, Flex, FlexSequence};
 use crate::icons::{ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_PLUS};
 use crate::views::{icon};
 use crate::state::{RiffDAWState};

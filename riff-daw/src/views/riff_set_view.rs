@@ -4,7 +4,7 @@ use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, t
 use crate::actions::daw_events_RiffSetAdd;
 use crate::icons::ICON_PLUS;
 use crate::state::RiffDAWState;
-use crate::views::{icon, riff_set_head_panel_sequence, riff_set_riffs_panel_sequence, track_panel_sequence};
+use crate::views::{icon, riff_set_head_panel_sequence, riff_set_riffs_panel_sequence, synced_scroll, track_panel_sequence};
 
 
 
@@ -37,19 +37,25 @@ pub fn riff_set_view(data: &RiffDAWState) -> Flex<impl FlexSequence<RiffDAWState
                     ).main_axis_alignment(MainAxisAlignment::Start)
                         .cross_axis_alignment(CrossAxisAlignment::Start)
                 ).width(200.px()).height(80.px()),
-                portal(
-                    flex_row(
+                synced_scroll(
+                    flex_col(
                         (
-                            riff_set_head_panel_sequence::<RiffDAWState>(data),
-                            FlexSpacer::Fixed(60000.px())
+                            flex_row(
+                                (
+                                    riff_set_head_panel_sequence::<RiffDAWState>(data),
+                                    FlexSpacer::Fixed(60000.px())
+                                )
+                            )
+                                .main_axis_alignment(MainAxisAlignment::Start)
+                                .cross_axis_alignment(CrossAxisAlignment::Start),
                         )
-                    )
-                        .main_axis_alignment(MainAxisAlignment::Start)
-                        .cross_axis_alignment(CrossAxisAlignment::Start),
+                    ),
+                    "riff_sets_track_panel_horizontal",
+                    "riff_sets_head_panel_vertical"
                 ),
-            ).split_point(0.2).flex(1.0),
+            ).split_point(0.2),
             split (
-                portal(
+                synced_scroll(
                     flex_col(
                         (
                             track_panel_sequence::<RiffDAWState>(data, 39.px()),
@@ -58,14 +64,19 @@ pub fn riff_set_view(data: &RiffDAWState) -> Flex<impl FlexSequence<RiffDAWState
                     )
                         .main_axis_alignment(MainAxisAlignment::Start)
                         .cross_axis_alignment(CrossAxisAlignment::Start),
+                    "rs_track_panel_horizontal",
+                    "riff_sets_track_panel_vertical"
                 ),
-                portal(
+                synced_scroll(
                     flex_col(
                         riff_set_riffs_panel_sequence::<RiffDAWState>(data)
-                    )
+                    ),
+                    "riff_sets_track_panel_horizontal",
+                    "riff_sets_track_panel_vertical"
                 )
-            ).split_point(0.2).flex(1.0),
+            ).split_point(0.2),
         )
-    )
+    ).gap(0.px())
+
         .must_fill_major_axis(true)
 }

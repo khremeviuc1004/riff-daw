@@ -74,18 +74,21 @@ pub fn track_view(
     state: &RiffDAWState,
 ) -> impl WidgetView<RiffDAWState, ()> + 'static {
     split(
-        synced_scroll(
-            flex_col(
-                (
-                    track_panel_sequence::<RiffDAWState>(state, 20.px()),
-                    FlexSpacer::Fixed(60000.px())
+        flex_col((
+            sized_box(label("")).height(30.px()),
+            synced_scroll(
+                flex_col(
+                    (
+                        track_panel_sequence::<RiffDAWState>(state, 20.px()),
+                        FlexSpacer::Fixed(60000.px())
+                    )
                 )
-            )
-                .main_axis_alignment(MainAxisAlignment::Start)
-                .cross_axis_alignment(CrossAxisAlignment::Start),
-            "track_panel_sequence_horizontal",
-            "track_view_vertical"
-        ),
+                    .main_axis_alignment(MainAxisAlignment::Start)
+                    .cross_axis_alignment(CrossAxisAlignment::Start),
+                "track_panel_sequence_horizontal",
+                "track_view_vertical"
+            ),
+        )),
         flex_col((
             synced_scroll(
                 beat_grid_ruler(1.0, 50.0, 4, 60000.0),

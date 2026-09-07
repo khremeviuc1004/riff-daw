@@ -1,10 +1,11 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, MainAxisAlignment};
 use uuid::Uuid;
-use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_input, Flex, FlexSequence, FlexSpacer, Portal, Split};
+use xilem::view::{button, flex_col, flex_row, label, sized_box, split, text_input, Flex, FlexSequence, FlexSpacer};
 use crate::actions::daw_events_RiffArrangementAdd;
 use crate::icons::{ICON_PLUS};
 use crate::state::RiffDAWState;
-use crate::views::{icon, riff_arr_riff_items_head_panel_sequence, riff_arr_riff_items_panel_sequence, riff_arr_view_riff_grid_selector, riff_arr_view_riff_seq_selector, riff_arr_view_riff_set_selector, riff_arrangement_head_panel, riff_arrangement_selector, track_panel_sequence};
+use crate::views::{icon, riff_arr_riff_items_head_panel_sequence, riff_arr_riff_items_panel_sequence, riff_arr_view_riff_grid_selector, riff_arr_view_riff_seq_selector, riff_arr_view_riff_set_selector, riff_arrangement_head_panel, riff_arrangement_selector, synced_scroll, track_panel_sequence};
+use xilem::WidgetView;
 
 
 pub fn riff_arrangement_toolbar(
@@ -19,9 +20,9 @@ pub fn riff_arrangement_toolbar(
 
 pub fn riff_arrangement_view(
     data: &RiffDAWState
-) -> Split<Portal<Flex<impl FlexSequence<RiffDAWState>, RiffDAWState>, RiffDAWState, ()>, Portal<Flex<impl FlexSequence<RiffDAWState>, RiffDAWState>, RiffDAWState, ()>, RiffDAWState> {
+) -> impl WidgetView<RiffDAWState, ()> + 'static {
     split (
-        portal(
+        synced_scroll(
             flex_col(
                 (
                     sized_box(
@@ -66,8 +67,10 @@ pub fn riff_arrangement_view(
             )
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .cross_axis_alignment(CrossAxisAlignment::Start),
+            "riff_arr_selector_horizontal",
+            "riff_arr_view_vertical"
         ),
-        portal(
+        synced_scroll(
             flex_col(
                 (
                     flex_row(riff_arrangement_head_panel(data)).main_axis_alignment(MainAxisAlignment::Start),
@@ -77,6 +80,8 @@ pub fn riff_arrangement_view(
             )
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .cross_axis_alignment(CrossAxisAlignment::Start),
+            "riff_arr_content_horizontal",
+            "riff_arr_view_vertical"
         )
     ).split_point(0.2)
 }

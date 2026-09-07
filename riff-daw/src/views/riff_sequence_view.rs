@@ -1,10 +1,11 @@
 use masonry::properties::types::{AsUnit, CrossAxisAlignment, MainAxisAlignment};
 use uuid::Uuid;
-use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, text_input, Flex, FlexSequence, FlexSpacer, Portal, Split};
+use xilem::view::{button, flex_col, flex_row, label, sized_box, split, text_input, Flex, FlexSequence, FlexSpacer};
 use crate::actions::daw_events_RiffSequenceAdd;
 use crate::icons::ICON_PLUS;
 use crate::state::RiffDAWState;
-use crate::views::{icon, riff_seq_head_panel_sequence, riff_seq_riff_set_head_panel_sequence, riff_seq_riff_set_riffs_panel_sequence, riff_seq_view_riff_seq_selector, riff_seq_view_riff_set_selector, track_panel_sequence};
+use crate::views::{icon, riff_seq_head_panel_sequence, riff_seq_riff_set_head_panel_sequence, riff_seq_riff_set_riffs_panel_sequence, riff_seq_view_riff_seq_selector, riff_seq_view_riff_set_selector, synced_scroll, track_panel_sequence};
+use xilem::WidgetView;
 
 
 pub fn riff_sequence_view_toolbar(
@@ -20,9 +21,9 @@ pub fn riff_sequence_view_toolbar(
 
 pub fn riff_sequence_view(
     data: &RiffDAWState)
-    -> Split<Portal<Flex<impl FlexSequence<RiffDAWState>, RiffDAWState>, RiffDAWState, ()>, Portal<Flex<impl FlexSequence<RiffDAWState>, RiffDAWState>, RiffDAWState, ()>, RiffDAWState> {
+    -> impl WidgetView<RiffDAWState, ()> + 'static {
     split (
-        portal(
+        synced_scroll(
             flex_col(
                 (
                     sized_box(
@@ -55,8 +56,10 @@ pub fn riff_sequence_view(
             )
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .cross_axis_alignment(CrossAxisAlignment::Start),
+            "riff_seq_selector_horizontal",
+            "riff_seq_view_vertical"
         ),
-        portal(
+        synced_scroll(
             flex_col(
                 (
                     flex_row(
@@ -81,7 +84,9 @@ pub fn riff_sequence_view(
             )
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(1.px())
+                .gap(1.px()),
+            "riff_seq_content_horizontal",
+            "riff_seq_view_vertical"
         )
     ).split_point(0.2)
 }

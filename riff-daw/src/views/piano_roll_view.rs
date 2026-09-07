@@ -1,12 +1,12 @@
 use masonry::properties::types::{AsUnit, Length};
-use xilem::view::{button, checkbox, flex_col, flex_row, label, portal, split, text_button, Flex, FlexSequence, FlexSpacer, Portal, Split};
+use xilem::view::{button, checkbox, flex_col, flex_row, label, portal, sized_box, split, text_button, Flex, FlexSequence, FlexSpacer, Label, Portal, SizedBox, Split};
 use crate::actions::{daw_events_PlayNoteImmediate, daw_events_StopNoteImmediate, track_change_type_RiffAddNote, track_change_type_RiffChangeLengthOfSelected, track_change_type_RiffCopySelected, track_change_type_RiffCutSelected, track_change_type_RiffDeleteNote, track_change_type_RiffEventsDeselectAll, track_change_type_RiffEventsSelectAll, track_change_type_RiffEventsSelectMultiple, track_change_type_RiffPasteSelected, track_change_type_RiffQuantiseSelected, track_change_type_RiffTranslateSelected};
 use crate::constants::{MUSICAL_ITEM_LENGTH_OPTIONS, NOTE_SUBDIVISIONS, TRIPLETS};
 use crate::event::{OperationModeType, TranslateDirection, TranslationEntityType};
 use crate::icons::{ICON_ARROW_DOWN, ICON_ARROW_LEFT, ICON_ARROW_LOOP_RIGHT, ICON_ARROW_RIGHT, ICON_ARROW_UP, ICON_CLIPBOARD, ICON_COPY, ICON_CUT, ICON_DESELECT, ICON_EDIT, ICON_MINUS, ICON_PLAYER_SKIP_BACK, ICON_PLUS, ICON_POINTER, ICON_SELECT_ALL, ICON_ZOOM};
 use crate::state::{RiffDAWState};
 use crate::utils::DAWUtils;
-use crate::views::{generic_number_selector, icon, piano_keyboard, piano_roll_with_size, synced_scroll, BeatGrid, PianoKeyboard, SyncedScroll};
+use crate::views::{beat_grid_ruler, generic_number_selector, icon, piano_keyboard, piano_roll_with_size, synced_scroll, BeatGrid, BeatGridRuler, PianoKeyboard, SyncedScroll};
 use crate::views::generic_selector::generic_selector;
 
 pub fn piano_roll_view_toolbar(
@@ -250,50 +250,60 @@ pub fn piano_roll_view_toolbar(
 
 pub fn piano_roll_view(
     data: &RiffDAWState,
-) -> Split<SyncedScroll<RiffDAWState, (), PianoKeyboard<RiffDAWState, ()>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>, RiffDAWState> {
+) -> Split<Flex<(SizedBox<Label, RiffDAWState>, SyncedScroll<RiffDAWState, (), PianoKeyboard<RiffDAWState, ()>>), RiffDAWState>, Flex<(SyncedScroll<RiffDAWState, (), BeatGridRuler<RiffDAWState, ()>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>), RiffDAWState>, RiffDAWState> {
     split (
-        synced_scroll(
-            piano_keyboard::<RiffDAWState, ()>()
-                .on_note_on(Box::new(|state: &mut RiffDAWState, note: i32, channel: i32| {
-                    println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ piano roll view - note on event received.");
-                    daw_events_PlayNoteImmediate(state, note);
-                }))
-                .on_note_off(Box::new(|state: &mut RiffDAWState, note: i32, channel: i32| {
-                    println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ piano roll view - note off event received.");
-                    daw_events_StopNoteImmediate(state, note);
-                })),
-            "piano_keyboard_horizontal",
-            "piano_roll_view_vertical",
-        ),
-        synced_scroll(
-            piano_roll_with_size(
-                data.project.clone(),
-                1280.0,
-                60000.0,
-                data.piano_roll_state.piano_roll_mpe_note_id.clone(),
-                data.selected_track.as_ref().unwrap_or(&"".to_string()).clone(),
-                data.selected_riff_uuid.clone(),
-                data.selected_riff_events.clone(),
-                data.piano_roll_state.piano_roll_grid_operation_mode.clone(),
-                data.piano_roll_state.clone()
+        flex_col((
+            sized_box(label("")).height(30.px()),
+            synced_scroll(
+                piano_keyboard::<RiffDAWState, ()>()
+                    .on_note_on(Box::new(|state: &mut RiffDAWState, note: i32, channel: i32| {
+                        println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ piano roll view - note on event received.");
+                        daw_events_PlayNoteImmediate(state, note);
+                    }))
+                    .on_note_off(Box::new(|state: &mut RiffDAWState, note: i32, channel: i32| {
+                        println!("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ piano roll view - note off event received.");
+                        daw_events_StopNoteImmediate(state, note);
+                    })),
+                "piano_keyboard_horizontal",
+                "piano_roll_view_vertical",
+            ),
+        )),
+        flex_col((
+            synced_scroll(
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                "piano_roll_horizontal",
+                "piano_roll_ruler_vertical"
+            ),
+            synced_scroll(
+                piano_roll_with_size(
+                    data.project.clone(),
+                    1280.0,
+                    60000.0,
+                    data.piano_roll_state.piano_roll_mpe_note_id.clone(),
+                    data.selected_track.as_ref().unwrap_or(&"".to_string()).clone(),
+                    data.selected_riff_uuid.clone(),
+                    data.selected_riff_events.clone(),
+                    data.piano_roll_state.piano_roll_grid_operation_mode.clone(),
+                    data.piano_roll_state.clone()
+                )
+                    .on_select_multiple(Box::new(|data, x: &f64, y: &i32, x2: &f64, y2: &i32, add_to_select: &bool| {
+                        track_change_type_RiffEventsSelectMultiple(data, *x, *y, *x2, *y2, *add_to_select, None);
+                    }))
+                    .on_add_riff_note(Box::new(|data, new_notes: Vec<(i32, f64, f64)>| {
+                        track_change_type_RiffAddNote(data, new_notes, None);
+                    }))
+                    .on_delete_riff_note(Box::new(|data, note: i32, position: f64| {
+                        track_change_type_RiffDeleteNote(data, note, position, None);
+                    }))
+                    .on_cut(Box::new(|data| track_change_type_RiffCutSelected(data)))
+                    .on_copy(Box::new(|data| track_change_type_RiffCopySelected(data)))
+                    .on_paste(Box::new(|data| track_change_type_RiffPasteSelected(data)))
+                    .on_edit_cursor_position_change(Box::new(|data, position| {
+                        data.piano_roll_state.piano_roll_edit_cursor_position = position;
+                    })),
+                "piano_roll_horizontal",
+                "piano_roll_view_vertical"
             )
-                .on_select_multiple(Box::new(|data, x: &f64, y: &i32, x2: &f64, y2: &i32, add_to_select: &bool| {
-                    track_change_type_RiffEventsSelectMultiple(data, *x, *y, *x2, *y2, *add_to_select, None);
-                }))
-                .on_add_riff_note(Box::new(|data, new_notes: Vec<(i32, f64, f64)>| {
-                    track_change_type_RiffAddNote(data, new_notes, None);
-                }))
-                .on_delete_riff_note(Box::new(|data, note: i32, position: f64| {
-                    track_change_type_RiffDeleteNote(data, note, position, None);
-                }))
-                .on_cut(Box::new(|data| track_change_type_RiffCutSelected(data)))
-                .on_copy(Box::new(|data| track_change_type_RiffCopySelected(data)))
-                .on_paste(Box::new(|data| track_change_type_RiffPasteSelected(data)))
-                .on_edit_cursor_position_change(Box::new(|data, position| {
-                    data.piano_roll_state.piano_roll_edit_cursor_position = position;
-                })),
-            "piano_roll_horizontal",
-            "piano_roll_view_vertical"
-        )
+        )),
     ).split_point(0.1)
 }

@@ -80,9 +80,7 @@ pub fn main_view(
                     indexed_stack(
                         (
                             piano_roll_view(data),
-                            portal(
-                                automation_view(data)
-                            ),
+                            automation_view(data),
                             sample_view(data),
                             sample_library_view(data),
                             mixer_view(data),

@@ -180,6 +180,9 @@ pub struct BeatGrid<State, Action> {
     track_uuid: String,
     riff_set_uuid: String,
     riff_grid_uuid: Option<String>,
+    track_cursor_time_in_beats: f64,
+    draw_play_cursor: bool,
+    playing: bool,
     piano_roll_state: Option<PianoRollState>,
     track_grid_state: Option<TrackGridState>,
     automation_view_state: Option<AutomationViewState>,
@@ -227,6 +230,9 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
             track_uuid: "".to_string(),
             riff_set_uuid: "".to_string(),
             riff_grid_uuid: None,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: true,
+            playing: false,
             piano_roll_state: Some(piano_roll_state),
             track_grid_state: None,
             automation_view_state: None,
@@ -270,6 +276,9 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
             track_uuid: "".to_string(),
             riff_set_uuid: "".to_string(),
             riff_grid_uuid: None,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: true,
+            playing: false,
             piano_roll_state: None,
             track_grid_state: None,
             automation_view_state: Some(automation_view_state),
@@ -311,6 +320,9 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
             track_uuid: "".to_string(),
             riff_set_uuid: "".to_string(),
             riff_grid_uuid: None,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: true,
+            playing: false,
             piano_roll_state: None,
             track_grid_state: Some(track_grid_state),
             automation_view_state: None,
@@ -353,6 +365,9 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
             track_uuid,
             riff_set_uuid,
             riff_grid_uuid: None,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: true,
+            playing: false,
             piano_roll_state: None,
             track_grid_state: None,
             automation_view_state: None,
@@ -394,6 +409,9 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
             track_uuid: "".to_string(),
             riff_set_uuid: "".to_string(),
             riff_grid_uuid,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: true,
+            playing: false,
             piano_roll_state: None,
             track_grid_state: None,
             automation_view_state: None,
@@ -464,6 +482,21 @@ impl<State: 'static, Action: 'static> BeatGrid<State, Action> {
         self.on_riff_set_track_set_riff = Some(on_riff_set_track_set_riff);
         self
     }
+
+    pub fn with_track_cursor_time_in_beats(mut self, track_cursor_time_in_beats: f64) -> Self {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+        self
+    }
+
+    pub fn with_draw_play_cursor(mut self, draw_play_cursor: bool) -> Self {
+        self.draw_play_cursor = draw_play_cursor;
+        self
+    }
+
+    pub fn with_playing(mut self, playing: bool) -> Self {
+        self.playing = playing;
+        self
+    }
 }
 
 impl<State, Action> ViewMarker for BeatGrid<State, Action> {}
@@ -476,7 +509,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGrid<
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let custom_painter: Box<dyn CustomPainter> = match self.grid_type {
             DrawingAreaType::PianoRoll => Box::new(PianoRollCustomPainter {
-                track_cursor_time_in_beats: 0.0,
+                track_cursor_time_in_beats: self.track_cursor_time_in_beats,
                 project: self.project.clone(),
                 piano_roll_mpe_note_id: self.piano_roll_mpe_note_id.clone(),
                 selected_track_uuid: self.selected_track_uuid.clone(),
@@ -504,7 +537,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGrid<
             },
             DrawingAreaType::Riff => Box::new(RiffSetTrackCustomPainter {
                 project: self.project.clone(),
-                track_cursor_time_in_beats: 0.0,
+                track_cursor_time_in_beats: self.track_cursor_time_in_beats,
                 track_uuid: self.track_uuid.clone(),
                 riff_set_uuid: self.riff_set_uuid.clone(),
             }),
@@ -560,27 +593,32 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGrid<
             _ => unreachable!()
         };
 
-        let pod = ctx.with_action_widget(|ctx| ctx.create_pod(
-            BeatGridWidget::new_with_custom(
-                self.height,
-                self.width,
-                zoom_horizontal,
-                zoom_vertical,
-                entity_height_in_pixels,
-                beat_width_in_pixels,
-                4,
-                Some(custom_painter),
-                beat_grid_mouse_coord_helper,
-                false,
-                self.grid_type.clone(),
-                self.operation_mode.clone(),
-            )
-        )
+        let mut grid_widget = BeatGridWidget::new_with_custom(
+            self.height,
+            self.width,
+            zoom_horizontal,
+            zoom_vertical,
+            entity_height_in_pixels,
+            beat_width_in_pixels,
+            4,
+            Some(custom_painter),
+            beat_grid_mouse_coord_helper,
+            false,
+            self.grid_type.clone(),
+            self.operation_mode.clone(),
+        );
+        grid_widget.set_track_cursor_time_in_beats(self.track_cursor_time_in_beats);
+        grid_widget.set_draw_play_cursor(self.draw_play_cursor);
+        grid_widget.set_playing(self.playing);
+
+        let pod = ctx.with_action_widget(|ctx| {
+            ctx.create_pod(grid_widget)
+        }
         );
         (pod, ())
     }
 
-    fn rebuild(&self, prev: &Self, view_state: &mut Self::ViewState, ctx: &mut ViewCtx, element: Mut<'_, Self::Element>, app_state: &mut State) {
+    fn rebuild(&self, prev: &Self, view_state: &mut Self::ViewState, ctx: &mut ViewCtx, mut element: Mut<'_, Self::Element>, app_state: &mut State) {
         // println!("Beat grid widget rebuild requested.");
 
         if prev.selected_riff_events != self.selected_riff_events {
@@ -716,6 +754,17 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGrid<
 
         if prev.operation_mode != self.operation_mode {
             element.widget.operation_mode = self.operation_mode.clone();
+        }
+        if prev.track_cursor_time_in_beats != self.track_cursor_time_in_beats
+            || prev.draw_play_cursor != self.draw_play_cursor
+            || prev.playing != self.playing
+        {
+            BeatGridWidget::update_play_cursor(
+                &mut element,
+                self.track_cursor_time_in_beats,
+                self.draw_play_cursor,
+                self.playing,
+            );
         }
     }
 

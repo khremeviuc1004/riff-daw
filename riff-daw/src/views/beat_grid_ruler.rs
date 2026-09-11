@@ -16,6 +16,9 @@ pub struct BeatGridRuler<State, Action> {
     zoom_horizontal: f64,
     zoom_vertical: f64,
     beats_per_bar: i32,
+    track_cursor_time_in_beats: f64,
+    draw_play_cursor: bool,
+    playing: bool,
     _phantom: std::marker::PhantomData<fn() -> (State, Action)>,
 }
 
@@ -40,6 +43,9 @@ pub fn beat_grid_ruler<State: 'static, Action: 'static>(
         zoom_horizontal: zoom,
         zoom_vertical: zoom,
         beats_per_bar,
+        track_cursor_time_in_beats: 0.0,
+        draw_play_cursor: false,
+        playing: false,
         _phantom: std::marker::PhantomData,
     }
 }
@@ -60,6 +66,9 @@ impl<State: 'static, Action: 'static> BeatGridRuler<State, Action> {
             zoom_horizontal,
             zoom_vertical,
             beats_per_bar,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: false,
+            playing: false,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -93,6 +102,19 @@ impl<State: 'static, Action: 'static> BeatGridRuler<State, Action> {
         self.width = width;
         self
     }
+
+    /// Set the ruler's play cursor time in beats and whether it is drawn.
+    pub fn with_play_cursor(mut self, track_cursor_time_in_beats: f64, draw_play_cursor: bool) -> Self {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+        self.draw_play_cursor = draw_play_cursor;
+        self
+    }
+
+    /// Set whether the transport is currently playing.
+    pub fn with_playing(mut self, playing: bool) -> Self {
+        self.playing = playing;
+        self
+    }
 }
 
 impl<State, Action> ViewMarker for BeatGridRuler<State, Action> {}
@@ -102,16 +124,19 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGridR
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let mut ruler_widget = BeatGridRulerWidget::new_with_individual_zoom_level(
+            self.zoom_horizontal,
+            self.zoom_vertical,
+            self.beat_width_in_pixels,
+            self.beats_per_bar,
+            self.width,
+        );
+        ruler_widget.set_track_cursor_time_in_beats(self.track_cursor_time_in_beats);
+        ruler_widget.set_draw_play_cursor(self.draw_play_cursor);
+        ruler_widget.set_playing(self.playing);
+
         let pod = ctx.with_action_widget(|ctx| {
-            ctx.create_pod(
-                BeatGridRulerWidget::new_with_individual_zoom_level(
-                    self.zoom_horizontal,
-                    self.zoom_vertical,
-                    self.beat_width_in_pixels,
-                    self.beats_per_bar,
-                    self.width,
-                )
-            )
+            ctx.create_pod(ruler_widget)
         });
         (pod, ())
     }
@@ -121,7 +146,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGridR
         prev: &Self,
         _view_state: &mut Self::ViewState,
         _ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
         if prev.zoom_horizontal != self.zoom_horizontal {
@@ -138,6 +163,17 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for BeatGridR
         }
         if prev.height != self.height {
             element.widget.set_height(self.height);
+        }
+        if prev.track_cursor_time_in_beats != self.track_cursor_time_in_beats
+            || prev.draw_play_cursor != self.draw_play_cursor
+            || prev.playing != self.playing
+        {
+            BeatGridRulerWidget::update_play_cursor(
+                &mut element,
+                self.track_cursor_time_in_beats,
+                self.draw_play_cursor,
+                self.playing,
+            );
         }
     }
 

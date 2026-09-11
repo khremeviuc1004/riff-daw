@@ -1079,10 +1079,12 @@ pub fn automation_view_toolbar(
 pub fn automation_view(
     data: &RiffDAWState
 ) -> impl WidgetView<RiffDAWState, ()> + 'static {
+    let draw_play_cursor = data.playing();
+    let play_cursor_position = data.play_position_in_beats();
     flex_col(
         (
             synced_scroll(
-                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0).with_play_cursor(play_cursor_position, draw_play_cursor).with_playing(data.playing()),
                 "automation_roll_horizontal",
                 "automation_ruler_vertical"
             ),
@@ -1097,7 +1099,10 @@ pub fn automation_view(
                     data.selected_riff_events.clone(),
                     OperationModeType::PointMode,
                     data.automation_view_state.clone(),
-                ),
+                )
+                    .with_track_cursor_time_in_beats(play_cursor_position)
+                    .with_draw_play_cursor(draw_play_cursor)
+                    .with_playing(data.playing()),
                 "automation_roll_horizontal",
                 "automation_view_vertical"
             ).flex(1.0),

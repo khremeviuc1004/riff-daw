@@ -148,7 +148,9 @@ impl AudioLayerManager {
                             let _ = self.tx_to_audio.send(AudioLayerInwardEvent::Play(play, number_of_blocks, start_block));
                         }
                         AudioLayerInwardEvent::ExtentsChange(_) => {}
-                        AudioLayerInwardEvent::Stop => {}
+                        AudioLayerInwardEvent::Stop => {
+                            let _ = self.tx_to_audio.send(AudioLayerInwardEvent::Stop);
+                        }
                         AudioLayerInwardEvent::Tempo(_) => {}
                         AudioLayerInwardEvent::SampleRate(_) => {}
                         AudioLayerInwardEvent::BlockSize(_) => {}

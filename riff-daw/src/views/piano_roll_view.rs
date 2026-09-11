@@ -251,6 +251,8 @@ pub fn piano_roll_view_toolbar(
 pub fn piano_roll_view(
     data: &RiffDAWState,
 ) -> Split<Flex<(SizedBox<Label, RiffDAWState>, SyncedScroll<RiffDAWState, (), PianoKeyboard<RiffDAWState, ()>>), RiffDAWState>, Flex<(SyncedScroll<RiffDAWState, (), BeatGridRuler<RiffDAWState, ()>>, SyncedScroll<RiffDAWState, (), BeatGrid<RiffDAWState, ()>>), RiffDAWState>, RiffDAWState> {
+    let draw_play_cursor = data.playing();
+    let play_cursor_position = data.play_position_in_beats();
     split (
         flex_col((
             sized_box(label("")).height(30.px()),
@@ -267,10 +269,10 @@ pub fn piano_roll_view(
                 "piano_keyboard_horizontal",
                 "piano_roll_view_vertical",
             ),
-        )),
+        )).gap(0.px()),
         flex_col((
             synced_scroll(
-                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0).with_play_cursor(play_cursor_position, draw_play_cursor).with_playing(data.playing()),
                 "piano_roll_horizontal",
                 "piano_roll_ruler_vertical"
             ),
@@ -300,10 +302,13 @@ pub fn piano_roll_view(
                     .on_paste(Box::new(|data| track_change_type_RiffPasteSelected(data)))
                     .on_edit_cursor_position_change(Box::new(|data, position| {
                         data.piano_roll_state.piano_roll_edit_cursor_position = position;
-                    })),
+                    }))
+                    .with_track_cursor_time_in_beats(play_cursor_position)
+                    .with_draw_play_cursor(draw_play_cursor)
+                    .with_playing(data.playing()),
                 "piano_roll_horizontal",
                 "piano_roll_view_vertical"
             )
-        )),
+        )).gap(0.px()),
     ).split_point(0.1)
 }

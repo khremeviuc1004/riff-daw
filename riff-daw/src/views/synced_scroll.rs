@@ -228,7 +228,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for SyncScrollArea<W> {
                     _ => Vec2::ZERO,
                 } * ctx.get_scale_factor();
                 self.apply_interactive_offset(ctx, self.offset + delta);
-                self.apply_interactive_offset(ctx, self.offset + delta);
             }
             PointerEvent::Down(button) => {
                 let pos = ctx.local_position(button.state.position);
@@ -437,10 +436,10 @@ pub struct SyncedScroll<State, Action, V> {
 
 /// Routing id for this view's child content. `message` consumes one path
 /// element (via `take_first`) to distinguish child messages from this view's
-/// own `Scrolled` actions, so `build` must push the matching id around the
-/// child. Without it every descendant's recorded id path is one element too
-/// short, and message routing into nested sequences (e.g. the track panel's
-/// `Vec` of rows) reads a stale index and panics.
+/// own `Scrolled` actions, so `build`, `rebuild` and `teardown` must all push
+/// the matching id around the child. Without it every descendant's recorded
+/// id path is one element too short, so message routing into nested sequences
+/// (e.g. the track panel's `Vec` of rows) reads a stale index and panics.
 const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
 
 /// A two-axis scroll area around `child`, synchronised per axis through the app state.
@@ -505,8 +504,10 @@ where
         }
 
         let child_element = SyncScrollArea::content_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, child_state, ctx, child_element, app_state);
+        ctx.with_id(CONTENT_VIEW_ID, |ctx| {
+            self.child
+                .rebuild(&prev.child, child_state, ctx, child_element, app_state);
+        });
     }
 
     fn teardown(
@@ -516,7 +517,9 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         let child_element = SyncScrollArea::content_mut(&mut element);
-        self.child.teardown(child_state, ctx, child_element);
+        ctx.with_id(CONTENT_VIEW_ID, |ctx| {
+            self.child.teardown(child_state, ctx, child_element);
+        });
     }
 
     fn message(
@@ -526,11 +529,18 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if message.take_first().is_some() {
-            let child_element = SyncScrollArea::content_mut(&mut element);
-            return self
-                .child
-                .message(child_state, message, child_element, app_state);
+        match message.take_first() {
+            Some(CONTENT_VIEW_ID) => {
+                let child_element = SyncScrollArea::content_mut(&mut element);
+                return self
+                    .child
+                    .message(child_state, message, child_element, app_state);
+            }
+            None => {}
+            _ => {
+                tracing::warn!("Got unexpected id path in SyncedScroll::message");
+                return MessageResult::Stale;
+            }
         }
 
         match message.take_message::<Scrolled>() {

@@ -2,6 +2,7 @@ use masonry::properties::types::{AsUnit, CrossAxisAlignment, MainAxisAlignment};
 use uuid::Uuid;
 use xilem::view::{button, flex_col, flex_row, label, sized_box, split, text_input, Flex, FlexExt, FlexSequence, FlexSpacer};
 use crate::actions::{daw_events_RiffGridAdd};
+use crate::domain::PlayMode;
 use crate::event::OperationModeType;
 use crate::icons::ICON_PLUS;
 use crate::state::RiffDAWState;
@@ -22,6 +23,8 @@ pub fn riff_grid_toolbar(
 pub fn riff_grid_view(
     data: &RiffDAWState
 ) -> impl WidgetView<RiffDAWState, ()> + 'static {
+    let draw_play_cursor = data.playing() && data.play_mode() == PlayMode::RiffGrid;
+    let play_cursor_position = data.play_position_in_beats();
     split (
         flex_col((
             sized_box(label("")).height(30.px()),
@@ -58,7 +61,7 @@ pub fn riff_grid_view(
         )),
         flex_col((
             synced_scroll(
-                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0).with_play_cursor(play_cursor_position, draw_play_cursor).with_playing(data.playing()),
                 "riff_grid_horizontal",
                 "riff_grid_ruler_vertical"
             ),
@@ -72,6 +75,9 @@ pub fn riff_grid_view(
                         OperationModeType::PointMode,
                         data.riff_grid_view_state.selected_riff_grid_uuid.clone()
                     )
+                        .with_track_cursor_time_in_beats(play_cursor_position)
+                        .with_draw_play_cursor(draw_play_cursor)
+                        .with_playing(data.playing())
                 ),
                 "riff_grid_horizontal",
                 "riff_grid_view_vertical"

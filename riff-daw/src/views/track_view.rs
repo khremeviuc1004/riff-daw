@@ -3,7 +3,7 @@ use xilem::view::{button, flex_col, flex_row, label, portal, sized_box, split, t
 use xilem::WidgetView;
 use crate::actions::{track_change_type_RiffReferenceAdd, track_change_type_RiffReferenceCopySelected, track_change_type_RiffReferenceCutSelected, track_change_type_RiffReferenceDelete, track_change_type_RiffReferencePaste, track_change_type_RiffReferencesDeselectAll, track_change_type_RiffReferencesSelectAll, track_change_type_RiffReferencesSelectMultiple};
 use crate::constants::MUSICAL_ITEM_LENGTH_OPTIONS;
-use crate::domain::GeneralTrackType;
+use crate::domain::{GeneralTrackType, PlayMode};
 use crate::event::{OperationModeType};
 use crate::icons::{ICON_ARROW_LOOP_RIGHT, ICON_AUTOMATION, ICON_CLIPBOARD, ICON_COPY, ICON_CUT, ICON_DESELECT, ICON_EDIT, ICON_MINUS, ICON_MUSIC, ICON_PLAYER_SKIP_BACK, ICON_PLUS, ICON_POINTER, ICON_ROLLERCOASTER, ICON_SCALE, ICON_SELECT_ALL, ICON_ZOOM};
 use crate::state::RiffDAWState;
@@ -73,6 +73,8 @@ pub fn track_view_toolbar(
 pub fn track_view(
     state: &RiffDAWState,
 ) -> impl WidgetView<RiffDAWState, ()> + 'static {
+    let draw_play_cursor = state.playing() && state.play_mode() == PlayMode::Song;
+    let play_cursor_position = state.play_position_in_beats();
     split(
         flex_col((
             sized_box(label("")).height(30.px()),
@@ -88,10 +90,10 @@ pub fn track_view(
                 "track_panel_sequence_horizontal",
                 "track_view_vertical"
             ),
-        )),
+        )).gap(0.px()),
         flex_col((
             synced_scroll(
-                beat_grid_ruler(1.0, 50.0, 4, 60000.0),
+                beat_grid_ruler(1.0, 50.0, 4, 60000.0).with_play_cursor(play_cursor_position, draw_play_cursor).with_playing(state.playing()),
                 "track_grid_horizontal",
                 "track_grid_ruler_vertical"
             ),
@@ -111,12 +113,16 @@ pub fn track_view(
                     .on_paste(Box::new(|data| track_change_type_RiffReferencePaste(data)))
                     .on_edit_cursor_position_change(Box::new(|data, position| {
                         data.track_grid_state.track_grid_edit_cursor_position = position;
-                    })),
+                    }))
+                    .with_track_cursor_time_in_beats(play_cursor_position)
+                    .with_draw_play_cursor(draw_play_cursor)
+                    .with_playing(state.playing()),
                 "track_grid_horizontal",
                 "track_view_vertical"
             )
                 .flex(1.0)
         ))
-            .must_fill_major_axis(true),
+            .must_fill_major_axis(true)
+            .gap(0.px()),
     ).split_point(0.2)
 }

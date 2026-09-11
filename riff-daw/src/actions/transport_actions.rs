@@ -161,7 +161,7 @@ state.set_playing(false);
             }
             let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate / block_size) as i32;
             if let Some(audio_layer_sender) = state.audio_layer_sender.as_ref() {
-                match audio_layer_sender.send(AudioLayerEvent::AudioLayerInward(AudioLayerInwardEvent::Play(false, number_of_blocks, 0))) {
+                match audio_layer_sender.send(AudioLayerEvent::AudioLayerInward(AudioLayerInwardEvent::Stop)) {
                     Ok(_) => (),
                     Err(error) => println!("Problem using tx_to_audio to send message to jack layer when stopping play: {}", error),
                 }

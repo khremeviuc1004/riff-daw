@@ -15,6 +15,16 @@ pub fn main_view(
         140.0
     };
 
+    let playing = data.playing();
+    if playing {
+        let play_position_in_beats = data.play_position_in_beats();
+        let time_signature_numerator = data.time_signature_numerator as f64;
+        let current_bar = (play_position_in_beats / time_signature_numerator) as i32 + 1;
+        let current_beat_in_bar = (play_position_in_beats % time_signature_numerator) as i32 + 1;
+        data.bar_beat_display_text = format!("{:03}:{:02}", current_bar, current_beat_in_bar);
+    }
+    let bar_beat_display_text = data.bar_beat_display_text.clone();
+
     (
         flex_row(main_view_toolbar(data)).gap(Length::px(1.)).gap(1.px()),
         indexed_stack(
@@ -36,7 +46,7 @@ pub fn main_view(
                         }
                     }
                 ),
-                transport(),
+                transport(bar_beat_display_text, playing),
             )
         ),
         split(

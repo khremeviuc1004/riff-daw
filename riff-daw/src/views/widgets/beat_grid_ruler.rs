@@ -9,6 +9,7 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::{
     BoxConstraints, ChildrenIds, EventCtx, LayoutCtx, PaintCtx, PointerEvent,
     PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
+    WidgetMut,
 };
 use masonry::kurbo::{Affine, BezPath, Point, Rect, Size, Stroke, Vec2};
 use masonry::palette;
@@ -32,6 +33,9 @@ pub struct BeatGridRulerWidget {
     zoom_vertical: f64,
     zoom_factor: f64,
     beats_per_bar: i32,
+    track_cursor_time_in_beats: f64,
+    draw_play_cursor: bool,
+    playing: bool,
 }
 
 impl BeatGridRulerWidget {
@@ -57,6 +61,9 @@ impl BeatGridRulerWidget {
             zoom_vertical: zoom,
             zoom_factor: 0.01,
             beats_per_bar,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: false,
+            playing: false,
         }
     }
 
@@ -76,6 +83,9 @@ impl BeatGridRulerWidget {
             zoom_vertical,
             zoom_factor: 0.01,
             beats_per_bar,
+            track_cursor_time_in_beats: 0.0,
+            draw_play_cursor: false,
+            playing: false,
         }
     }
 
@@ -100,11 +110,54 @@ impl BeatGridRulerWidget {
     }
 
     /// Set the vertical zoom level.
-    pub fn set_vertical_zoom(&mut self, zoom: f64) {
+pub fn set_vertical_zoom(&mut self, zoom: f64) {
         self.zoom_vertical = zoom;
     }
 
-    /// The current horizontal zoom level.
+    /// Set the ruler's track cursor time in beats.
+    pub fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+    }
+
+    /// Set whether the ruler draws the play cursor.
+    pub fn set_draw_play_cursor(&mut self, draw_play_cursor: bool) {
+        self.draw_play_cursor = draw_play_cursor;
+    }
+
+    /// Set whether the transport is currently playing. While playing, the ruler
+    /// keeps requesting animation frames so the play cursor tracks the play
+    /// position live.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
+    }
+
+    /// Update the play cursor data (position, whether it is drawn and whether
+    /// the transport is playing) from the app state. Requests a repaint when
+    /// anything changes, and keeps requesting animation frames while playing so
+    /// the play cursor refreshes on every position change even though position
+    /// updates from the audio thread only arrive in bursts.
+    pub fn update_play_cursor(
+        this: &mut WidgetMut<'_, Self>,
+        track_cursor_time_in_beats: f64,
+        draw_play_cursor: bool,
+        playing: bool,
+    ) {
+        if this.widget.track_cursor_time_in_beats != track_cursor_time_in_beats
+            || this.widget.draw_play_cursor != draw_play_cursor
+            || this.widget.playing != playing
+        {
+            this.ctx.request_render();
+        }
+        this.widget.track_cursor_time_in_beats = track_cursor_time_in_beats;
+        this.widget.draw_play_cursor = draw_play_cursor;
+        if this.widget.playing != playing {
+            this.widget.playing = playing;
+            if playing {
+                this.ctx.request_anim_frame();
+            }
+        }
+    }
+
     pub fn zoom_horizontal(&self) -> f64 {
         self.zoom_horizontal
     }
@@ -221,6 +274,24 @@ impl BeatGridRulerWidget {
         }
     }
 
+    /// Paint the play cursor line at the current track cursor time.
+    fn paint_play_cursor(&mut self, context: &mut PaintCtx<'_>, scene: &mut Scene) {
+        let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
+        let x = self.track_cursor_time_in_beats * adjusted_beat_width_in_pixels;
+        let bounds: Rect = context.size().to_rect();
+
+        let mut path = BezPath::new();
+        path.move_to(Point { x, y: bounds.y0 });
+        path.line_to(Point { x, y: bounds.y1 });
+        scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            Color::from_rgba8(0, 0, 255, 255),
+            None,
+            &path,
+        );
+    }
+
     /// Render a single line of text into the scene.
     fn draw_text(
         &self,
@@ -309,6 +380,9 @@ impl Widget for BeatGridRulerWidget {
         );
 
         self.paint_horizontal_scale(ctx, scene);
+        if self.draw_play_cursor {
+            self.paint_play_cursor(ctx, scene);
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -332,7 +406,24 @@ impl Widget for BeatGridRulerWidget {
         trace_span!("BeatGridRuler", id = id.trace())
     }
 
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if let Update::WidgetAdded = event {
+            if self.playing {
+                ctx.request_anim_frame();
+            }
+        }
+        ctx.request_paint_only();
+    }
+
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
+    ) {
+        if self.playing {
+            ctx.request_anim_frame();
+        }
         ctx.request_paint_only();
     }
 

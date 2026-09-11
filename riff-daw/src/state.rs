@@ -601,6 +601,7 @@ pub struct RiffDAWState {
     pub note_expression_type: NoteExpressionType,
     pub play_mode: PlayMode,
     pub play_position_in_frames: u32,
+    pub play_position_in_beats: f64,
     pub playing: bool,
     pub playing_riff_set: Option<String>,
     pub playing_riff_sequence: Option<String>,
@@ -611,6 +612,7 @@ pub struct RiffDAWState {
     pub playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>,
     pub parameter_index: Option<i32>,
     pub play_position: f64,
+    pub bar_beat_display_text: String,
     pub project: Arc<Mutex<Project>>,
     pub riff_view: RiffView,
     pub recording: bool,
@@ -702,6 +704,7 @@ impl RiffDAWState {
             playing_riff_grid_summary_data: None,
             playing_riff_arrangement_summary_data: None,
             play_position_in_frames: 0,
+            play_position_in_beats: 0.0,
             track_event_copy_buffer: vec![],
             riff_grid_riff_references_copy_buffer: vec![],
             note_expression_id: -1,
@@ -741,6 +744,7 @@ impl RiffDAWState {
             main_view: RiffDAWMainView::Track,
             main_window_id: WindowId::next(),
             play_position: 0.0,
+            bar_beat_display_text: "001:01".to_string(),
             riff_view: RiffView::RiffSet,
             running: true,
             selected_loop: usize::MAX,
@@ -1637,6 +1641,16 @@ impl RiffDAWState {
         self.play_position_in_frames = play_position_in_frames;
     }
 
+    /// Get the freedom daw state's play position in beats.
+    pub fn play_position_in_beats(&self) -> f64 {
+        self.play_position_in_beats
+    }
+
+    /// Set the freedom daw state's play position in beats.
+    pub fn set_play_position_in_beats(&mut self, play_position_in_beats: f64) {
+        self.play_position_in_beats = play_position_in_beats;
+    }
+
     /// Get a reference to the freedom daw state's track event copy buffer.
     pub fn track_event_copy_buffer(&self) -> &[TrackEvent] {
         self.track_event_copy_buffer.as_ref()
@@ -2365,7 +2379,7 @@ impl RiffDAWState {
         let mut number_of_blocks = 0;
 
         self.set_playing(true);
-        self.set_play_mode(PlayMode::Song);
+        self.set_play_mode(PlayMode::RiffGrid);
 
         if let Ok(mut project) = self.project.lock() {
             let bpm = project.song().tempo();
@@ -3862,7 +3876,9 @@ impl Default for RiffDAWState {
             parameter_index: None,
             play_mode: PlayMode::Song,
             play_position: 0.0,
+            bar_beat_display_text: "001:01".to_string(),
             play_position_in_frames: 0,
+            play_position_in_beats: 0.0,
             playing: false,
             playing_riff_set: None,
             playing_riff_sequence: None,

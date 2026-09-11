@@ -197,6 +197,7 @@ pub fn daw_events_PlayPositionInBeats(state: &mut RiffDAWState, play_position_in
             let block_size = state.configuration.audio.block_size as f64;
             let play_position_in_frames = 60.0 * play_position_in_beats / bpm * sample_rate;
 
+            state.set_play_position_in_beats(play_position_in_beats);
             state.set_play_position_in_frames(play_position_in_frames as u32);
 
             {

@@ -285,6 +285,7 @@ pub fn midi_AudioLayerOutwardEvent_PlayPositionInFrames(state: &mut RiffDAWState
             // gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
 
             // debug!("Play position in frames: {}", play_position_in_frames);
+            state.set_play_position_in_beats(play_position_in_beats);
             state.set_play_position_in_frames(play_position_in_frames);
         },
         Err(_) => debug!("Main - rx_ui processing loop - play position - could not get lock on state"),

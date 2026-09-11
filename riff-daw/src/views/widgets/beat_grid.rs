@@ -9,7 +9,7 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, BoxConstraints, ChildrenIds, ErasedAction, EventCtx, LayoutCtx,
     NewWidget, NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Widget, WidgetId,
+    TextEvent, Widget, WidgetId, WidgetMut,
 };
 use masonry::kurbo::{Affine, BezPath, Line, Point, Rect, Size, Stroke, Vec2};
 use masonry::palette;
@@ -3335,6 +3335,8 @@ pub struct BeatGridWidget{
 
     pub draw_play_cursor: bool,
 
+    playing: bool,
+
     pub drawing_area_type: DrawingAreaType,
 
     pub last_mouse_movement_time_in_millis: u128,
@@ -3523,6 +3525,23 @@ impl Widget for BeatGridWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, props: &mut PropertiesMut<'_>, event: &Update) {
+        if let Update::WidgetAdded = event {
+            if self.playing {
+                ctx.request_anim_frame();
+            }
+        }
+        ctx.request_paint_only();
+    }
+
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
+    ) {
+        if self.playing {
+            ctx.request_anim_frame();
+        }
         ctx.request_paint_only();
     }
 
@@ -3641,6 +3660,8 @@ impl BeatGridWidget{
 
             draw_play_cursor: true,
 
+            playing: false,
+
             drawing_area_type,
 
             last_mouse_movement_time_in_millis: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
@@ -3752,6 +3773,8 @@ impl BeatGridWidget{
             windowed_zoom_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
+
+            playing: false,
 
             drawing_area_type,
 
@@ -3869,6 +3892,8 @@ impl BeatGridWidget{
             windowed_zoom_drag_cycle: DragCycle::NotStarted,
 
             draw_play_cursor: true,
+
+            playing: false,
 
             drawing_area_type,
 
@@ -4298,6 +4323,45 @@ impl BeatGridWidget{
     /// Set the beat grid's track cursor time in beats.
     pub fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
         self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+    }
+
+    /// Set whether the beat grid draws the play cursor.
+    pub fn set_draw_play_cursor(&mut self, draw_play_cursor: bool) {
+        self.draw_play_cursor = draw_play_cursor;
+    }
+
+    /// Set whether the transport is currently playing. While playing, the grid
+    /// keeps requesting animation frames so the play cursor tracks the play
+    /// position live.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
+    }
+
+    /// Update the play cursor data (position, whether it is drawn and whether
+    /// the transport is playing) from the app state. Requests a repaint when
+    /// anything changes, and keeps requesting animation frames while playing so
+    /// the play cursor refreshes on every position change even though position
+    /// updates from the audio thread only arrive in bursts.
+    pub fn update_play_cursor(
+        this: &mut WidgetMut<'_, Self>,
+        track_cursor_time_in_beats: f64,
+        draw_play_cursor: bool,
+        playing: bool,
+    ) {
+        if this.widget.track_cursor_time_in_beats != track_cursor_time_in_beats
+            || this.widget.draw_play_cursor != draw_play_cursor
+            || this.widget.playing != playing
+        {
+            this.ctx.request_render();
+        }
+        this.widget.track_cursor_time_in_beats = track_cursor_time_in_beats;
+        this.widget.draw_play_cursor = draw_play_cursor;
+        if this.widget.playing != playing {
+            this.widget.playing = playing;
+            if playing {
+                this.ctx.request_anim_frame();
+            }
+        }
     }
 
     /// Get the beat grid's edit cursor time in beats.

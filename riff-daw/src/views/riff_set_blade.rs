@@ -6,7 +6,7 @@ use crate::event::{OperationModeType};
 use crate::views::{riff_track_grid_with_size};
 use crate::state::{RiffDAWState};
 use crate::views::*;
-use crate::domain::{Track};
+use crate::domain::{PlayMode, Track};
 
 pub fn riff_set_head_panel_sequence<State>(
     state: &RiffDAWState,
@@ -61,7 +61,19 @@ pub fn riff_set_riffs_panel_sequence<State>(
     state: &RiffDAWState,
 ) -> impl FlexSequence<RiffDAWState> {
     let track_uuid_in_order = state.project.lock().unwrap().song.tracks().iter().map(|track| track.uuid().clone()).collect::<Vec<_>>();
+    let playing = state.playing();
+    let play_cursor_position = state.play_position_in_beats();
+    let playing_riff_set = state.playing_riff_set().clone();
+    let play_mode = state.play_mode();
     let riff_set_columns = state.project.lock().unwrap().song.riff_sets().iter().map(|riff_set| {
+        let is_playing_riff_set = playing
+            && play_mode == PlayMode::RiffSet
+            && playing_riff_set.as_ref() == Some(&riff_set.uuid);
+        let track_cursor_time_in_beats = if is_playing_riff_set {
+            play_cursor_position
+        } else {
+            0.0
+        };
         flex_col(
             track_uuid_in_order.iter().map(|track_uuid| riff_track_grid_with_size(
                 state.project.clone(),
@@ -72,6 +84,9 @@ pub fn riff_set_riffs_panel_sequence<State>(
                 track_uuid.clone(),
                 riff_set.uuid.clone(),
             )
+                .with_track_cursor_time_in_beats(track_cursor_time_in_beats)
+                .with_draw_play_cursor(is_playing_riff_set)
+                .with_playing(is_playing_riff_set)
                 .on_riff_set_track_increment_riff(Box::new(|data, riff_set_uuid, track_uuid| daw_events_RiffSetTrackIncrementRiff(data, riff_set_uuid, track_uuid)))
                 .on_riff_select(Box::new(|data, riff_set_uuid, track_uuid| track_change_type_RiffSelect(data, riff_set_uuid, Some(track_uuid))))
                 .on_riff_add(Box::new(|data, uuid, name, track_uuid, duration| track_change_type_RiffAdd(data, name, duration, Some(track_uuid))))

@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -8,7 +7,7 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation, DAWItemID};
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -47,10 +46,10 @@ impl DAWUtils {
             Ordering::Less
         }
         else {
-            if let TrackEvent::Measure(measure) = &a {
+            if let TrackEvent::Measure(_measure) = &a {
                 Ordering::Greater
             }
-            else if let TrackEvent::Measure(measure) = &b {
+            else if let TrackEvent::Measure(_measure) = &b {
                 Ordering::Less
             }
             else {
@@ -717,7 +716,7 @@ impl DAWUtils {
         events_all
     }
 
-    pub fn convert_param_events_with_timing_in_frames_to_clap(plugin_param_events: &Vec<&PluginParameter>, midi_channel: i32, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) -> Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> {
+    pub fn convert_param_events_with_timing_in_frames_to_clap(plugin_param_events: &Vec<&PluginParameter>, _midi_channel: i32, param_info: &simple_clap_host_helper_lib::plugin::ext::params::ParamInfo) -> Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> {
         let mut events_all: Vec<simple_clap_host_helper_lib::plugin::instance::process::Event> = Vec::new();
 
         for event in plugin_param_events.iter() {
@@ -756,7 +755,7 @@ impl DAWUtils {
         sample_rate: f64,
         _midi_channel: i32,
         time_signature_numerator: f64,
-        time_signature_denominator: f64,
+        _time_signature_denominator: f64,
     ) -> Vec<TrackEvent> {
         let mut events_all: Vec<TrackEvent> = Vec::new();
 

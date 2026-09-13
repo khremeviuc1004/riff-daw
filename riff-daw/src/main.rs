@@ -3,11 +3,11 @@ use std::cell::RefCell;
 use std::thread;
 
 use apres::MIDI;
-use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, VST_PATH_ENVIRONMENT_VARIABLE_NAME, CLAP_PATH_ENVIRONMENT_VARIABLE_NAME, DAW_AUTO_SAVE_THREAD_NAME};
+use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, DAW_AUTO_SAVE_THREAD_NAME};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use flexi_logger::{LogSpecification, Logger};
-use gtk::{Adjustment, ButtonsType, ComboBoxText, DrawingArea, Frame, glib, MessageDialog, MessageType, prelude::{ActionMapExt, AdjustmentExt, ApplicationExt, Cast, ComboBoxExtManual, ComboBoxTextExt, ContainerExt, DialogExt, EntryExt, GtkWindowExt, LabelExt, ProgressBarExt, ScrolledWindowExt, SpinButtonExt, TextBufferExt, TextViewExt, ToggleToolButtonExt, WidgetExt}, SpinButton, Window, WindowType, Viewport};
-use gtk::prelude::BinExt;
+use flexi_logger::Logger;
+use gdk4_x11::X11Surface;
+use gtk4::{glib, prelude::*, Adjustment, ButtonsType, DrawingArea, Frame, MessageDialog, MessageType, SpinButton, Viewport, Window};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::MidiOut;
@@ -28,15 +28,18 @@ use history::*;
 use lua_api::*;
 use state::*;
 use ui::*;
+use crate::gtk4_compat::{GtkContainerCompat, GtkDialogRunCompat};
 
 use crate::{grid::Grid, utils::DAWUtils};
 use crate::audio::Audio;
-use crate::constants::{EVENT_DELETION_BEAT_TOLERANCE, VST3_PATH_ENVIRONMENT_VARIABLE_NAME};
-use crate::utils::CalculatedSnap;
-use crate::vst3_cxx_bridge::ffi;
+use crate::constants::EVENT_DELETION_BEAT_TOLERANCE;
 
+mod combo_box_text_compat;
 mod constants;
 mod domain;
+mod gtk4_compat;
+#[macro_use]
+mod gladis4;
 mod ui;
 mod state;
 mod event;
@@ -50,10 +53,6 @@ mod vst3_cxx_bridge;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-extern {
-    fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
-}
 
 thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
     rayon::ThreadPoolBuilder::new()
@@ -83,7 +82,7 @@ fn main() {
     let (tx_from_ui, rx_from_ui) = unbounded::<DAWEvents>();
     let (tx_to_audio, rx_to_audio) = unbounded::<AudioLayerInwardEvent>();
     let (jack_midi_sender_ui, jack_midi_receiver_ui) = unbounded::<AudioLayerOutwardEvent>();
-    let (jack_midi_sender, jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
+    let (jack_midi_sender, _jack_midi_receiver) = unbounded::<AudioLayerOutwardEvent>();
     let (jack_time_critical_midi_sender, jack_time_critical_midi_receiver) = unbounded::<AudioLayerTimeCriticalOutwardEvent>();
 
     let state = {
@@ -130,7 +129,7 @@ fn main() {
     let lua = Lua::new();
     let _ = lua.globals().set(LUA_GLOBAL_STATE, LuaState {state: state.clone(), tx_from_ui: tx_from_ui.clone()});
 
-    gtk::init().expect("Problem starting up GTK3.");
+    gtk4::init().expect("Problem starting up GTK.");
 
     let mut gui = {
         let tx_from_ui = tx_from_ui.clone();
@@ -138,7 +137,8 @@ fn main() {
         MainWindow::new(tx_from_ui, tx_to_audio.clone(), state)
     };
 
-    if let Some(application) = gui.ui.wnd_main.application() {
+    {
+        let application = gui.application.clone();
         application.connect_startup(build_ui);
     }
 
@@ -158,6 +158,9 @@ fn main() {
     let _ = tx_from_ui.send(DAWEvents::UpdateUIPlugins);
 
     start_autosave(state.clone(), autosave_keep_alive.clone());
+
+    let _wnd_main = gui.ui.wnd_main.clone();
+    let application = gui.application.clone();
 
     // handle incoming events in the gui thread - lots of ui interaction
     {
@@ -221,7 +224,7 @@ fn main() {
                 delay_count += 1;
             }
 
-            glib::Continue(true)
+            glib::ControlFlow::Continue
         });
     }
 
@@ -247,7 +250,7 @@ fn main() {
         }
     }
 
-    gtk::main();
+    application.run();
 
 
     match state.lock() {
@@ -277,7 +280,7 @@ pub fn start_autosave(state: Arc<Mutex<DAWState>>, autosave_keep_alive: Arc<Mute
 }
 
 
-pub fn build_ui(application: &gtk::Application) {
+pub fn build_ui(application: &gtk4::Application) {
     let test_action = gio::SimpleAction::new("test", None);
     test_action.connect_activate(move |_, _| {
         debug!("%%%%%%%%%%%%%%%%%%%%%% Test action executed!");
@@ -387,8 +390,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.set_current_file_path(None);
                         let mut instrument_track_senders2 = HashMap::new();
                         let mut instrument_track_receivers2 = HashMap::new();
-                        let mut sample_references = HashMap::new();
-                        let mut samples_data = HashMap::new();
+                        let sample_references = HashMap::new();
+                        let samples_data = HashMap::new();
                         let sample_rate = state.configuration.audio.sample_rate as f64;
                         let block_size = state.configuration.audio.block_size as f64;
                         let tempo = state.project().song().tempo();
@@ -435,8 +438,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::OpenFile(path) => {
                 gui.clear_ui();
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Opening {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Open");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Open"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 let state_arc = state.clone();
                 let state = state_arc;
@@ -467,7 +470,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         state.load_from_file(
                             vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone());
                     }
-                    if let Ok(mut state) = state.lock() {
+                    if let Ok(state) = state.lock() {
                         let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Setting up VST24 time info...".to_string()));
                         let tempo = state.project().song().tempo();
 
@@ -490,7 +493,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                     }
                     match state.lock() {
-                        Ok(mut state) => {
+                        Ok(state) => {
                             let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to track background processor...".to_string()));
                             let tempo = state.project().song().tempo();
                             for track in state.project().song().tracks() {
@@ -506,21 +509,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - Open File - could not get lock on state"),
                     }
-                    if let Ok(mut state) = state.lock() {
+                    if let Ok(state) = state.lock() {
                         let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending block size to the audio layer...".to_string()));
                         match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                         }
                     }
-                    if let Ok(mut state) = state.lock() {
+                    if let Ok(state) = state.lock() {
                         let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to the audio layer...".to_string()));
                         match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
                         }
                     }
-                    if let Ok(mut state) = state.lock() {
+                    if let Ok(state) = state.lock() {
                         let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending sample rate to the audio layer...".to_string()));
                         match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
                             Ok(_) => (),
@@ -556,8 +559,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             },
             DAWEvents::Save => {
                 gui.ui.dialogue_progress_bar.set_text(Some("Saving..."));
-                gui.ui.progress_dialogue.set_title("Save");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Save"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 {
                     let state = state.clone();
@@ -586,8 +589,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             },
             DAWEvents::SaveAs(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Saving as {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Save As");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Save As"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 {
                     let state = state.clone();
@@ -615,8 +618,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::ImportMidiFile(path) => {
                 gui.clear_ui();
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Importing midi file {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Import Midi File");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Import Midi File"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 {
                     let state = state.clone();
@@ -841,8 +844,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::ExportMidiFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting midi file as {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Export Midi File");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Export Midi File"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Render;
@@ -871,8 +874,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::ExportRiffsToMidiFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting riffs to midi file as {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Export riffs to midi file");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Export riffs to midi file"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Render;
@@ -901,8 +904,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::ExportRiffsToSeparateMidiFiles(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting riffs to separate midi files to directory {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Export riffs to separate midi files");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Export riffs to separate midi files"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Render;
@@ -931,8 +934,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::ExportWaveFile(path) => {
                 gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting wave file as {}...", path.to_str().unwrap()).as_str()));
-                gui.ui.progress_dialogue.set_title("Export Wav File");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Export Wav File"));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Render;
@@ -947,8 +950,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::ScanPlugins => {
                 gui.ui.dialogue_progress_bar.set_text(Some("Scanning for plugins..."));
-                gui.ui.progress_dialogue.set_title("Scanning Plugins...");
-                gui.ui.progress_dialogue.show_all();
+                gui.ui.progress_dialogue.set_title(Some("Scanning Plugins..."));
+                gui.ui.progress_dialogue.set_visible(true);
 
                 let state = state.clone();
                 let tx_from_ui = tx_from_ui.clone();
@@ -958,7 +961,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let mut vst3_plugin_paths = vec![];
 
                     match state.lock() {
-                        Ok(mut state) => {
+                        Ok(state) => {
                             debug!("Main - rx_ui processing loop - DAWEvents::ScanPlugins.");
                             vst24_plugin_paths = state.configuration.vst24_plugin_paths.clone();
                             clap_plugin_paths = state.configuration.clap_plugin_paths.clone();
@@ -1007,7 +1010,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::UpdateUIPlugins => {
                 match state.lock() {
-                    Ok(mut state) => {
+                    Ok(state) => {
                         gui.update_available_audio_plugins_in_ui(&state.configuration.scanned_instrument_plugins.successfully_scanned, &state.configuration.scanned_effect_plugins.successfully_scanned);
                     }
                     Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::UpdateUIPlugins - could not get lock on state"),
@@ -1031,7 +1034,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 message_dialogue.run();
                 message_dialogue.close();
-                message_dialogue.hide();
+                message_dialogue.set_visible(false);
             }
             DAWEvents::AutomationViewShowTypeChange(show_type) => {
                 let type_to_show = match show_type {
@@ -1290,8 +1293,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if let Ok(mut grid) = grid_arc.lock() {
                                 let zoom_horizontal = grid.zoom_horizontal();
                                 let zoom_vertical = grid.zoom_vertical();
-                                let adjusted_horizontal_zoom = zoom_horizontal * horizontal_scale_up;
-                                let adjusted_vertical_zoom = zoom_vertical * vertical_scale_up;
+                                let _adjusted_horizontal_zoom = zoom_horizontal * horizontal_scale_up;
+                                let _adjusted_vertical_zoom = zoom_vertical * vertical_scale_up;
 
                                 grid.set_horizontal_zoom(zoom_horizontal * horizontal_scale_up);
                                 grid.set_vertical_zoom(zoom_vertical * vertical_scale_up);
@@ -1322,7 +1325,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let mut track_uuid = None;
                     match state.lock() {
                         Ok(mut state) => {
-                            let tx_ui = tx_from_ui.clone();
+                            let _tx_ui = tx_from_ui.clone();
                             let mut instrument_track_senders_local = HashMap::new();
                             let mut instrument_track_receivers_local = HashMap::new();
                             let sample_rate = state.configuration.audio.sample_rate as f64;
@@ -1608,7 +1611,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             let instrument = track.instrument_mut();
                                             if let Some(window) = audio_plugin_windows.get(&instrument.uuid().to_string()) {
                                                 if window.is_visible() {
-                                                    window.hide();
+                                                    window.set_visible(false);
                                                 }
                                             }
                                             audio_plugin_windows.remove_entry(&instrument.uuid().to_string());
@@ -1635,21 +1638,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         let instrument = track.instrument_mut();
                                         if let Some(window) = audio_plugin_windows.get(&instrument.uuid().to_string()) {
                                             if window.is_visible() {
-                                                window.hide();
+                                                window.set_visible(false);
                                             } else {
-                                                window.show_all();
+                                                window.set_visible(true);
                                             }
                                         } else {
-                                            let win = Window::new(WindowType::Toplevel);
-                                            win.set_title(format!("Track: {} - Instrument: {}", track_name, instrument.name()).as_str());
-                                            win.connect_delete_event(|window, _| {
-                                                window.hide();
-                                                gtk::Inhibit(true)
+                                            let win = Window::new();
+                                            win.set_title(Some(format!("Track: {} - Instrument: {}", track_name, instrument.name()).as_str()));
+                                            win.connect_close_request(|window| {
+                                                window.set_visible(false);
+                                                glib::Propagation::Stop
                                             });
                                             win.set_height_request(200);
                                             win.set_width_request(200);
                                             win.set_resizable(true);
-                                            win.show_all();
+                                            win.set_visible(true);
                                             audio_plugin_windows.insert(instrument.uuid().to_string(), win.clone());
 
                                             let window = win.clone();
@@ -1658,14 +1661,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     if window.is_visible() {
                                                         window.queue_draw();
                                                     }
-                                                    glib::Continue(true)
+                                                    glib::ControlFlow::Continue
                                                 });
                                             }
 
                                             unsafe {
-                                                match win.window() {
+                                                match win.surface() {
                                                     Some(gdk_window) => {
-                                                        xid = gdk_x11_window_get_xid(gdk_window);
+                                                        if let Some(x11_surface) = gdk_window.downcast_ref::<X11Surface>() {
+                                                            xid = x11_surface.xid() as u32;
+                                                        }
                                                         debug!("xid: {}", xid);
                                                     },
                                                     None => debug!("Couldn't get gdk window."),
@@ -1763,12 +1768,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 TrackChangeType::RiffAdd(uuid, mut name, length) => {
                     debug!("Main - rx_ui processing loop - riff add");
                     while name.is_empty() {
-                        if gui.ui.riff_name_dialogue.run() == gtk::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
+                        if gui.ui.riff_name_dialogue.run() == gtk4::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
                             name = gui.ui.riff_name_entry.text().to_string();
                             gui.ui.riff_name_entry.set_text("");
                         }
                     }
-                    gui.ui.riff_name_dialogue.hide();
+                    gui.ui.riff_name_dialogue.set_visible(false);
 
                     let mut state = state.clone();
                     match history_manager.lock() {
@@ -1801,12 +1806,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     // display a dialogue and prompt to get the riff name
                     let mut name = "".to_string();
                     while name.is_empty() {
-                        if gui.ui.riff_name_dialogue.run() == gtk::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
+                        if gui.ui.riff_name_dialogue.run() == gtk4::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
                             name = gui.ui.riff_name_entry.text().to_string();
                             gui.ui.riff_name_entry.set_text("");
                         }
                     }
-                    gui.ui.riff_name_dialogue.hide();
+                    gui.ui.riff_name_dialogue.set_visible(false);
 
                     // get the track id
                     let track_id = if let Ok(state) = state.lock() {
@@ -1817,7 +1822,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                     else { None };
 
-                    let mut state_arc = state.clone();
+                    let state_arc = state.clone();
                     let mut state = state.clone();
                     match history_manager.lock() {
                         Ok(mut history) => {
@@ -1864,12 +1869,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     state.set_selected_riff_uuid(track_uuid.clone(), uuid.to_string());
 
                                     while name.is_empty() {
-                                        if gui.ui.riff_name_dialogue.run() == gtk::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
+                                        if gui.ui.riff_name_dialogue.run() == gtk4::ResponseType::Ok && gui.ui.riff_name_entry.text().len() > 0 {
                                             name = gui.ui.riff_name_entry.text().to_string();
                                             gui.ui.riff_name_entry.set_text("");
                                         }
                                     }
-                                    gui.ui.riff_name_dialogue.hide();
+                                    gui.ui.riff_name_dialogue.set_visible(false);
 
                                     // get the riff to copy and clone it
 
@@ -3532,7 +3537,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                             };
                             let automation_type = state.automation_type();
-                            let mut state = state;
+                            let state = state;
                             let track_uuid = state.selected_track();
                             let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
                                 state.selected_riff_uuid(track_uuid)
@@ -3850,7 +3855,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                             };
                             let automation_type = state.automation_type();
-                            let mut state = state;
+                            let state = state;
                             let track_uuid = state.selected_track();
                             let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
                                 state.selected_riff_uuid(track_uuid)
@@ -4054,7 +4059,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 TrackChangeType::AutomationSelectAll => {
                     match state.lock() {
                         Ok(state) => {
-                            let note_expression_type = state.note_expression_type().clone();
+                            let _note_expression_type = state.note_expression_type().clone();
                             let note_expression_note_id = state.note_expression_id();
                             let note_expression_type = state.note_expression_type().clone();
                             let note_expression_port_index = state.note_expression_port_index() as i16;
@@ -4071,7 +4076,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                             };
                             let automation_type = state.automation_type();
-                            let mut state = state;
+                            let state = state;
                             let track_uuid = state.selected_track();
                             let selected_riff_uuid = if let Some(track_uuid) = track_uuid.clone() {
                                 state.selected_riff_uuid(track_uuid)
@@ -4498,21 +4503,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         if effect.uuid().to_string() == effect_uuid {
                                                             if let Some(window) = audio_plugin_windows.get(&effect_uuid) {
                                                                 if window.is_visible() {
-                                                                    window.hide();
+                                                                    window.set_visible(false);
                                                                 } else {
-                                                                    window.show_all();
+                                                                    window.set_visible(true);
                                                                 }
                                                             } else {
-                                                                let win = Window::new(WindowType::Toplevel);
-                                                                win.set_title(format!("Track: {} - Effect: {}", track_name, effect.name()).as_str());
-                                                                win.connect_delete_event(|window, _| {
-                                                                    window.hide();
-                                                                    gtk::Inhibit(true)
-                                                                });
+                                                                let win = Window::new();
+                                                                win.set_title(Some(format!("Track: {} - Effect: {}", track_name, effect.name()).as_str()));
+win.connect_close_request(|window| {
+                                                                     window.set_visible(false);
+                                                                     glib::Propagation::Stop
+                                                                 });
                                                                 win.set_height_request(800);
                                                                 win.set_width_request(900);
                                                                 win.set_resizable(true);
-                                                                win.show_all();
+                                                                win.set_visible(true);
                                                                 audio_plugin_windows.insert(effect_uuid.clone(), win.clone());
 
                                                                 let window = win.clone();
@@ -4521,14 +4526,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                         if window.is_visible() {
                                                                             window.queue_draw();
                                                                         }
-                                                                        glib::Continue(true)
+                                                                        glib::ControlFlow::Continue
                                                                     });
                                                                 }
 
                                                                 unsafe {
-                                                                    match win.window() {
+                                                                    match win.surface() {
                                                                         Some(gdk_window) => {
-                                                                            xid = gdk_x11_window_get_xid(gdk_window);
+                                                                            if let Some(x11_surface) = gdk_window.downcast_ref::<X11Surface>() {
+                                                                                xid = x11_surface.xid() as u32;
+                                                                            }
                                                                             debug!("xid: {}", xid);
                                                                         },
                                                                         None => debug!("Couldn't get gdk window."),
@@ -5040,9 +5047,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         if let Some((_, dialogue)) = gui.track_details_dialogues.iter().find(|(dialogue_track_uuid, _dialogue)| dialogue_track_uuid.to_string() == track_uuid) {
                             if show {
-                                dialogue.track_details_dialogue.show_all();
+                                dialogue.track_details_dialogue.set_visible(true);
                             } else {
-                                dialogue.track_details_dialogue.hide();
+                                dialogue.track_details_dialogue.set_visible(false);
                             }
                         }
                     }
@@ -5054,7 +5061,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let midi_input_devices: Vec<String> = state.midi_devices();
 
                                 let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
-                                let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                                let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
                                 for key in instrument_keys.iter() {
                                     if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
                                         let adjusted_key = key.replace(char::from(0), "");
@@ -5064,7 +5071,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
 
                                 let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
-                                let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                                let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
                                 for key in effect_keys.iter() {
                                     if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
                                         let adjusted_key = key.replace(char::from(0), "");
@@ -5073,7 +5080,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     }
                                 }
 
-                                for (mut track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
+                                for (track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                     if track.uuid().to_string() == track_uuid {
                                         let mut track_number = track_number as i32;
                                         gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &mut track_number, &track);
@@ -5495,7 +5502,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let riff_details = track.riffs_mut().iter_mut().map(|riff| (riff.id(), (riff.name().to_string(), riff.length()))).collect::<HashMap<String, (String, f64)>>();
 
                                 if let Some(riff_ref) = track.riff_refs_mut().iter_mut().find(|riff_ref| {
-                                    if let Some((name, riff_length)) = riff_details.get(&riff_ref.linked_to()) {
+                                    if let Some((_name, riff_length)) = riff_details.get(&riff_ref.linked_to()) {
                                         let riff_ref_end_position = riff_ref.position() + *riff_length;
                                         if riff_ref.position() <= position && position <= riff_ref_end_position {
                                             true
@@ -6074,22 +6081,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         let numerator = state.get_project().song_mut().time_signature_numerator();
                         state.get_project().song_mut().set_time_signature_denominator(time_signature_denominator);
                         if let Some(track_grid) = gui.track_grid() {
-                            if let Ok(mut track) = track_grid.lock() {
+                            if let Ok(_track) = track_grid.lock() {
                                 // grid.set_tempo(time_signature_denominator);
                             }
                         }
-                        if let Some(mut piano_roll_grid) = gui.piano_roll_grid() {
-                            if let Ok(piano_roll) = piano_roll_grid.lock() {
+                        if let Some(piano_roll_grid) = gui.piano_roll_grid() {
+                            if let Ok(_piano_roll) = piano_roll_grid.lock() {
                                 // grid.set_tempo(time_signature_denominator);
                             }
                         }
                         if let Some(automation_grid) = gui.automation_grid() {
-                            if let Ok(mut grid) = automation_grid.lock() {
+                            if let Ok(_grid) = automation_grid.lock() {
                                 // grid.set_tempo(time_signature_denominator);
                             }
                         }
                         if let Some(riff_grid) = gui.riff_grid() {
-                            if let Ok(mut grid) = riff_grid.lock() {
+                            if let Ok(_grid) = riff_grid.lock() {
                                 // grid.set_tempo(time_signature_denominator);
                             }
                         }
@@ -6369,7 +6376,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 let drawing_area_widget_name = format!("{}_{}", riff_set_uuid.as_str(), track_uuid.as_str());
                 if let Some(riff_set_blade) = gui.ui.riff_sets_box.children().iter().find(|child| child.widget_name().to_string().contains(riff_set_uuid.as_str())) {
-                    if let Some(riff_set_box) = riff_set_blade.dynamic_cast_ref::<gtk::Box>() {
+                    if let Some(riff_set_box) = riff_set_blade.dynamic_cast_ref::<gtk4::Box>() {
                         for child in riff_set_box.children().iter() {
                             if child.widget_name().contains(drawing_area_widget_name.as_str()) {
                                 child.queue_draw();
@@ -6676,7 +6683,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 };
                 gui.ui.riff_grid_drawing_area.queue_draw();
             }
-            DAWEvents::RiffGridChange(riff_grid_change_type, track_uuid) => {
+            DAWEvents::RiffGridChange(riff_grid_change_type, _track_uuid) => {
                 match riff_grid_change_type {
                     RiffGridChangeType::RiffReferenceAdd{ track_index, position } => {
                         match state.lock() {
@@ -6854,7 +6861,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
                     RiffGridChangeType::RiffReferencePaste => {
                         match state.lock() {
-                            Ok(mut state) => {
+                            Ok(state) => {
                                 let selected_riff_grid_uuid = if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                                     selected_riff_grid_uuid.clone()
                                 }
@@ -7301,7 +7308,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 } else { None };
 
                                 if let Some(track) = state.project().song().tracks().get(track_index as usize) {
-                                    if let Some((track_uuid, riff_uuid, track_name, riff_name)) = track_riff {
+                                    if let Some((_track_uuid, riff_uuid, _track_name, _riff_name)) = track_riff {
                                         if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_uuid.clone()) {
                                             scroll_notes_into_view(gui, riff);
                                         }
@@ -7388,7 +7395,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     Ok(mut state) => {
                         state.play_riff_grid(tx_to_audio, riff_grid_uuid.clone());
                         state.set_playing_riff_grid(Some(riff_grid_uuid.clone()));
-                        if let Some(playing_riff_grid_summary_data) = state.playing_riff_grid_summary_data() {
+                        if let Some(_playing_riff_grid_summary_data) = state.playing_riff_grid_summary_data() {
                             // gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(&riff_grid_uuid, 0.0, playing_riff_sequence_summary_data);
                         }
                     }
@@ -7740,7 +7747,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::RunLuaScript(script) => {
                 match lua.load(script.as_str()).eval::<MultiValue>() {
                     Ok(values) => {
-                        if let Some(console_output_text_buffer) = gui.ui.scripting_console_output_text_view.buffer() {
+                        let console_output_text_buffer = gui.ui.scripting_console_output_text_view.buffer();
                             let console_output_text = format!("{}\n>> ",
                                                               values
                                                                   .iter()
@@ -7764,18 +7771,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                   .join("\t")
                             );
                             console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_output_text.as_str());
-                        }
                     }
                     Err(error) => {
-                        if let Some(console_output_text_buffer) = gui.ui.scripting_console_output_text_view.buffer() {
+                        let console_output_text_buffer = gui.ui.scripting_console_output_text_view.buffer();
                             let console_output_text = format!("{}\n>> ", error);
                             console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_output_text.as_str());
-                        }
                     }
                 }
             }
             DAWEvents::HideProgressDialogue => {
-                gui.ui.progress_dialogue.hide();
+                gui.ui.progress_dialogue.set_visible(false);
             }
             DAWEvents::RiffSetCopySelectedToTrackViewCursorPosition(uuid) => {
                 // get the current track cursor position and convert it to beats
@@ -7919,7 +7924,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.top_level_vbox.children().iter_mut() {
-                    debug!("Track grid - Track panel height: {}", track_panel.allocation().height);
+                    debug!("Track grid - Track panel height: {}", track_panel.allocation().height());
                     track_panel.set_height_request(widget_height);
                 }
                 // gui.ui.track_panel_scrolled_window.queue_draw();
@@ -7930,7 +7935,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.riff_grid_track_panel.children().iter_mut() {
-                    debug!("Riff grid - Track panel height: {}", track_panel.allocation().height);
+                    debug!("Riff grid - Track panel height: {}", track_panel.allocation().height());
                     track_panel.set_height_request(widget_height);
                 }
                 // gui.ui.track_panel_scrolled_window.queue_draw();
@@ -8028,8 +8033,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                         let mut instrument_track_senders2 = HashMap::new();
                         let mut instrument_track_receivers2 = HashMap::new();
-                        let mut sample_references = HashMap::new();
-                        let mut samples_data = HashMap::new();
+                        let sample_references = HashMap::new();
+                        let samples_data = HashMap::new();
                         let sample_rate = state.configuration.audio.sample_rate as f64;
                         let block_size = state.configuration.audio.block_size as f64;
                         let tempo = state.project().song().tempo();
@@ -8067,10 +8072,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             }
             DAWEvents::RiffArrangementToggleOverview { show } => {
                 if show {
-                    gui.ui.riff_arrangement_overview_drawing_area.show();
+                    gui.ui.riff_arrangement_overview_drawing_area.set_visible(true);
                 }
                 else {
-                    gui.ui.riff_arrangement_overview_drawing_area.hide();
+                    gui.ui.riff_arrangement_overview_drawing_area.set_visible(false);
                 }
             }
         }
@@ -8224,7 +8229,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -8280,7 +8285,7 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -8588,7 +8593,7 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -8644,7 +8649,7 @@ fn handle_automation_effect_add(time: f64, value: i32, state: &mut DAWState) {
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -9064,7 +9069,7 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -9123,7 +9128,7 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
 }
 
 fn handle_automation_note_expression_delete(time: f64, state: &mut DAWState) {
-    let note_expression_type = state.note_expression_type_mut().clone();
+    let _note_expression_type = state.note_expression_type_mut().clone();
     let automation_type = state.automation_type();
     let note_expression_note_id = state.note_expression_id();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
@@ -9380,7 +9385,7 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -9436,7 +9441,7 @@ fn handle_automation_effect_delete(time: f64, state: &mut DAWState) {
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -9873,7 +9878,7 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -10116,7 +10121,7 @@ fn handle_automation_note_expression_cut(state: &mut DAWState, edit_cursor_time_
 
             if let Some(events) = events {
                 for event in events.iter().filter(|event| selected.contains(&event.id())) {
-                    if let TrackEvent::NoteExpression(note_expression) = event {
+                    if let TrackEvent::NoteExpression(_note_expression) = event {
                         let mut track_event = event.clone();
                         // adjust the position to be relative to the edit cursor
                         track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -10212,7 +10217,7 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -10268,7 +10273,7 @@ fn handle_automation_effect_cut(state: &mut DAWState, edit_cursor_time_in_beats:
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -10626,7 +10631,7 @@ fn handle_automation_pitch_bend_cut(state: &mut DAWState, edit_cursor_time_in_be
 
         if let Some(events) = events {
             for event in events.iter().filter(|event| selected.contains(&event.id())) {
-                if let TrackEvent::PitchBend(pitch_bend) = event {
+                if let TrackEvent::PitchBend(_pitch_bend) = event {
                     let mut track_event = event.clone();
                     // adjust the position to be relative to the edit cursor
                     track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -10752,7 +10757,7 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -11098,7 +11103,7 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -11154,7 +11159,7 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -11406,7 +11411,7 @@ fn handle_automation_controller_translate_selected(state: &mut DAWState, transla
 fn handle_automation_note_velocities_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection) {
     let selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
-    let automation_type = state.automation_type();
+    let _automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
     }
@@ -11737,7 +11742,7 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -11972,7 +11977,7 @@ fn handle_automation_note_expression_copy(state: &mut DAWState, edit_cursor_time
 
             if let Some(events) = events {
                 for event in events.iter().filter(|event| selected.contains(&event.id())) {
-                    if let TrackEvent::NoteExpression(note_expression) = event {
+                    if let TrackEvent::NoteExpression(_note_expression) = event {
                         let mut track_event = event.clone();
                         // adjust the position to be relative to the edit cursor
                         track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -12060,7 +12065,7 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -12116,7 +12121,7 @@ fn handle_automation_effect_copy(state: &mut DAWState, edit_cursor_time_in_beats
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -12456,7 +12461,7 @@ fn handle_automation_pitch_bend_copy(state: &mut DAWState, edit_cursor_time_in_b
 
         if let Some(events) = events {
             for event in events.iter().filter(|event| selected.contains(&event.id())) {
-                if let TrackEvent::PitchBend(pitch_bend) = event {
+                if let TrackEvent::PitchBend(_pitch_bend) = event {
                     let mut track_event = event.clone();
                     // adjust the position to be relative to the edit cursor
                     track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
@@ -12574,7 +12579,7 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -12805,7 +12810,7 @@ fn handle_automation_note_expression_paste(state: &mut DAWState, edit_cursor_tim
 
             if let Some(events) = events {
                 for event in automation_event_copy_buffer {
-                    if let TrackEvent::NoteExpression(note_expression) = event {
+                    if let TrackEvent::NoteExpression(_note_expression) = event {
                         let mut track_event = event.clone();
 
                         track_event.set_id(Uuid::new_v4().to_string());
@@ -12889,7 +12894,7 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -12945,7 +12950,7 @@ fn handle_automation_effect_paste(state: &mut DAWState, edit_cursor_time_in_beat
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -13277,7 +13282,7 @@ fn handle_automation_pitch_bend_paste(state: &mut DAWState, edit_cursor_time_in_
 
         if let Some(events) = events {
             for event in automation_event_copy_buffer {
-                if let TrackEvent::PitchBend(pitch_bend) = event {
+                if let TrackEvent::PitchBend(_pitch_bend) = event {
                     let mut track_event = event.clone();
 
                     track_event.set_id(Uuid::new_v4().to_string());
@@ -13393,7 +13398,7 @@ fn handle_automation_instrument_quantise(state: &mut DAWState, snap_in_beats: f6
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -13704,7 +13709,7 @@ fn handle_automation_effect_quantise(state: &mut DAWState, snap_in_beats: f64, q
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -13760,7 +13765,7 @@ fn handle_automation_effect_quantise(state: &mut DAWState, snap_in_beats: f64, q
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -14147,7 +14152,7 @@ fn handle_automation_change(state: &Arc<Mutex<DAWState>>, changed_events: Vec<(T
 }
 
 fn handle_automation_instrument_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
-    let selected = state.selected_automation().to_vec();
+    let _selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -14228,7 +14233,7 @@ fn handle_automation_instrument_change(state: &mut DAWState, changed_events: Vec
                                         index: automation_type_value,
                                         value: 0.0,
                                     };
-                                    let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                    let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                     automation.envelopes_mut().push(new_envelope);
                                     if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                         let mut found = false;
@@ -14283,7 +14288,7 @@ fn handle_automation_instrument_change(state: &mut DAWState, changed_events: Vec
 }
 
 fn handle_automation_note_expression_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
-    let selected = state.selected_automation().to_vec();
+    let _selected = state.selected_automation().to_vec();
     let automation_type = state.automation_type();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -14470,7 +14475,7 @@ fn handle_automation_note_expression_change(state: &mut DAWState, changed_events
 }
 
 fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
-    let selected = state.selected_automation().to_vec();
+    let _selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -14537,7 +14542,7 @@ fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(Tr
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -14593,7 +14598,7 @@ fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(Tr
                                             index: automation_type_value,
                                             value: 0.0,
                                         };
-                                        let mut new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+                                        let new_envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
                                         automation.envelopes_mut().push(new_envelope);
                                         if let Some(envelope) = automation.envelopes_mut().iter_mut().find(|envelope| {
                                             let mut found = false;
@@ -14630,7 +14635,7 @@ fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(Tr
                     }
                 };
 
-                if let Some(automation_type_value) = automation_type {
+                if let Some(_automation_type_value) = automation_type {
                     if let Some(events) = events {
                         for (_, changed) in changed_events.iter() {
                             if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
@@ -14651,7 +14656,7 @@ fn handle_automation_effect_change(state: &mut DAWState, changed_events: Vec<(Tr
 }
 
 fn handle_automation_controller_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
-    let selected = state.selected_automation().to_vec();
+    let _selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let automation_type = state.automation_type();
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
@@ -14784,7 +14789,7 @@ fn handle_automation_controller_change(state: &mut DAWState, changed_events: Vec
             }
         };
 
-        if let Some(automation_type_value) = automation_type {
+        if let Some(_automation_type_value) = automation_type {
             if let Some(events) = events {
                 for (_, changed) in changed_events.iter() {
                     if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
@@ -14803,7 +14808,7 @@ fn handle_automation_controller_change(state: &mut DAWState, changed_events: Vec
 }
 
 fn handle_automation_pitch_bend_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>) {
-    let selected = state.selected_automation().to_vec();
+    let _selected = state.selected_automation().to_vec();
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
@@ -15229,7 +15234,7 @@ fn create_jack_time_critical_event_processing_thread(
                                 }
                                 AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel(jack_midi_event) => {
                                     match state.lock() {
-                                        Ok(mut state) => {
+                                        Ok(state) => {
                                             if jack_midi_event.data[0] as i32 >= 176 && (jack_midi_event.data[0] as i32 <= (176 + 15)) {
                                                 debug!("Main - jack_event_prcessing_thread processing loop - jack AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel - received a controller message: {} {} {}", jack_midi_event.data[0], jack_midi_event.data[1], jack_midi_event.data[2]);
                                                 // need to send some track volume (176) or pan (177) messages
@@ -15392,7 +15397,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                         6 => {
                             match state.lock() {
                                 Ok(state) => {
-                                    let recording = !state.recording();
+                                    let _recording = !state.recording();
                                 },
                                 Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - record - could not get lock on state"),
                             };
@@ -15460,22 +15465,34 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     if let Some(master_mixer_blade_widget) = gui.ui.mixer_box.children().first() {
                         if let Some(master_mixer_blade) = master_mixer_blade_widget.dynamic_cast_ref::<Frame>() {
                             if let Some(master_mixer_blade_box_widget) = master_mixer_blade.children().first() {
-                                if let Some(master_mixer_blade_box) = master_mixer_blade_box_widget.dynamic_cast_ref::<gtk::Box>() {
+                                if let Some(master_mixer_blade_box) = master_mixer_blade_box_widget.dynamic_cast_ref::<gtk4::Box>() {
                                         for child in master_mixer_blade_box.children().iter() {
                                             if child.widget_name() == "mixer_blade_volume_box" {
-                                                if let Some(volume_box) = child.dynamic_cast_ref::<gtk::Box>() {
+                                                if let Some(volume_box) = child.dynamic_cast_ref::<gtk4::Box>() {
                                                     if let Some(channel_meter_box_widget) = volume_box.children().get(1) {
-                                                        if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk::Box>() {
+                                                        if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk4::Box>() {
                                                             if let Some(left_channel_spin_button_widget) = channel_meter_box.children().get_mut(1) {
-                                                                if let Some(left_channel_spin_button) = left_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                    left_channel_spin_button.set_value((left_channel_level.abs().log10() * 20.0) as f64);
-                                                                }
-                                                            }
-                                                            if let Some(right_channel_spin_button_widget) = channel_meter_box.children().get_mut(2) {
-                                                                if let Some(right_channel_spin_button) = right_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                    right_channel_spin_button.set_value((right_channel_level.abs().log10() * 20.0) as f64);
-                                                                }
-                                                            }
+if let Some(left_channel_spin_button) = left_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
+                                                                     let left_channel_level_in_db = if left_channel_level > 0.0 {
+                                                                         (left_channel_level.abs().log10() * 20.0) as f64
+                                                                     }
+                                                                     else {
+                                                                         -66.0
+                                                                     };
+                                                                     left_channel_spin_button.set_value(left_channel_level_in_db);
+                                                                 }
+                                                             }
+                                                             if let Some(right_channel_spin_button_widget) = channel_meter_box.children().get_mut(2) {
+                                                                 if let Some(right_channel_spin_button) = right_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
+                                                                     let right_channel_level_in_db = if right_channel_level > 0.0 {
+                                                                         (right_channel_level.abs().log10() * 20.0) as f64
+                                                                     }
+                                                                     else {
+                                                                         -66.0
+                                                                     };
+                                                                     right_channel_spin_button.set_value(right_channel_level_in_db);
+                                                                 }
+                                                             }
                                                             if let Some(channel_meter_levels_drawing_area_widget) = channel_meter_box.children().get_mut(0) {
                                                                 if let Some(channel_meter_levels_drawing_area) = channel_meter_levels_drawing_area_widget.dynamic_cast_ref::<DrawingArea>() {
                                                                     channel_meter_levels_drawing_area.queue_draw();
@@ -15559,7 +15576,7 @@ fn process_track_background_processor_events(
                                     TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
                                         if let Some(window) = vst_audio_plugin_windows.get(&track.instrument().uuid().to_string()) {
                                             debug!("Instrument plugin window resize requested: width={}, height={}", plugin_window_width, plugin_window_height);
-                                            window.resize(plugin_window_width, plugin_window_height);
+                                            window.set_default_size(plugin_window_width, plugin_window_height);
                                         }
                                     },
                                     TrackType::AudioTrack(_) => (),
@@ -15587,7 +15604,7 @@ fn process_track_background_processor_events(
                                         for effect in track.effects() {
                                             if effect.uuid().to_string() == plugin_uuid {
                                                 if let Some(window) = vst_audio_plugin_windows.get(&plugin_uuid) {
-                                                    window.resize(plugin_window_width, plugin_window_height);
+                                                    window.set_default_size(plugin_window_width, plugin_window_height);
                                                     window.set_height_request(plugin_window_height);
                                                     window.set_width_request(plugin_window_width);
                                                     window.queue_resize();
@@ -15610,20 +15627,32 @@ fn process_track_background_processor_events(
                                 if mixer_blade_widget.widget_name() == track_uuid.as_str() {
                                     if let Some(mixer_blade) = mixer_blade_widget.dynamic_cast_ref::<Frame>() {
                                         if let Some(mixer_blade_box_widget) = mixer_blade.children().first() {
-                                            if let Some(mixer_blade_box) = mixer_blade_box_widget.dynamic_cast_ref::<gtk::Box>() {
+                                            if let Some(mixer_blade_box) = mixer_blade_box_widget.dynamic_cast_ref::<gtk4::Box>() {
                                                     for child in mixer_blade_box.children().iter() {
                                                         if child.widget_name() == "mixer_blade_volume_box" {
-                                                            if let Some(volume_box) = child.dynamic_cast_ref::<gtk::Box>() {
+                                                            if let Some(volume_box) = child.dynamic_cast_ref::<gtk4::Box>() {
                                                                 if let Some(channel_meter_box_widget) = volume_box.children().get(1) {
-                                                                    if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                    if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk4::Box>() {
                                                                         if let Some(left_channel_spin_button_widget) = channel_meter_box.children().get_mut(1) {
                                                                             if let Some(left_channel_spin_button) = left_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                                left_channel_spin_button.set_value((left_channel_level.abs().log10() * 20.0) as f64);
+                                                                                let left_channel_level_in_db = if left_channel_level > 0.0 {
+                                                                                    (left_channel_level.abs().log10() * 20.0) as f64
+                                                                                }
+                                                                                else {
+                                                                                    -66.0
+                                                                                };
+                                                                                left_channel_spin_button.set_value(left_channel_level_in_db);
                                                                             }
                                                                         }
                                                                         if let Some(right_channel_spin_button_widget) = channel_meter_box.children().get_mut(2) {
                                                                             if let Some(right_channel_spin_button) = right_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                                right_channel_spin_button.set_value((right_channel_level.abs().log10() * 20.0) as f64);
+                                                                                let right_channel_level_in_db = if right_channel_level > 0.0 {
+                                                                                    (right_channel_level.abs().log10() * 20.0) as f64
+                                                                                }
+                                                                                else {
+                                                                                    -66.0
+                                                                                };
+                                                                                right_channel_spin_button.set_value(right_channel_level_in_db);
                                                                             }
                                                                         }
                                                                         if let Some(channel_meter_levels_drawing_area_widget) = channel_meter_box.children().get_mut(0) {

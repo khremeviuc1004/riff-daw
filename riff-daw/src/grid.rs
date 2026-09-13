@@ -4,16 +4,15 @@ use std::collections::HashMap;
 use std::sync::MutexGuard;
 use cairo::{Context};
 use crossbeam_channel::Sender;
-use gtk::{DrawingArea, prelude::*, Frame, ScrolledWindow, Viewport};
+use gtk4::{DrawingArea, prelude::*, Frame, ScrolledWindow, Viewport};
 use itertools::Itertools;
 use log::*;
 use strum_macros::Display;
 use uuid::Uuid;
 use geo::{coord, Intersects, Rect};
-use gtk::glib::ffi::G_PI;
 use crate::{domain::*, event::{DAWEvents, LoopChangeType, OperationModeType, TrackChangeType, TranslateDirection, TranslationEntityType, AutomationEditType}, state::DAWState, constants::NOTE_NAMES};
+use crate::gtk4_compat::GtkContainerCompat;
 use crate::event::{CurrentView, RiffGridChangeType};
-use crate::event::TrackChangeType::RiffReferencePlayMode;
 use crate::state::AutomationViewMode;
 use crate::utils::DAWUtils;
 
@@ -188,7 +187,7 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddNote(vec![(y_index, time, duration)]), None));
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
@@ -247,10 +246,10 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::PianoRollWindowedZoom {x1, y1, x2, y2});
     }
 
-    fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn select_underlying_entity(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 }
 
@@ -261,25 +260,25 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
         ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
     }
 
-    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+    fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
     fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
     }
 
-    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+    fn deselect_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32) {
         todo!()
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddSample(entity_uuid, time), None));
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, entity_uuid: String) {
@@ -326,19 +325,19 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
 
     }
 
-    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_start_note(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_riff_reference_play_mode(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
     }
 
-    fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn select_underlying_entity(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 }
 
@@ -369,7 +368,7 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferenceAdd(y_index, time), None));
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, _time: f64, duration: f64, entity_uuid: String) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffAddWithTrackIndex(entity_uuid, duration, y_index), None));
     }
 
@@ -415,14 +414,14 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_start_note(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
 
-    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
     }
 
     fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -461,7 +460,7 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferenceAdd{ track_index: y_index, position: time }, None));
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _entity_uuid: String) {
@@ -506,14 +505,14 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_start_note(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
     fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
 
-    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
     }
 
     fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -1614,8 +1613,8 @@ impl Grid for BeatGrid {
         let height = drawing_area.allocated_height() as f64;
         let width = drawing_area.allocated_width() as f64;
 
-        if let Some(window) = drawing_area.window() {
-            window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Cross)));
+        if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
+            window.set_cursor(gdk4::Cursor::from_name("crosshair", None).as_ref());
         }
 
         self.paint_vertical_scale(context, height, width, drawing_area);
@@ -1641,10 +1640,10 @@ impl Grid for BeatGrid {
         let zoom_vertical = self.zoom_vertical;
         let operation_mode = self.operation_mode.clone();
         let edit_drag_cycle = self.edit_drag_cycle.clone();
-        let x_selection_window_position = self.x_selection_window_position;
-        let y_selection_window_position = self.y_selection_window_position;
+        let _x_selection_window_position = self.x_selection_window_position;
+        let _y_selection_window_position = self.y_selection_window_position;
         let _x_selection_window_position2 = self.x_selection_window_position2;
-        let x_selection_window_position2 = self.x_selection_window_position2;
+        let _x_selection_window_position2 = self.x_selection_window_position2;
         let tx_from_ui = self.tx_from_ui.clone();
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
 
@@ -1771,7 +1770,7 @@ impl Grid for BeatGrid {
         let (x, y) = self.mouse_pointer_position;
         let (x_previous, y_previous) = self.mouse_pointer_previous_position;
 
-        let (x_selection_window_position, y_selection_window_position, x_selection_window_position2, y_selection_window_position2) = self.get_select_window();
+        let (_x_selection_window_position, _y_selection_window_position, _x_selection_window_position2, _y_selection_window_position2) = self.get_select_window();
         if let Some(custom_painter) = self.custom_painter.as_mut() {
             custom_painter.set_track_cursor_time_in_beats(self.track_cursor_time_in_beats);
             let (entity_height, entity_width) = custom_painter.paint_custom(
@@ -1827,7 +1826,7 @@ impl Grid for BeatGrid {
     fn paint_loop_markers(&mut self, _context: &Context, _height: f64, _width: f64) {
     }
 
-    fn paint_play_cursor(&mut self, context: &Context, height: f64, _width: f64) {
+    fn paint_play_cursor(&mut self, context: &Context, _height: f64, _width: f64) {
         let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
         let x = self.track_cursor_time_in_beats * adjusted_beat_width_in_pixels;
         let (_, clip_y1, _, clip_y2) = context.clip_extents().unwrap();
@@ -2149,7 +2148,7 @@ impl Grid for BeatGridRuler {
     fn paint_vertical_scale(&mut self, _context: &Context, _height: f64, _width: f64, _drawing_area: &DrawingArea) {
     }
 
-    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, width: f64, _drawing_area: &DrawingArea) {
+    fn paint_horizontal_scale(&mut self, context: &Context, height: f64, _width: f64, _drawing_area: &DrawingArea) {
         let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
         let (clip_x1, _, clip_x2, _) = context.clip_extents().unwrap();
         let clip_x1_in_beats = clip_x1 / adjusted_beat_width_in_pixels;
@@ -2514,25 +2513,25 @@ impl CustomPainter for PianoRollCustomPainter {
     fn paint_custom(&mut self,
                     context: &Context,
                     height: f64,
-                    width: f64,
+                    _width: f64,
                     entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
+                    _drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    drag_started: bool,
+                    _drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
@@ -2561,7 +2560,7 @@ impl CustomPainter for PianoRollCustomPainter {
                                             };
 
                                             // find all the selected notes
-                                            let selected_riff_events = state.selected_riff_events().clone();
+                                            let selected_riff_events = state.selected_riff_events();
                                             let mut selected_notes = vec![];
                                             for event in riff.events().iter().filter(|event| {
                                                 if let TrackEvent::Note(note) = event {
@@ -2676,7 +2675,7 @@ impl CustomPainter for PianoRollCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -2824,8 +2823,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     use_this_item = true;
 
                     // change the prompt
-                    if let Some(window) = drawing_area.window() {
-                        window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::LeftSide)));
+                    if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
+                        window.set_cursor(gdk4::Cursor::from_name("left_side", None).as_ref());
                         // debug!("drawing left side prompt.");
                     }
                 }
@@ -2841,8 +2840,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     use_this_item = true;
 
                     // change the prompt
-                    if let Some(window) = drawing_area.window() {
-                        window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Hand1)));
+                    if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
+                        window.set_cursor(gdk4::Cursor::from_name("pointer", None).as_ref());
                         // debug!("drawing hand prompt.");
                     }
                 }
@@ -2858,8 +2857,8 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                     use_this_item = true;
 
                     // change the prompt
-                    if let Some(window) = drawing_area.window() {
-                        window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::RightSide)));
+                    if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
+                        window.set_cursor(gdk4::Cursor::from_name("right_side", None).as_ref());
                         // debug!("drawing right side prompt.");
                     }
                 }
@@ -2937,7 +2936,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                     for item in self.original_selected_items.iter() {
                                                         if item.id() != dragged_item.id() {
                                                             let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
-                                                            let mut y = if allow_vertical_drag {
+                                                            let y = if allow_vertical_drag {
                                                                 if invert_vertically {
                                                                     canvas_height - item.vertical_index() as f64 * adjusted_entity_height_in_pixels
                                                                 }
@@ -3194,7 +3193,7 @@ impl<T: DAWItemID + DAWItemPosition + DAWItemLength + DAWItemVerticalIndex + Clo
                                                 for item in self.original_selected_items.iter() {
                                                     if item.id() != dragged_item.id() {
                                                         let x = item.position() * adjusted_beat_width_in_pixels + delta_x;
-                                                        let mut y = if allow_vertical_drag {
+                                                        let y = if allow_vertical_drag {
                                                             if invert_vertically {
                                                                 canvas_height - item.vertical_index() as f64 * adjusted_entity_height_in_pixels
                                                             }
@@ -3442,8 +3441,8 @@ impl AutomationEditItemHandler {
                     use_this_item = true;
 
                     // change the prompt
-                    if let Some(window) = drawing_area.window() {
-                        window.set_cursor(Some(&gdk::Cursor::for_display(&window.display(), gdk::CursorType::Hand1)));
+                    if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
+                        window.set_cursor(gdk4::Cursor::from_name("pointer", None).as_ref());
                         // debug!("Automation - drawing hand prompt.");
                     }
                 }
@@ -3489,7 +3488,7 @@ impl AutomationEditItemHandler {
                                                 context.move_to(x, canvas_height);
                                             }
                                             else {
-                                                if let Some((b4_point, after_point)) = selected_automation_b4_after_points.get(&dragged_item.id()) {
+                                                if let Some((b4_point, _after_point)) = selected_automation_b4_after_points.get(&dragged_item.id()) {
                                                     // need a look ahead check for another selected item that positionally comes before this one and use it's new position as the b4 point
                                                     debug!("dragged id={}, x_b4_point={}, b4_point_y={}", dragged_item.id(), b4_point.0, b4_point.1);
                                                     if self.original_item_is_selected {
@@ -3814,26 +3813,26 @@ impl SampleRollCustomPainter {
 }
 
 impl CustomPainter for SampleRollCustomPainter {
-    fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64,
+    fn paint_custom(&mut self, context: &Context, _height: f64, _width: f64, entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
-                    mouse_pointer_x: f64,
-                    mouse_pointer_y: f64,
-                    mouse_pointer_previous_x: f64,
-                    mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
-                    drawing_area: &DrawingArea,
-                    operation_mode: &OperationModeType,
-                    drag_started: bool,
-                    edit_drag_cycle: &DragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+                    _drawing_area_widget_name: Option<String>,
+                    _mouse_pointer_x: f64,
+                    _mouse_pointer_y: f64,
+                    _mouse_pointer_previous_x: f64,
+                    _mouse_pointer_previous_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
+                    _drawing_area: &DrawingArea,
+                    _operation_mode: &OperationModeType,
+                    _drag_started: bool,
+                    _edit_drag_cycle: &DragCycle,
+                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
         match self.state.lock() {
             Ok( state) => {
@@ -3898,7 +3897,7 @@ impl CustomPainter for SampleRollCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -3926,21 +3925,21 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
                     drawing_area_widget_name: Option<String>,
-                    mouse_pointer_x: f64,
-                    mouse_pointer_y: f64,
-                    mouse_pointer_previous_x: f64,
-                    mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
-                    drawing_area: &DrawingArea,
-                    operation_mode: &OperationModeType,
-                    drag_started: bool,
-                    edit_drag_cycle: &DragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+                    _mouse_pointer_x: f64,
+                    _mouse_pointer_y: f64,
+                    _mouse_pointer_previous_x: f64,
+                    _mouse_pointer_previous_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
+                    _drawing_area: &DrawingArea,
+                    _operation_mode: &OperationModeType,
+                    _drag_started: bool,
+                    _edit_drag_cycle: &DragCycle,
+                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
         // debug!("RiffSetTrackCustomPainter::paint_custom - entered");
         match self.state.lock() {
@@ -3963,7 +3962,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                             let track_uuid = *segments.get(2).unwrap();
                             let (riff_ref_linked_to, mode) = {
                                 if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid.to_string()) {
-                                    if let Some(riff_ref) = riff_set.riff_refs().get(track_uuid.clone()) {
+                                    if let Some(riff_ref) = riff_set.riff_refs().get(track_uuid) {
                                         (riff_ref.linked_to(), riff_ref.mode().clone())
                                     }
                                     else {
@@ -3977,7 +3976,7 @@ impl CustomPainter for RiffSetTrackCustomPainter {
 
                             let number_of_beats_in_bar = state.project().song().time_signature_denominator();
                             let mut state = state;
-                            let mut track = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid);
+                            let track = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid);
 
                             // get the track
                             match track {
@@ -4148,24 +4147,24 @@ impl PianoRollVerticalScaleCustomPainter {
 impl CustomPainter for PianoRollVerticalScaleCustomPainter {
     fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
-                    zoom_horizontal: f64,
+                    _zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
-                    mouse_pointer_x: f64,
-                    mouse_pointer_y: f64,
-                    mouse_pointer_previous_x: f64,
-                    mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
-                    drawing_area: &DrawingArea,
-                    operation_mode: &OperationModeType,
-                    drag_started: bool,
-                    edit_drag_cycle: &DragCycle,
-                    tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+                    _drawing_area_widget_name: Option<String>,
+                    _mouse_pointer_x: f64,
+                    _mouse_pointer_y: f64,
+                    _mouse_pointer_previous_x: f64,
+                    _mouse_pointer_previous_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
+                    _drawing_area: &DrawingArea,
+                    _operation_mode: &OperationModeType,
+                    _drag_started: bool,
+                    _edit_drag_cycle: &DragCycle,
+                    _tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
         context.set_source_rgba(0.9, 0.9, 0.9, 0.5);
         let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
@@ -4204,7 +4203,7 @@ impl CustomPainter for PianoRollVerticalScaleCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -4251,25 +4250,25 @@ impl CustomPainter for TrackGridCustomPainter {
     fn paint_custom(&mut self,
                     context: &Context,
                     height: f64,
-                    width: f64,
+                    _width: f64,
                     entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
+                    _drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    drag_started: bool,
+                    _drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
@@ -4383,7 +4382,7 @@ impl CustomPainter for TrackGridCustomPainter {
                                     let mut name_fits = false;
                                     while !name_fits {
                                         if let Ok(text_extents) = context.text_extents(name.as_str()) {
-                                            if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                                            if (width - 2.0) < (text_extents.width() as f64 + 10.0) {
                                                 if !name.is_empty() {
                                                     name = name.as_str()[0..name.len() - 1].to_string();
                                                 }
@@ -4544,7 +4543,7 @@ impl CustomPainter for TrackGridCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -4601,25 +4600,25 @@ impl CustomPainter for RiffGridCustomPainter {
     fn paint_custom(&mut self,
                     context: &Context,
                     height: f64,
-                    width: f64,
+                    _width: f64,
                     entity_height_in_pixels: f64,
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
+                    _drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
                     mouse_pointer_previous_y: f64,
-                    draw_mode_on: bool,
-                    draw_mode: DrawMode,
-                    draw_mode_start_x: f64,
-                    draw_mode_start_y: f64,
-                    draw_mode_end_x: f64,
-                    draw_mode_end_y: f64,
+                    _draw_mode_on: bool,
+                    _draw_mode: DrawMode,
+                    _draw_mode_start_x: f64,
+                    _draw_mode_start_y: f64,
+                    _draw_mode_end_x: f64,
+                    _draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    drag_started: bool,
+                    _drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
@@ -4631,7 +4630,7 @@ impl CustomPainter for RiffGridCustomPainter {
         );
 
         match self.state.lock() {
-            Ok(mut state) => {
+            Ok(state) => {
                 let adjusted_beat_width_in_pixels = beat_width_in_pixels * zoom_horizontal;
                 let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
                 let riff_grid_uuid_to_paint = if !self.use_globally_selected_riff_grid {
@@ -4757,7 +4756,7 @@ impl CustomPainter for RiffGridCustomPainter {
                                         let mut name_fits = false;
                                         while !name_fits {
                                             if let Ok(text_extents) = context.text_extents(name.as_str()) {
-                                                if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                                                if (width - 2.0) < (text_extents.width() as f64 + 10.0) {
                                                     if !name.is_empty() {
                                                         name = name.as_str()[0..name.len() - 1].to_string();
                                                     } else {
@@ -4913,7 +4912,7 @@ impl AutomationCustomPainter {
         let mut name_fits = false;
         while !name_fits {
             if let Ok(text_extents) = context.text_extents(name.as_str()) {
-                if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                if (width - 2.0) < (text_extents.width() as f64 + 10.0) {
                     if !name.is_empty() {
                         name = name.as_str()[0..name.len() - 1].to_string();
                     } else {
@@ -4976,7 +4975,7 @@ impl AutomationCustomPainter {
                     let mut name_fits = false;
                     while !name_fits {
                         if let Ok(text_extents) = context.text_extents(name.as_str()) {
-                            if (width - 2.0) < (text_extents.width as f64 + 10.0) {
+                            if (width - 2.0) < (text_extents.width() as f64 + 10.0) {
                                 if !name.is_empty() {
                                     name = name.as_str()[0..name.len() - 1].to_string();
                                 } else {
@@ -5029,7 +5028,7 @@ impl AutomationCustomPainter {
         let _ = context.stroke();
     }
 
-    fn draw_automation(context: &Context, height: f64, automation_discrete: bool, mut previous_point_x: &mut f64, mut previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64, automation_value: f64) {
+    fn draw_automation(context: &Context, height: f64, automation_discrete: bool, previous_point_x: &mut f64, previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64, automation_value: f64) {
         if automation_discrete {
             context.move_to(x, height);
         } else {
@@ -5093,7 +5092,7 @@ impl AutomationCustomPainter {
             let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
 
             // draw the riff reference x number of times
-            for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
+            for _x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
                 riff_to_draw.set_position(*running_position);
                 if riff_to_draw.name() != "empty" {
                     Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
@@ -5113,7 +5112,7 @@ impl CustomPainter for AutomationCustomPainter {
                     beat_width_in_pixels: f64,
                     zoom_horizontal: f64,
                     zoom_vertical: f64,
-                    drawing_area_widget_name: Option<String>,
+                    _drawing_area_widget_name: Option<String>,
                     mouse_pointer_x: f64,
                     mouse_pointer_y: f64,
                     mouse_pointer_previous_x: f64,
@@ -5126,7 +5125,7 @@ impl CustomPainter for AutomationCustomPainter {
                     draw_mode_end_y: f64,
                     drawing_area: &DrawingArea,
                     operation_mode: &OperationModeType,
-                    drag_started: bool,
+                    _drag_started: bool,
                     edit_drag_cycle: &DragCycle,
                     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     ) -> (f64, f64) {
@@ -5704,7 +5703,7 @@ impl CustomPainter for AutomationCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -5725,14 +5724,14 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         }
     }
 
-    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+    fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
     fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
     }
 
-    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+    fn deselect_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32) {
     }
 
     fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
@@ -5745,7 +5744,7 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationAdd(new_entities), None));
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
@@ -5792,19 +5791,19 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
 
     }
 
-    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_start_note(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_riff_reference_play_mode(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
     }
 
-    fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn select_underlying_entity(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 }
 
@@ -5812,53 +5811,53 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
 pub struct RiffArrangementOverviewMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for RiffArrangementOverviewMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
+    fn get_entity_vertical_value(&self, _y: f64, _entity_height_in_pixels: f64, _zoom_vertical: f64) -> f64 {
         0.0
     }
 
-    fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
+    fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32, _add_to_select: bool) {
     }
 
-    fn deselect_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32) {
+    fn deselect_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32) {
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
     }
 
-    fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, _duration: f64, _entity_uuid: String) {
+    fn add_entity(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
-    fn add_entity_extra(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String) {
+    fn add_entity_extra(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {
     }
 
-    fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _entity_uuid: String) {
+    fn delete_entity(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, _time: f64, _entity_uuid: String) {
     }
 
-    fn cut_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn cut_selected(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn copy_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn copy_selected(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn paste_selected(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn paste_selected(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_translate_up(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn handle_translate_up(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_translate_down(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn handle_translate_down(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_translate_left(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn handle_translate_left(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_translate_right(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn handle_translate_right(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn handle_quantise(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
+    fn handle_quantise(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
     fn handle_increase_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
@@ -5867,19 +5866,19 @@ impl BeatGridMouseCoordHelper for RiffArrangementOverviewMouseCoordHelper {
     fn handle_decrease_entity_length(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
     }
 
-    fn set_start_note(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_start_note(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn set_riff_reference_play_mode(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn set_riff_reference_play_mode(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
     }
 
-    fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn select_underlying_entity(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
+    fn select_underlying_entity(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 }
 
@@ -5892,7 +5891,7 @@ impl RiffArrangementOverviewDummyCustomPainter {
 }
 
 impl CustomPainter for RiffArrangementOverviewDummyCustomPainter {
-    fn paint_custom(&mut self, context: &Context, height: f64, width: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, zoom_horizontal: f64, zoom_vertical: f64, drawing_area_widget_name: Option<String>, mouse_pointer_x: f64, mouse_pointer_y: f64, mouse_pointer_previous_x: f64, mouse_pointer_previous_y: f64, draw_mode_on: bool, draw_mode: DrawMode, draw_mode_start_x: f64, draw_mode_start_y: f64, draw_mode_end_x: f64, draw_mode_end_y: f64, drawing_area: &DrawingArea, operation_mode: &OperationModeType, drag_started: bool, edit_drag_cycle: &DragCycle, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> (f64, f64) {
+    fn paint_custom(&mut self, _context: &Context, _height: f64, _width: f64, entity_height_in_pixels: f64, beat_width_in_pixels: f64, _zoom_horizontal: f64, _zoom_vertical: f64, _drawing_area_widget_name: Option<String>, _mouse_pointer_x: f64, _mouse_pointer_y: f64, _mouse_pointer_previous_x: f64, _mouse_pointer_previous_y: f64, _draw_mode_on: bool, _draw_mode: DrawMode, _draw_mode_start_x: f64, _draw_mode_start_y: f64, _draw_mode_end_x: f64, _draw_mode_end_y: f64, _drawing_area: &DrawingArea, _operation_mode: &OperationModeType, _drag_started: bool, _edit_drag_cycle: &DragCycle, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>) -> (f64, f64) {
         (
             entity_height_in_pixels,
             beat_width_in_pixels,
@@ -5903,7 +5902,7 @@ impl CustomPainter for RiffArrangementOverviewDummyCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -5915,11 +5914,11 @@ pub struct RiffArrangementOverviewCustomPainter {
     state: Arc<Mutex<DAWState>>,
     track_height_in_pixels: f64,
     actual_beat_width_in_pixels: f64,
-    riff_arrangement_box: gtk::Box,
+    riff_arrangement_box: gtk4::Box,
 }
 
 impl RiffArrangementOverviewCustomPainter {
-    pub fn new(state: Arc<Mutex<DAWState>>, riff_arrangement_box: gtk::Box) -> Self {
+    pub fn new(state: Arc<Mutex<DAWState>>, riff_arrangement_box: gtk4::Box) -> Self {
         Self {
             state,
             track_height_in_pixels: 5.0,
@@ -5988,7 +5987,7 @@ impl RiffArrangementOverviewCustomPainter {
             // draw the riff reference x number of times
             for (index, riff_to_draw) in riffs_to_draw.iter_mut().enumerate() {
                 let mut running_position = *running_position;
-                for x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
+                for _x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
                     riff_to_draw.set_position(running_position);
                     if riff_to_draw.name() != "empty" {
                         if let Some((red, green, blue, alpha)) = riff_to_draw.colour() {
@@ -6015,26 +6014,26 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
         context: &Context,
         height: f64,
         width: f64,
-        entity_height_in_pixels: f64,
-        beat_width_in_pixels: f64,
-        zoom_horizontal: f64,
-        zoom_vertical: f64,
-        drawing_area_widget_name: Option<String>,
-        mouse_pointer_x: f64,
-        mouse_pointer_y: f64,
-        mouse_pointer_previous_x: f64,
-        mouse_pointer_previous_y: f64,
-        draw_mode_on: bool,
-        draw_mode: DrawMode,
-        draw_mode_start_x: f64,
-        draw_mode_start_y: f64,
-        draw_mode_end_x: f64,
-        draw_mode_end_y: f64,
-        drawing_area: &DrawingArea,
-        operation_mode: &OperationModeType,
-        drag_started: bool,
-        edit_drag_cycle: &DragCycle,
-        tx_from_ui: crossbeam_channel::Sender<DAWEvents>
+        _entity_height_in_pixels: f64,
+        _beat_width_in_pixels: f64,
+        _zoom_horizontal: f64,
+        _zoom_vertical: f64,
+        _drawing_area_widget_name: Option<String>,
+        _mouse_pointer_x: f64,
+        _mouse_pointer_y: f64,
+        _mouse_pointer_previous_x: f64,
+        _mouse_pointer_previous_y: f64,
+        _draw_mode_on: bool,
+        _draw_mode: DrawMode,
+        _draw_mode_start_x: f64,
+        _draw_mode_start_y: f64,
+        _draw_mode_end_x: f64,
+        _draw_mode_end_y: f64,
+        _drawing_area: &DrawingArea,
+        _operation_mode: &OperationModeType,
+        _drag_started: bool,
+        _edit_drag_cycle: &DragCycle,
+        _tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) -> (f64, f64) {
         let mut view_window_riff_item_uuids = vec![];
         let mut view_window_track_indexes = vec![];
@@ -6052,45 +6051,45 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
             if widget.is_visible() {
                 if let Some(blade) = widget.dynamic_cast_ref::<Frame>() {
                     if let Some(widget) = blade.child() {
-                        if let Some(gtk_box) = widget.dynamic_cast_ref::<gtk::Box>() {
+                        if let Some(gtk_box) = widget.dynamic_cast_ref::<gtk4::Box>() {
                             for widget in gtk_box.children() {
                                 if widget.widget_name().as_str() == "riff_arrangement_riff_items_scrolled_window" {
                                     if let Some(riff_arrangement_scrolled_window) = widget.dynamic_cast_ref::<ScrolledWindow>() {
                                         if let Some(widget) = riff_arrangement_scrolled_window.child() {
                                             if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
-                                                let mut view_port_clip = view_port.clip();
-                                                // debug!("view_port: clip={:?}", view_port.clip());
+                                                let mut view_port_clip = view_port.allocation();
+                                                // debug!("view_port: clip={:?}", view_port.allocation());
 
                                                 if let Some(widget) = view_port.child() {
-                                                    if let Some(riff_set_box) = widget.dynamic_cast_ref::<gtk::Box>() {
-                                                        if let Some(coord) = view_port.translate_coordinates(riff_set_box, 0, 0) {
+                                                    if let Some(riff_set_box) = widget.dynamic_cast_ref::<gtk4::Box>() {
+                                                        if let Some(coord) = view_port.translate_coordinates(riff_set_box, 0.0, 0.0) {
                                                             // debug!("Translate: {:?}", coord);
-                                                            view_port_clip.x = coord.0;
-                                                            view_port_clip.y = coord.1;
+                                                            view_port_clip.set_x(coord.0 as i32);
+                                                            view_port_clip.set_y(coord.1 as i32);
                                                         }
 
                                                         let mut process_riff_set_box_child = true;
                                                         for widget in riff_set_box.children().iter() {
-                                                            let widget_clip = widget.clip();
+                                                            let widget_clip = widget.allocation();
                                                             if let Some(_) = widget_clip.intersect(&view_port_clip) {
                                                                 view_window_riff_item_uuids.push(widget.widget_name().to_string());
-                                                                // debug!("view_port: child widget_details={} - {:?}", widget.widget_name(), widget.clip());
+                                                                // debug!("view_port: child widget_details={} - {:?}", widget.widget_name(), widget.allocation());
 
                                                                 if process_riff_set_box_child {
-                                                                    if let Some(riff_arrangement_riff_set_blade) = widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                    if let Some(riff_arrangement_riff_set_blade) = widget.dynamic_cast_ref::<gtk4::Box>() {
                                                                         for widget in riff_arrangement_riff_set_blade.children().iter() {
                                                                             if let Some(scrolled_window) = widget.dynamic_cast_ref::<ScrolledWindow>() {
                                                                                 if let Some(widget) = scrolled_window.child() {
                                                                                     if let Some(riff_set_view_port) = widget.dynamic_cast_ref::<Viewport>() {
                                                                                         if let Some(widget) = riff_set_view_port.child() {
-                                                                                            if let Some(riff_set_drawing_areas_box) = widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                                            if let Some(riff_set_drawing_areas_box) = widget.dynamic_cast_ref::<gtk4::Box>() {
                                                                                                 if let Some(drawing_area_blade_widget) = riff_set_drawing_areas_box.children().get(0) {
-                                                                                                    if let Some(riff_set_drawing_areas_box) = drawing_area_blade_widget.dynamic_cast_ref::<gtk::Box>() {
+                                                                                                    if let Some(riff_set_drawing_areas_box) = drawing_area_blade_widget.dynamic_cast_ref::<gtk4::Box>() {
                                                                                                         for (track_index, widget) in riff_set_drawing_areas_box.children().iter().enumerate() {
-                                                                                                            if let Some(drawing_area) = widget.dynamic_cast_ref::<DrawingArea>() {
-                                                                                                                // debug!("riff set - drawing area: track_index={}, clip={:?}", track_index, widget.clip());
-                                                                                                                if let Some(_) = widget.clip().intersect(&view_port_clip) {
-                                                                                                                    debug!("riff set - drawing area: riff set name={}, track_index={}, viewport clip={:?}, widget clip={:?}", widget.widget_name(), track_index, &view_port_clip, widget.clip());
+                                                                                                            if let Some(_drawing_area) = widget.dynamic_cast_ref::<DrawingArea>() {
+                                                                                                                // debug!("riff set - drawing area: track_index={}, clip={:?}", track_index, widget.allocation());
+                                                                                                                if let Some(_) = widget.allocation().intersect(&view_port_clip) {
+                                                                                                                    debug!("riff set - drawing area: riff set name={}, track_index={}, viewport clip={:?}, widget clip={:?}", widget.widget_name(), track_index, &view_port_clip, widget.allocation());
                                                                                                                     // debug!("riff set - drawing area intersects view port clip: track_index={}", track_index);
                                                                                                                     view_window_track_indexes.push(track_index as f64);
                                                                                                                     process_riff_set_box_child = false;
@@ -6261,7 +6260,7 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
         0.0
     }
 
-    fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+    fn set_track_cursor_time_in_beats(&mut self, _track_cursor_time_in_beats: f64) {
     }
 
     fn as_any(&mut self) -> &mut dyn Any {

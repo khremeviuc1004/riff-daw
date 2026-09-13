@@ -1,0 +1,120 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface>
+  <requires lib="gtk" version="4.0" />
+  <object class="GtkImage" id="copy_image">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkFrame" id="track_panel">
+    <property name="visible">True</property>
+    <property name="label-xalign">0</property>
+    <child>
+      <object class="GtkBox">
+        <property name="visible">True</property>
+        <child>
+          <object class="GtkButton" id="delete_button">
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Delete</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_number_text">
+            <property name="label" translatable="yes">1</property>
+            <property name="width-request">30</property>
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Track number
+Click and drag to drag the track to a diferent position.</property>
+            <property name="halign">start</property>
+            <property name="valign">start</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="track_name_text_ctrl">
+            <property name="width-request">200</property>
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Track name</property>
+            <property name="valign">start</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="solo_toggle_btn">
+            <property name="visible">True</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="tooltip-text" translatable="yes">Solo</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="mute_toggle_btn">
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Mute</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="record_toggle_btn">
+            <property name="visible">True</property>
+            <property name="sensitive">False</property>
+            <property name="tooltip-text" translatable="yes">Arm for recording.</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="halign">center</property>
+                <property name="valign">end</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_instrument_window_visibility_toggle_btn">
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Open the instrument audio plugin user interface.</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_panel_copy_track_button">
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Copy this entire track.</property>
+            <property name="valign">start</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_details_btn">
+            <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Edit the track details.</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="label_item">
+      <placeholder />
+    </child>
+  </object>
+</interface>

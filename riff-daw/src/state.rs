@@ -1,21 +1,18 @@
 extern crate factor;
 
-use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
+use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}};
 use std::collections::HashSet;
-use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::thread;
 
 use apres::MIDI;
 use apres::MIDIEvent::{InstrumentName, TrackName};
 use factor::factor_include::factor_include;
-use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::{AsyncClient, Client, ClientOptions, Frames, PortFlags};
 use log::*;
 use parking_lot::RwLock;
 use rb::{RB, RbConsumer, SpscRb};
-use serde::{Deserialize, Serialize};
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
 use uuid::Uuid;
 use vst::api::TimeInfo;
@@ -26,8 +23,8 @@ use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
 
-extern {
-    fn gdk_x11_window_get_xid(window: gdk::Window) -> u32;
+extern "C" {
+    fn gdk_x11_window_get_xid(window: gdk4::Surface) -> u32;
 }
 
 pub enum AutomationViewMode {
@@ -1347,7 +1344,7 @@ impl DAWState {
 
                 // get the riff_ref
                 if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                    let mut riff_reference = riff_ref.clone();
+                    let riff_reference = riff_ref.clone();
                     riff_refs.push(riff_reference);
 
                     // get the riff
@@ -1355,7 +1352,7 @@ impl DAWState {
                         let mut riffs = vec![];
                         riffs.push(riff.clone());
 
-                        let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
+                        let track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
                         for track_event in track_events.iter() {
                             match track_event {
@@ -1437,7 +1434,7 @@ impl DAWState {
 
                     // get the riff_ref
                     if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                        let mut riff_reference = riff_ref.clone();
+                        let riff_reference = riff_ref.clone();
                         riff_refs.push(riff_reference);
 
                         // get the riff
@@ -1445,7 +1442,7 @@ impl DAWState {
                             let mut riffs = vec![];
                             riffs.push(riff.clone());
 
-                            let mut track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
+                            let track_events: Vec<TrackEvent> = DAWUtils::extract_riff_ref_events(&riffs, &riff_refs, bpm, sample_rate, midi_channel, time_signature_numerator, time_signature_denominator);
 
                             for track_event in track_events.iter() {
                                 match track_event {
@@ -1742,9 +1739,9 @@ impl DAWState {
         let bpm = self.project().song().tempo();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
-        let mut song_length_in_beats = self.project().song().length_in_beats() as f64;
+        let song_length_in_beats = self.project().song().length_in_beats() as f64;
         let mut start_block = 0;
-        let mut end_block = 0;
+        let _end_block = 0;
         let already_playing = self.playing();
 
         self.set_playing(true);
@@ -2068,7 +2065,7 @@ impl DAWState {
 
 
     pub fn calculate_riff_arrangement_length(
-        &mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+        &mut self, _tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
         riff_arrangement_uuid: String,
     ) -> f64 {
         let song = self.project().song();
@@ -2214,7 +2211,7 @@ impl DAWState {
         if let Some(riff_set) = self.project().song().riff_set(riff_set_uuid.clone()) {
             for (track_number, track_type) in self.project().song().tracks().iter().enumerate() {
                 // find the riff ref in the riff set for the track and get its linked to value
-                if let Some(linked_to_riff_uuid) = riff_set.riff_refs().iter().find(|(track_uuid, riff_ref)| track_type.uuid().to_string() == track_uuid.to_string()).map(|(track_uuid, riff_ref)| riff_ref.linked_to()) {
+                if let Some(linked_to_riff_uuid) = riff_set.riff_refs().iter().find(|(track_uuid, _riff_ref)| track_type.uuid().to_string() == track_uuid.to_string()).map(|(_track_uuid, riff_ref)| riff_ref.linked_to()) {
                     // find the matching riff in the track and get its name
                     if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == linked_to_riff_uuid) {
                         // handle the empty riff

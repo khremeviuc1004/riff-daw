@@ -1,18 +1,19 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 
-use cairo::glib::once_cell::unsync::Lazy;
-use cairo::glib::{BindingFlags, BoolError, SignalHandlerId};
+use cairo::glib::{BindingFlags, SignalHandlerId};
 use crossbeam_channel::Sender;
-use gdk::{EventType, RGBA, ScrollDirection};
-use gladis::Gladis;
-use gtk::{MessageDialogBuilder, ResponseType, TargetEntry, TargetFlags, DestDefaults, PolicyType, Spinner, TreeStore, EntryCompletion};
-use gtk::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, ComboBoxText, CssProvider, Dialog, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserDialog, FileChooserWidget, FileFilter, Frame, gdk, glib, Grid, Label, ListStore, MenuItem, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, RadioToolButton, RecentChooserMenu, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, ToggleToolButton, ToolButton, TreeView, Viewport, Widget};
+use gdk4::{EventType, RGBA, ScrollDirection};
+use gtk4::{ResponseType, PolicyType, TreeStore, EntryCompletion};
+use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserWidget, FileFilter, Frame, glib, Grid, Label, ListStore, MenuButton, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, TreeView, Viewport, Widget, Window};
+
+use crate::combo_box_text_compat::ComboBoxTextCompat;
+use crate::gladis4::FromGtk4Builder;
+use crate::gtk4_compat::{DestDefaults, FileChooserDialog, FileChooserWidgetCompat, GdkEventCompat, GtkBoxCompat, GtkContainerCompat, GtkDialogRunCompat, GtkDragSourceCompat, GtkDropDestCompat, RecentChooserMenuCompat, TargetEntry, TargetFlags, TreeModelValueCompat, WidgetEventCompat};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use log::*;
@@ -20,14 +21,14 @@ use uuid::Uuid;
 
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID, PLUGIN_PATHS_SEPARATOR};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, RiffReference, InstrumentTrack};
+use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
 use crate::utils::DAWUtils;
 
 
-const DRAG_N_DROP_TARGETS: Lazy<Vec<TargetEntry>> = Lazy::new(|| vec![
+const DRAG_N_DROP_TARGETS: LazyLock<Vec<TargetEntry>> = LazyLock::new(|| vec![
     TargetEntry::new("STRING", TargetFlags::SAME_APP, 0),
     TargetEntry::new("text/plain", TargetFlags::SAME_APP, 0)]
 );
@@ -51,7 +52,7 @@ pub enum RiffGridType {
     RiffArrangement(String), // riff arrangement uuid
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct Ui {
     pub wnd_main: ApplicationWindow,
     pub top_level_vbox: Box,
@@ -60,14 +61,14 @@ pub struct Ui {
     pub centre_split_pane: Paned,
     pub centre_panel_stack: Stack,
 
-    pub progress_dialogue: Dialog,
+    pub progress_dialogue: Window,
     pub dialogue_progress_bar: ProgressBar,
-    pub riff_name_dialogue: Dialog,
+    pub riff_name_dialogue: Window,
     pub riff_name_entry: Entry,
 
-    pub configuration_dialogue: Dialog,
-    pub sample_rate_combobox: ComboBoxText,
-    pub block_size_combobox: ComboBoxText,
+    pub configuration_dialogue: Window,
+    pub sample_rate_combobox: DropDown,
+    pub block_size_combobox: DropDown,
     pub vst24_plugin_paths_entry: Entry,
     pub add_vst24_path_button: Button,
     pub clap_plugin_paths_entry: Entry,
@@ -77,56 +78,56 @@ pub struct Ui {
 
     pub about_dialogue: AboutDialog,
 
-    pub recent_chooser_menu: RecentChooserMenu,
+    pub recent_chooser_menu: MenuButton,
 
     // file menu
-    pub menu_item_new: MenuItem,
-    pub menu_item_open: MenuItem,
-    pub menu_item_save: MenuItem,
-    pub menu_item_save_as: MenuItem,
-    pub menu_item_import_midi: MenuItem,
-    pub menu_item_export_midi: MenuItem,
-    pub menu_item_export_midi_riffs: MenuItem,
-    pub menu_item_export_midi_riffs_separate: MenuItem,
-    pub menu_item_export_wave: MenuItem,
-    pub menu_item_quit: MenuItem,
+    pub menu_item_new: Button,
+    pub menu_item_open: Button,
+    pub menu_item_save: Button,
+    pub menu_item_save_as: Button,
+    pub menu_item_import_midi: Button,
+    pub menu_item_export_midi: Button,
+    pub menu_item_export_midi_riffs: Button,
+    pub menu_item_export_midi_riffs_separate: Button,
+    pub menu_item_export_wave: Button,
+    pub menu_item_quit: Button,
 
     // edit menu
-    pub menu_item_cut: MenuItem,
-    pub menu_item_copy: MenuItem,
-    pub menu_item_paste: MenuItem,
-    pub menu_item_regenerate_riff_ref_ids: MenuItem,
-    pub menu_item_preferences: MenuItem,
+    pub menu_item_cut: Button,
+    pub menu_item_copy: Button,
+    pub menu_item_paste: Button,
+    pub menu_item_regenerate_riff_ref_ids: Button,
+    pub menu_item_preferences: Button,
 
     // util menu item
-    pub menu_item_scan_plugins: MenuItem,
+    pub menu_item_scan_plugins: Button,
 
     // help menu
-    pub menu_item_about: MenuItem,
+    pub menu_item_about: Button,
 
-    pub toolbar_add_track_combobox: ComboBoxText,
-    pub toolbar_add_track: ToolButton,
-    pub toolbar_undo: ToolButton,
-    pub toolbar_redo: ToolButton,
+    pub toolbar_add_track_combobox: DropDown,
+    pub toolbar_add_track: Button,
+    pub toolbar_undo: Button,
+    pub toolbar_redo: Button,
 
     pub track_split_pane: Paned,
     pub track_grid_vertical_adjustment: Adjustment,
     pub track_grid_horizontal_adjustment: Adjustment,
     pub track_grid_vertical_view_port: Viewport,
 
-    pub track_grid_add_mode_btn: RadioToolButton,
-    pub track_grid_delete_mode_btn: RadioToolButton,
-    pub track_grid_edit_mode_btn: RadioToolButton,
-    pub track_grid_select_mode_btn: RadioToolButton,
-    pub track_grid_add_loop_mode_btn: RadioToolButton,
-    pub track_grid_set_riff_reference_mode_btn: RadioToolButton,
-    pub track_grid_windowed_zoom_mode_btn: RadioToolButton,
+    pub track_grid_add_mode_btn: ToggleButton,
+    pub track_grid_delete_mode_btn: ToggleButton,
+    pub track_grid_edit_mode_btn: ToggleButton,
+    pub track_grid_select_mode_btn: ToggleButton,
+    pub track_grid_add_loop_mode_btn: ToggleButton,
+    pub track_grid_set_riff_reference_mode_btn: ToggleButton,
+    pub track_grid_windowed_zoom_mode_btn: ToggleButton,
 
-    pub track_grid_cut_btn: ToolButton,
-    pub track_grid_copy_btn: ToolButton,
-    pub track_grid_paste_btn: ToolButton,
-    pub track_grid_select_all_btn: ToolButton,
-    pub track_grid_unselect_all_btn: ToolButton,
+    pub track_grid_cut_btn: Button,
+    pub track_grid_copy_btn: Button,
+    pub track_grid_paste_btn: Button,
+    pub track_grid_select_all_btn: Button,
+    pub track_grid_unselect_all_btn: Button,
 
     pub track_grid_horizontal_zoom_out: Button,
     pub track_grid_horizontal_zoom_scale: Scale,
@@ -138,18 +139,18 @@ pub struct Ui {
     pub track_grid_vertical_zoom_in: Button,
     pub track_grid_vertical_zoom_adjustment: Adjustment,
 
-    pub track_grid_translate_left_btn: ToolButton,
-    pub track_grid_translate_right_btn: ToolButton,
-    pub track_grid_translate_up_btn: ToolButton,
-    pub track_grid_translate_down_btn: ToolButton,
+    pub track_grid_translate_left_btn: Button,
+    pub track_grid_translate_right_btn: Button,
+    pub track_grid_translate_up_btn: Button,
+    pub track_grid_translate_down_btn: Button,
 
-    pub track_grid_quantise_start_choice: ComboBoxText,
+    pub track_grid_quantise_start_choice: DropDown,
 
-    pub track_grid_show_automation_btn: ToggleToolButton,
-    pub track_grid_show_note_velocities_btn: ToggleToolButton,
-    pub track_grid_show_notes_btn: ToggleToolButton,
-    pub track_grid_show_pan_events_btn: ToggleToolButton,
-    pub track_grid_cursor_follow: ToggleToolButton,
+    pub track_grid_show_automation_btn: ToggleButton,
+    pub track_grid_show_note_velocities_btn: ToggleButton,
+    pub track_grid_show_notes_btn: ToggleButton,
+    pub track_grid_show_pan_events_btn: ToggleButton,
+    pub track_grid_cursor_follow: ToggleButton,
 
     pub track_panel_scrolled_window: ScrolledWindow,
 
@@ -157,19 +158,19 @@ pub struct Ui {
     pub track_ruler_drawing_area: DrawingArea,
     pub track_grid_scrolled_window: ScrolledWindow,
 
-    pub riff_grid_add_mode_btn: RadioToolButton,
-    pub riff_grid_delete_mode_btn: RadioToolButton,
-    pub riff_grid_edit_mode_btn: RadioToolButton,
-    pub riff_grid_select_mode_btn: RadioToolButton,
-    pub riff_grid_add_loop_mode_btn: RadioToolButton,
-    pub riff_grid_set_riff_reference_mode_btn: RadioToolButton,
-    pub riff_grid_windowed_zoom_mode_btn: RadioToolButton,
+    pub riff_grid_add_mode_btn: ToggleButton,
+    pub riff_grid_delete_mode_btn: ToggleButton,
+    pub riff_grid_edit_mode_btn: ToggleButton,
+    pub riff_grid_select_mode_btn: ToggleButton,
+    pub riff_grid_add_loop_mode_btn: ToggleButton,
+    pub riff_grid_set_riff_reference_mode_btn: ToggleButton,
+    pub riff_grid_windowed_zoom_mode_btn: ToggleButton,
 
-    pub riff_grid_cut_btn: ToolButton,
-    pub riff_grid_copy_btn: ToolButton,
-    pub riff_grid_paste_btn: ToolButton,
-    pub riff_grid_select_all_btn: ToolButton,
-    pub riff_grid_unselect_all_btn: ToolButton,
+    pub riff_grid_cut_btn: Button,
+    pub riff_grid_copy_btn: Button,
+    pub riff_grid_paste_btn: Button,
+    pub riff_grid_select_all_btn: Button,
+    pub riff_grid_unselect_all_btn: Button,
 
     pub riff_grid_horizontal_zoom_out: Button,
     pub riff_grid_horizontal_zoom_scale: Scale,
@@ -180,19 +181,19 @@ pub struct Ui {
     pub riff_grid_vertical_zoom_in: Button,
     pub riff_grid_vertical_zoom_adjustment: Adjustment,
 
-    pub riff_grid_translate_left_btn: ToolButton,
-    pub riff_grid_translate_right_btn: ToolButton,
-    pub riff_grid_translate_up_btn: ToolButton,
-    pub riff_grid_translate_down_btn: ToolButton,
+    pub riff_grid_translate_left_btn: Button,
+    pub riff_grid_translate_right_btn: Button,
+    pub riff_grid_translate_up_btn: Button,
+    pub riff_grid_translate_down_btn: Button,
 
-    pub riff_grid_quantise_start_choice: ComboBoxText,
-    pub riff_grid_quantise_length_choice: ComboBoxText,
+    pub riff_grid_quantise_start_choice: DropDown,
+    pub riff_grid_quantise_length_choice: DropDown,
 
-    pub riff_grid_show_automation_btn: ToggleToolButton,
-    pub riff_grid_show_note_velocities_btn: ToggleToolButton,
-    pub riff_grid_show_notes_btn: ToggleToolButton,
-    pub riff_grid_show_pan_events_btn: ToggleToolButton,
-    pub riff_grid_cursor_follow: ToggleToolButton,
+    pub riff_grid_show_automation_btn: ToggleButton,
+    pub riff_grid_show_note_velocities_btn: ToggleButton,
+    pub riff_grid_show_notes_btn: ToggleButton,
+    pub riff_grid_show_pan_events_btn: ToggleButton,
+    pub riff_grid_cursor_follow: ToggleButton,
 
     pub selected_riff_grid_name_entry: Entry,
     pub riff_grid_save_name_btn: Button,
@@ -220,18 +221,18 @@ pub struct Ui {
     pub piano_roll_drawing_area: DrawingArea,
     pub piano_roll_ruler_drawing_area: DrawingArea,
 
-    pub piano_roll_add_mode_btn: RadioToolButton,
-    pub piano_roll_delete_mode_btn: RadioToolButton,
-    pub piano_roll_edit_mode_btn: RadioToolButton,
-    pub piano_roll_select_mode_btn: RadioToolButton,
-    pub piano_roll_select_riff_start_note_mode_btn: RadioToolButton,
-    pub piano_roll_windowed_zoom_mode_btn: RadioToolButton,
+    pub piano_roll_add_mode_btn: ToggleButton,
+    pub piano_roll_delete_mode_btn: ToggleButton,
+    pub piano_roll_edit_mode_btn: ToggleButton,
+    pub piano_roll_select_mode_btn: ToggleButton,
+    pub piano_roll_select_riff_start_note_mode_btn: ToggleButton,
+    pub piano_roll_windowed_zoom_mode_btn: ToggleButton,
 
-    pub piano_roll_cut_btn: ToolButton,
-    pub piano_roll_copy_btn: ToolButton,
-    pub piano_roll_paste_btn: ToolButton,
-    pub piano_roll_select_all_btn: ToolButton,
-    pub piano_roll_unselect_all_btn: ToolButton,
+    pub piano_roll_cut_btn: Button,
+    pub piano_roll_copy_btn: Button,
+    pub piano_roll_paste_btn: Button,
+    pub piano_roll_select_all_btn: Button,
+    pub piano_roll_unselect_all_btn: Button,
 
     pub piano_roll_horizontal_zoom_out: Button,
     pub piano_roll_horizontal_zoom_scale: Scale,
@@ -243,45 +244,45 @@ pub struct Ui {
     pub piano_roll_vertical_zoom_in: Button,
     pub piano_roll_vertical_zoom_adjustment: Adjustment,
 
-    pub piano_roll_translate_left_btn: ToolButton,
-    pub piano_roll_translate_right_btn: ToolButton,
-    pub piano_roll_translate_up_btn: ToolButton,
-    pub piano_roll_translate_down_btn: ToolButton,
+    pub piano_roll_translate_left_btn: Button,
+    pub piano_roll_translate_right_btn: Button,
+    pub piano_roll_translate_up_btn: Button,
+    pub piano_roll_translate_down_btn: Button,
 
-    pub piano_roll_subdivision_mode_choice: ComboBoxText,
-    pub piano_roll_triplet_type_choice: ComboBoxText,
+    pub piano_roll_subdivision_mode_choice: DropDown,
+    pub piano_roll_triplet_type_choice: DropDown,
 
-    pub piano_roll_quantise_start_choice: ComboBoxText,
-    pub piano_roll_quantise_length_choice: ComboBoxText,
-    pub piano_roll_quantise_start_checkbox: ToggleToolButton,
-    pub piano_roll_quantise_end_checkbox: ToggleToolButton,
+    pub piano_roll_quantise_start_choice: DropDown,
+    pub piano_roll_quantise_length_choice: DropDown,
+    pub piano_roll_quantise_start_checkbox: ToggleButton,
+    pub piano_roll_quantise_end_checkbox: ToggleButton,
     pub piano_roll_quantise_strength_spinner: SpinButton,
-    pub piano_roll_quantise_btn: ToolButton,
+    pub piano_roll_quantise_btn: Button,
 
-    pub piano_roll_note_length_increment_choice: ComboBoxText,
-    pub piano_roll_increase_note_length_btn: ToolButton,
-    pub piano_roll_decrease_note_length_btn: ToolButton,
+    pub piano_roll_note_length_increment_choice: DropDown,
+    pub piano_roll_increase_note_length_btn: Button,
+    pub piano_roll_decrease_note_length_btn: Button,
 
-    pub piano_roll_mpe_all_voices_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_0_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_1_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_2_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_3_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_4_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_5_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_6_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_7_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_8_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_9_btn: RadioToolButton,
-    pub piano_roll_mpe_voice_10_btn: RadioToolButton,
+    pub piano_roll_mpe_all_voices_btn: ToggleButton,
+    pub piano_roll_mpe_voice_0_btn: ToggleButton,
+    pub piano_roll_mpe_voice_1_btn: ToggleButton,
+    pub piano_roll_mpe_voice_2_btn: ToggleButton,
+    pub piano_roll_mpe_voice_3_btn: ToggleButton,
+    pub piano_roll_mpe_voice_4_btn: ToggleButton,
+    pub piano_roll_mpe_voice_5_btn: ToggleButton,
+    pub piano_roll_mpe_voice_6_btn: ToggleButton,
+    pub piano_roll_mpe_voice_7_btn: ToggleButton,
+    pub piano_roll_mpe_voice_8_btn: ToggleButton,
+    pub piano_roll_mpe_voice_9_btn: ToggleButton,
+    pub piano_roll_mpe_voice_10_btn: ToggleButton,
 
-    pub piano_roll_dock_toggle_btn: ToggleToolButton,
+    pub piano_roll_dock_toggle_btn: ToggleButton,
 
-    pub sample_roll_dock_toggle_btn: ToggleToolButton,
-    pub sample_library_dock_toggle_btn: ToggleToolButton,
-    pub automation_dock_toggle_btn: ToggleToolButton,
-    pub scripting_dock_toggle_btn: ToggleToolButton,
-    pub mixer_dock_toggle_btn: ToggleToolButton,
+    pub sample_roll_dock_toggle_btn: ToggleButton,
+    pub sample_library_dock_toggle_btn: ToggleButton,
+    pub automation_dock_toggle_btn: ToggleButton,
+    pub scripting_dock_toggle_btn: ToggleButton,
+    pub mixer_dock_toggle_btn: ToggleButton,
 
     pub piano_roll_track_name: Label,
     pub piano_roll_riff_name: Label,
@@ -292,32 +293,32 @@ pub struct Ui {
     pub sample_roll_drawing_area: DrawingArea,
     pub sample_roll_ruler_drawing_area: DrawingArea,
 
-    pub sample_roll_add_mode_btn: ToolButton,
-    pub sample_roll_delete_mode_btn: ToolButton,
-    pub sample_roll_edit_mode_btn: ToolButton,
-    pub sample_roll_select_mode_btn: ToolButton,
+    pub sample_roll_add_mode_btn: ToggleButton,
+    pub sample_roll_delete_mode_btn: ToggleButton,
+    pub sample_roll_edit_mode_btn: ToggleButton,
+    pub sample_roll_select_mode_btn: ToggleButton,
 
-    pub sample_roll_cut_btn: ToolButton,
-    pub sample_roll_copy_btn: ToolButton,
-    pub sample_roll_paste_btn: ToolButton,
+    pub sample_roll_cut_btn: Button,
+    pub sample_roll_copy_btn: Button,
+    pub sample_roll_paste_btn: Button,
 
-    pub sample_roll_zoom_out: ToolButton,
+    pub sample_roll_zoom_out: Button,
     pub sample_roll_zoom_scale: Scale,
-    pub sample_roll_zoom_in: ToolButton,
+    pub sample_roll_zoom_in: Button,
 
-    pub sample_roll_translate_left_btn: ToolButton,
-    pub sample_roll_translate_right_btn: ToolButton,
-    pub sample_roll_translate_up_btn: ToolButton,
-    pub sample_roll_translate_down_btn: ToolButton,
+    pub sample_roll_translate_left_btn: Button,
+    pub sample_roll_translate_right_btn: Button,
+    pub sample_roll_translate_up_btn: Button,
+    pub sample_roll_translate_down_btn: Button,
 
-    pub sample_roll_quantise_start_choice: ComboBoxText,
-    pub sample_roll_quantise_length_choice: ComboBoxText,
-    pub sample_roll_quantise_start_checkbox: RadioToolButton,
-    pub sample_roll_quantise_end_checkbox: RadioToolButton,
-    pub sample_roll_quantise_btn: ToolButton,
+    pub sample_roll_quantise_start_choice: DropDown,
+    pub sample_roll_quantise_length_choice: DropDown,
+    pub sample_roll_quantise_start_checkbox: ToggleButton,
+    pub sample_roll_quantise_end_checkbox: ToggleButton,
+    pub sample_roll_quantise_btn: Button,
 
-    pub sample_roll_increase_sample_length_btn: ToolButton,
-    pub sample_roll_decrease_sample_length_btn: ToolButton,
+    pub sample_roll_increase_sample_length_btn: Button,
+    pub sample_roll_decrease_sample_length_btn: Button,
 
     pub sample_roll_available_samples: TreeView,
     pub sample_roll_sample_browser_delete_btn: Button,
@@ -341,39 +342,39 @@ pub struct Ui {
     pub automation_ruler_drawing_area: DrawingArea,
     pub automation_drawing_area: DrawingArea,
 
-    pub automation_add_mode_btn: RadioToolButton,
-    pub automation_delete_mode_btn: RadioToolButton,
-    pub automation_edit_mode_btn: RadioToolButton,
-    pub automation_select_mode_btn: RadioToolButton,
-    pub automation_zoom_window_mode_btn: RadioToolButton,
+    pub automation_add_mode_btn: ToggleButton,
+    pub automation_delete_mode_btn: ToggleButton,
+    pub automation_edit_mode_btn: ToggleButton,
+    pub automation_select_mode_btn: ToggleButton,
+    pub automation_zoom_window_mode_btn: ToggleButton,
 
-    pub automation_cut_btn: ToolButton,
-    pub automation_copy_btn: ToolButton,
-    pub automation_paste_btn: ToolButton,
-    pub automation_select_all_btn: ToolButton,
-    pub automation_unselect_all_btn: ToolButton,
+    pub automation_cut_btn: Button,
+    pub automation_copy_btn: Button,
+    pub automation_paste_btn: Button,
+    pub automation_select_all_btn: Button,
+    pub automation_unselect_all_btn: Button,
 
-    pub automation_zoom_out: ToolButton,
+    pub automation_zoom_out: Button,
     pub automation_zoom_scale: Scale,
-    pub automation_zoom_in: ToolButton,
+    pub automation_zoom_in: Button,
 
-    pub automation_translate_left_btn: ToolButton,
-    pub automation_translate_right_btn: ToolButton,
-    pub automation_translate_up_btn: ToolButton,
-    pub automation_translate_down_btn: ToolButton,
+    pub automation_translate_left_btn: Button,
+    pub automation_translate_right_btn: Button,
+    pub automation_translate_up_btn: Button,
+    pub automation_translate_down_btn: Button,
 
-    pub automation_quantise_btn: ToolButton,
-    pub automation_quantise_start_choice: ComboBoxText,
+    pub automation_quantise_btn: Button,
+    pub automation_quantise_start_choice: DropDown,
 
-    pub automation_grid_edit_note_velocity: RadioToolButton,
-    pub automation_grid_edit_note_expression: RadioToolButton,
-    pub automation_grid_edit_controllers: RadioToolButton,
-    pub automation_grid_edit_pitch_bend: RadioToolButton,
-    pub automation_grid_edit_instrument_parameters: RadioToolButton,
-    pub automation_grid_edit_effect_parameters: RadioToolButton,
+    pub automation_grid_edit_note_velocity: ToggleButton,
+    pub automation_grid_edit_note_expression: ToggleButton,
+    pub automation_grid_edit_controllers: ToggleButton,
+    pub automation_grid_edit_pitch_bend: ToggleButton,
+    pub automation_grid_edit_instrument_parameters: ToggleButton,
+    pub automation_grid_edit_effect_parameters: ToggleButton,
 
-    pub automation_grid_edit_track: RadioToolButton,
-    pub automation_grid_edit_riff: RadioToolButton,
+    pub automation_grid_edit_track: ToggleButton,
+    pub automation_grid_edit_riff: ToggleButton,
 
     pub automation_grid_edit_note_velocity_box: Box,
     pub automation_grid_edit_note_expression_box: Box,
@@ -383,25 +384,25 @@ pub struct Ui {
     pub automation_grid_edit_effect_parameters_box: Box,
     pub automation_edit_panel_stack: Stack,
 
-    pub automation_controller_combobox: ComboBoxText,
+    pub automation_controller_combobox: DropDown,
 
-    pub automation_instrument_parameters_combobox: ComboBoxText,
+    pub automation_instrument_parameters_combobox: DropDown,
 
-    pub automation_effects_combobox: ComboBoxText,
-    pub automation_effect_parameters_combobox: ComboBoxText,
+    pub automation_effects_combobox: DropDown,
+    pub automation_effect_parameters_combobox: DropDown,
 
-    pub automation_note_expression_type: ComboBoxText,
-    pub automation_note_expression_id: ComboBoxText,
-    pub automation_note_expression_port_index: ComboBoxText,
-    pub automation_note_expression_channel: ComboBoxText,
-    pub automation_note_expression_key: ComboBoxText,
+    pub automation_note_expression_type: DropDown,
+    pub automation_note_expression_id: DropDown,
+    pub automation_note_expression_port_index: DropDown,
+    pub automation_note_expression_channel: DropDown,
+    pub automation_note_expression_key: DropDown,
 
-    pub automation_grid_mode_point: RadioToolButton,
-    pub automation_grid_mode_line: RadioToolButton,
-    pub automation_grid_mode_curve: RadioToolButton,
+    pub automation_grid_mode_point: ToggleButton,
+    pub automation_grid_mode_line: ToggleButton,
+    pub automation_grid_mode_curve: ToggleButton,
 
-    pub automation_grid_discrete_events_btn: RadioToolButton,
-    pub automation_grid_continuous_events_btn: RadioToolButton,
+    pub automation_grid_discrete_events_btn: ToggleButton,
+    pub automation_grid_continuous_events_btn: ToggleButton,
 
     pub riff_sets_track_panel_scrolled_window: ScrolledWindow,
     pub riff_sets_track_panel_view_port: Viewport,
@@ -420,7 +421,7 @@ pub struct Ui {
     pub riff_sequences_track_panel: Box,
     pub riff_sequences_tracks_view_port: Viewport,
     pub riff_sequences_box: Box,
-    pub sequence_combobox: ComboBoxText,
+    pub sequence_combobox: DropDown,
     pub riff_sequence_name_entry: Entry,
     pub add_sequence_btn: Button,
 
@@ -429,7 +430,7 @@ pub struct Ui {
     pub riff_grid_track_panel: Box,
     pub riff_grid_tracks_view_port: Viewport,
     pub riff_grid_box: Box,
-    pub grid_combobox: ComboBoxText,
+    pub grid_combobox: DropDown,
     pub riff_grid_name_entry: Entry,
     pub add_grid_btn: Button,
 
@@ -440,7 +441,7 @@ pub struct Ui {
     pub riff_arrangement_tracks_view_port: Viewport,
     pub new_arrangement_name_entry: Entry,
     pub add_arrangement_btn: Button,
-    pub arrangements_combobox: ComboBoxText,
+    pub arrangements_combobox: DropDown,
 
     pub riff_arrangement_overview_drawing_area: DrawingArea,
     pub riff_arrangement_overview_toggle_button: ToggleButton,
@@ -450,26 +451,26 @@ pub struct Ui {
     pub song_position_txt_ctrl: Label,
     pub song_time_txt_ctrl: Label,
 
-    pub transport_goto_start_button: RadioToolButton,
-    pub transport_move_back_button: RadioToolButton,
-    pub transport_play_button: RadioToolButton,
-    pub transport_record_button: ToggleToolButton,
-    pub transport_stop_button: RadioToolButton,
-    pub transport_loop_button: ToggleToolButton,
-    pub transport_pause_button: RadioToolButton,
-    pub transport_move_forward_button: RadioToolButton,
-    pub transport_goto_end_button: RadioToolButton,
+    pub transport_goto_start_button: ToggleButton,
+    pub transport_move_back_button: ToggleButton,
+    pub transport_play_button: ToggleButton,
+    pub transport_record_button: ToggleButton,
+    pub transport_stop_button: ToggleButton,
+    pub transport_loop_button: ToggleButton,
+    pub transport_pause_button: ToggleButton,
+    pub transport_move_forward_button: ToggleButton,
+    pub transport_goto_end_button: ToggleButton,
 
     pub song_tempo_spinner: SpinButton,
     pub time_signature_numerator_spinner: SpinButton,
     pub time_signature_denominator_spinner: SpinButton,
 
-    pub loop_combobox_text: ComboBoxText,
-    pub delete_loop_btn: ToolButton,
-    pub save_loop_name_change_btn: ToolButton,
+    pub loop_combobox_text: DropDown,
+    pub delete_loop_btn: Button,
+    pub save_loop_name_change_btn: Button,
     pub loop_combobox_text_entry: Entry,
 
-    pub panic_btn: ToolButton,
+    pub panic_btn: Button,
 
     pub track_grid_view_toggle_button: ToggleButton,
     pub riffs_view_toggle_button: ToggleButton,
@@ -488,7 +489,7 @@ impl Ui {
 }
 
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackPanel {
     pub track_panel: Frame,
     pub delete_button: Button,
@@ -502,28 +503,28 @@ pub struct TrackPanel {
     pub track_panel_copy_track_button: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackDetailsDialogue {
-    pub track_details_dialogue: Dialog,
+    pub track_details_dialogue: Window,
 
     pub track_details_panel: Box,
 
-    pub track_riff_choice: ComboBoxText,
+    pub track_riff_choice: DropDown,
     pub track_details_riff_choice_entry: Entry,
-    pub track_riff_length_choice: ComboBoxText,
+    pub track_riff_length_choice: DropDown,
     pub track_delete_riff_btn: Button,
     pub track_copy_riff_btn: Button,
     pub track_details_riff_save_length: Button,
     pub track_details_riff_save_name_btn: Button,
 
     pub track_instrument_label: Label,
-    pub track_instrument_choice: ComboBoxText,
+    pub track_instrument_choice: DropDown,
     pub track_instrument_window_visibility_toggle_btn: Button,
 
     pub track_midi_device_label: Label,
-    pub track_midi_device_choice: ComboBoxText,
+    pub track_midi_device_choice: DropDown,
     pub track_midi_channel_label: Label,
-    pub track_midi_channel_choice: ComboBoxText,
+    pub track_midi_channel_choice: DropDown,
 
     pub track_detail_track_colour_button: ColorButton,
     pub track_detail_riff_colour_button: ColorButton,
@@ -532,7 +533,7 @@ pub struct TrackDetailsDialogue {
     pub track_send_audio_to_track_open_dialogue_button: Button,
 
     pub track_effects_choice_label: Label,
-    pub track_effects_choice: ComboBoxText,
+    pub track_effects_choice: DropDown,
     pub track_effects_btns_label: Label,
     pub track_add_effect_button: Button,
     pub track_effect_list: TreeView,
@@ -543,7 +544,7 @@ pub struct TrackDetailsDialogue {
     pub track_detail_close_button: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct MixerBlade {
     pub mixer_blade: Frame,
     pub mixer_blade_track_name_label: Label,
@@ -559,7 +560,7 @@ pub struct MixerBlade {
     pub mixer_blade_channel_level_drawing_area: DrawingArea,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffSetBladeHead {
     pub riff_set_blade_play: Button,
     pub riff_set_blade_record: Button,
@@ -574,12 +575,12 @@ pub struct RiffSetBladeHead {
     pub riff_set_select_btn: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffSetBlade {
     pub riff_set_box: Box,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffSequenceBlade {
     pub riff_sequence_blade_play: Button,
     pub riff_sequence_blade_copy: Button,
@@ -591,7 +592,7 @@ pub struct RiffSequenceBlade {
     pub riff_sequence_riff_sets_scrolled_window: ScrolledWindow,
     pub riff_set_box: Box,
     pub riff_set_head_box: Box,
-    pub riff_set_combobox: ComboBoxText,
+    pub riff_set_combobox: DropDown,
     pub add_riff_set_btn: Button,
     pub riff_sequence_drag_btn: Button,
     pub riff_seq_horizontal_adjustment: Adjustment,
@@ -602,7 +603,7 @@ pub struct RiffSequenceBlade {
     pub riff_sequence_blade_top_box: Box,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffGridBlade {
     pub riff_grid_blade_play: Button,
     pub riff_grid_blade_copy: Button,
@@ -617,7 +618,7 @@ pub struct RiffGridBlade {
     pub riff_grid_drawing_area: DrawingArea,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffArrangementBlade {
     pub riff_arrangement_blade_play: Button,
     pub riff_arrangement_blade_copy: Button,
@@ -626,10 +627,10 @@ pub struct RiffArrangementBlade {
     pub riff_arrangement_name_entry: Entry,
     pub riff_arrangement_blade: Frame,
     pub riff_set_box: Box,
-    pub riff_set_combobox: ComboBoxText,
+    pub riff_set_combobox: DropDown,
     pub add_riff_set_btn: Button,
-    pub riff_sequence_combobox: ComboBoxText,
-    pub riff_grid_combobox: ComboBoxText,
+    pub riff_sequence_combobox: DropDown,
+    pub riff_grid_combobox: DropDown,
     pub add_riff_sequence_btn: Button,
     pub add_riff_grid_btn: Button,
     pub riff_arr_horizontal_adjustment: Adjustment,
@@ -640,7 +641,7 @@ pub struct RiffArrangementBlade {
     pub riff_arrangement_riff_set_entry_completion: EntryCompletion,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct RiffArrangementRiffSetBlade {
     pub local_riff_set_box: Box,
     pub riff_set_head_box: Box,
@@ -648,56 +649,57 @@ pub struct RiffArrangementRiffSetBlade {
     pub riff_set_scrolled_window: ScrolledWindow,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackMidiRoutingDialogue {
-    pub track_midi_routing_dialogue: Dialog,
-    pub track_midi_routing_track_combobox_text: ComboBoxText,
+    pub track_midi_routing_dialogue: Window,
+    pub track_midi_routing_track_combobox_text: DropDown,
     pub track_midi_routing_add_track_button: Button,
     pub track_midi_routing_scrolled_box: Box,
     pub track_midi_routing_close_button: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackMidiRoutingPanel {
     pub track_midi_routing_panel: Frame,
     pub track_midi_routing_send_to_track_label: Label,
-    pub track_midi_routing_midi_channel_combobox_text: ComboBoxText,
-    pub track_midi_routing_note_from_combobox_text: ComboBoxText,
-    pub track_midi_routing_note_to_combobox_text: ComboBoxText,
+    pub track_midi_routing_midi_channel_combobox_text: DropDown,
+    pub track_midi_routing_note_from_combobox_text: DropDown,
+    pub track_midi_routing_note_to_combobox_text: DropDown,
     pub track_midi_routing_delete_button: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackAudioRoutingDialogue {
-    pub track_audio_routing_dialogue: Dialog,
-    pub track_audio_routing_track_combobox_text: ComboBoxText,
+    pub track_audio_routing_dialogue: Window,
+    pub track_audio_routing_track_combobox_text: DropDown,
     pub track_audio_routing_add_track_button: Button,
     pub track_audio_routing_scrolled_box: Box,
     pub track_audio_routing_close_button: Button,
 }
 
-#[derive(Gladis, Clone)]
+#[derive(Clone)]
 pub struct TrackAudioRoutingPanel {
     pub track_audio_routing_panel: Frame,
     pub track_audio_routing_send_to_track_label: Label,
-    pub track_audio_routing_left_channel_input_index_combobox_text: ComboBoxText,
-    pub track_audio_routing_right_channel_input_index_combobox_text: ComboBoxText,
+    pub track_audio_routing_left_channel_input_index_combobox_text: DropDown,
+    pub track_audio_routing_right_channel_input_index_combobox_text: DropDown,
     pub track_audio_routing_delete_button: Button,
 }
 
 pub struct MainWindow {
     pub ui: Ui,
-    pub automation_window: gtk::Window,
+    pub application: gtk4::Application,
+    pub automation_window: gtk4::Window,
     pub automation_window_stack: Stack,
-    pub mixer_window: gtk::Window,
+    pub mixer_window: gtk4::Window,
     pub mixer_window_stack: Stack,
-    pub piano_roll_window: gtk::Window,
+    pub piano_roll_window: gtk4::Window,
     pub piano_roll_window_stack: Stack,
-    pub sample_library_window: gtk::Window,
+    pub sample_library_window: gtk4::Window,
     pub sample_library_window_stack: Stack,
-    pub sample_roll_window: gtk::Window,
+    pub sample_roll_window: gtk4::Window,
     pub sample_roll_window_stack: Stack,
-    pub scripting_window: gtk::Window,
+    pub scripting_window: gtk4::Window,
     pub scripting_window_stack: Stack,
     pub piano_roll_grid: Option<Arc<Mutex<BeatGrid>>>,
     pub piano_roll_grid_ruler: Option<Arc<Mutex<BeatGridRuler>>>,
@@ -729,24 +731,725 @@ pub struct MainWindow {
     pub midi_file_import_file_chooser: FileChooserDialog,
 }
 
+gtk4_builder_from!(Ui {
+    wnd_main: ApplicationWindow,
+    top_level_vbox: Box,
+    sub_panel_stack: Stack,
+    show_sub_panel_toggle_btn: ToggleButton,
+    centre_split_pane: Paned,
+    centre_panel_stack: Stack,
+    progress_dialogue: Window,
+    dialogue_progress_bar: ProgressBar,
+    riff_name_dialogue: Window,
+    riff_name_entry: Entry,
+    configuration_dialogue: Window,
+    sample_rate_combobox: DropDown,
+    block_size_combobox: DropDown,
+    vst24_plugin_paths_entry: Entry,
+    add_vst24_path_button: Button,
+    clap_plugin_paths_entry: Entry,
+    add_clap_path_button: Button,
+    vst3_plugin_paths_entry: Entry,
+    add_vst3_path_button: Button,
+    about_dialogue: AboutDialog,
+    recent_chooser_menu: MenuButton,
+    menu_item_new: Button,
+    menu_item_open: Button,
+    menu_item_save: Button,
+    menu_item_save_as: Button,
+    menu_item_import_midi: Button,
+    menu_item_export_midi: Button,
+    menu_item_export_midi_riffs: Button,
+    menu_item_export_midi_riffs_separate: Button,
+    menu_item_export_wave: Button,
+    menu_item_quit: Button,
+    menu_item_cut: Button,
+    menu_item_copy: Button,
+    menu_item_paste: Button,
+    menu_item_regenerate_riff_ref_ids: Button,
+    menu_item_preferences: Button,
+    menu_item_scan_plugins: Button,
+    menu_item_about: Button,
+    toolbar_add_track_combobox: DropDown,
+    toolbar_add_track: Button,
+    toolbar_undo: Button,
+    toolbar_redo: Button,
+    track_split_pane: Paned,
+    track_grid_vertical_adjustment: Adjustment,
+    track_grid_horizontal_adjustment: Adjustment,
+    track_grid_vertical_view_port: Viewport,
+    track_grid_add_mode_btn: ToggleButton,
+    track_grid_delete_mode_btn: ToggleButton,
+    track_grid_edit_mode_btn: ToggleButton,
+    track_grid_select_mode_btn: ToggleButton,
+    track_grid_add_loop_mode_btn: ToggleButton,
+    track_grid_set_riff_reference_mode_btn: ToggleButton,
+    track_grid_windowed_zoom_mode_btn: ToggleButton,
+    track_grid_cut_btn: Button,
+    track_grid_copy_btn: Button,
+    track_grid_paste_btn: Button,
+    track_grid_select_all_btn: Button,
+    track_grid_unselect_all_btn: Button,
+    track_grid_horizontal_zoom_out: Button,
+    track_grid_horizontal_zoom_scale: Scale,
+    track_grid_horizontal_zoom_in: Button,
+    track_grid_zoom_adjustment: Adjustment,
+    track_grid_vertical_zoom_out: Button,
+    track_grid_vertical_zoom_scale: Scale,
+    track_grid_vertical_zoom_in: Button,
+    track_grid_vertical_zoom_adjustment: Adjustment,
+    track_grid_translate_left_btn: Button,
+    track_grid_translate_right_btn: Button,
+    track_grid_translate_up_btn: Button,
+    track_grid_translate_down_btn: Button,
+    track_grid_quantise_start_choice: DropDown,
+    track_grid_show_automation_btn: ToggleButton,
+    track_grid_show_note_velocities_btn: ToggleButton,
+    track_grid_show_notes_btn: ToggleButton,
+    track_grid_show_pan_events_btn: ToggleButton,
+    track_grid_cursor_follow: ToggleButton,
+    track_panel_scrolled_window: ScrolledWindow,
+    track_drawing_area: DrawingArea,
+    track_ruler_drawing_area: DrawingArea,
+    track_grid_scrolled_window: ScrolledWindow,
+    riff_grid_add_mode_btn: ToggleButton,
+    riff_grid_delete_mode_btn: ToggleButton,
+    riff_grid_edit_mode_btn: ToggleButton,
+    riff_grid_select_mode_btn: ToggleButton,
+    riff_grid_add_loop_mode_btn: ToggleButton,
+    riff_grid_set_riff_reference_mode_btn: ToggleButton,
+    riff_grid_windowed_zoom_mode_btn: ToggleButton,
+    riff_grid_cut_btn: Button,
+    riff_grid_copy_btn: Button,
+    riff_grid_paste_btn: Button,
+    riff_grid_select_all_btn: Button,
+    riff_grid_unselect_all_btn: Button,
+    riff_grid_horizontal_zoom_out: Button,
+    riff_grid_horizontal_zoom_scale: Scale,
+    riff_grid_horizontal_zoom_in: Button,
+    riff_grid_zoom_adjustment: Adjustment,
+    riff_grid_vertical_zoom_out: Button,
+    riff_grid_vertical_zoom_scale: Scale,
+    riff_grid_vertical_zoom_in: Button,
+    riff_grid_vertical_zoom_adjustment: Adjustment,
+    riff_grid_translate_left_btn: Button,
+    riff_grid_translate_right_btn: Button,
+    riff_grid_translate_up_btn: Button,
+    riff_grid_translate_down_btn: Button,
+    riff_grid_quantise_start_choice: DropDown,
+    riff_grid_quantise_length_choice: DropDown,
+    riff_grid_show_automation_btn: ToggleButton,
+    riff_grid_show_note_velocities_btn: ToggleButton,
+    riff_grid_show_notes_btn: ToggleButton,
+    riff_grid_show_pan_events_btn: ToggleButton,
+    riff_grid_cursor_follow: ToggleButton,
+    selected_riff_grid_name_entry: Entry,
+    riff_grid_save_name_btn: Button,
+    riff_grid_play: Button,
+    riff_grid_copy: Button,
+    riff_grid_delete: Button,
+    riff_grid_copy_to_track_view_btn: Button,
+    riff_grid_tracks_panel_scrolled_window: ScrolledWindow,
+    riff_grid_drawing_area: DrawingArea,
+    riff_grid_ruler_drawing_area: DrawingArea,
+    riff_grid_scrolled_window: ScrolledWindow,
+    piano_roll_component: Box,
+    automation_component: Box,
+    sample_library_component: Box,
+    sample_roll_component: Box,
+    mixer_component: Box,
+    scripting_component: Box,
+    piano_roll_scrolled_window: ScrolledWindow,
+    piano_roll_piano_keyboard_drawing_area: DrawingArea,
+    piano_roll_drawing_area: DrawingArea,
+    piano_roll_ruler_drawing_area: DrawingArea,
+    piano_roll_add_mode_btn: ToggleButton,
+    piano_roll_delete_mode_btn: ToggleButton,
+    piano_roll_edit_mode_btn: ToggleButton,
+    piano_roll_select_mode_btn: ToggleButton,
+    piano_roll_select_riff_start_note_mode_btn: ToggleButton,
+    piano_roll_windowed_zoom_mode_btn: ToggleButton,
+    piano_roll_cut_btn: Button,
+    piano_roll_copy_btn: Button,
+    piano_roll_paste_btn: Button,
+    piano_roll_select_all_btn: Button,
+    piano_roll_unselect_all_btn: Button,
+    piano_roll_horizontal_zoom_out: Button,
+    piano_roll_horizontal_zoom_scale: Scale,
+    piano_roll_horizontal_zoom_in: Button,
+    piano_roll_zoom_adjustment: Adjustment,
+    piano_roll_vertical_zoom_out: Button,
+    piano_roll_vertical_zoom_scale: Scale,
+    piano_roll_vertical_zoom_in: Button,
+    piano_roll_vertical_zoom_adjustment: Adjustment,
+    piano_roll_translate_left_btn: Button,
+    piano_roll_translate_right_btn: Button,
+    piano_roll_translate_up_btn: Button,
+    piano_roll_translate_down_btn: Button,
+    piano_roll_subdivision_mode_choice: DropDown,
+    piano_roll_triplet_type_choice: DropDown,
+    piano_roll_quantise_start_choice: DropDown,
+    piano_roll_quantise_length_choice: DropDown,
+    piano_roll_quantise_start_checkbox: ToggleButton,
+    piano_roll_quantise_end_checkbox: ToggleButton,
+    piano_roll_quantise_strength_spinner: SpinButton,
+    piano_roll_quantise_btn: Button,
+    piano_roll_note_length_increment_choice: DropDown,
+    piano_roll_increase_note_length_btn: Button,
+    piano_roll_decrease_note_length_btn: Button,
+    piano_roll_mpe_all_voices_btn: ToggleButton,
+    piano_roll_mpe_voice_0_btn: ToggleButton,
+    piano_roll_mpe_voice_1_btn: ToggleButton,
+    piano_roll_mpe_voice_2_btn: ToggleButton,
+    piano_roll_mpe_voice_3_btn: ToggleButton,
+    piano_roll_mpe_voice_4_btn: ToggleButton,
+    piano_roll_mpe_voice_5_btn: ToggleButton,
+    piano_roll_mpe_voice_6_btn: ToggleButton,
+    piano_roll_mpe_voice_7_btn: ToggleButton,
+    piano_roll_mpe_voice_8_btn: ToggleButton,
+    piano_roll_mpe_voice_9_btn: ToggleButton,
+    piano_roll_mpe_voice_10_btn: ToggleButton,
+    piano_roll_dock_toggle_btn: ToggleButton,
+    sample_roll_dock_toggle_btn: ToggleButton,
+    sample_library_dock_toggle_btn: ToggleButton,
+    automation_dock_toggle_btn: ToggleButton,
+    scripting_dock_toggle_btn: ToggleButton,
+    mixer_dock_toggle_btn: ToggleButton,
+    piano_roll_track_name: Label,
+    piano_roll_riff_name: Label,
+    sample_library_file_chooser_widget: FileChooserWidget,
+    sample_library_add_sample_to_song_btn: Button,
+    sample_roll_drawing_area: DrawingArea,
+    sample_roll_ruler_drawing_area: DrawingArea,
+    sample_roll_add_mode_btn: ToggleButton,
+    sample_roll_delete_mode_btn: ToggleButton,
+    sample_roll_edit_mode_btn: ToggleButton,
+    sample_roll_select_mode_btn: ToggleButton,
+    sample_roll_cut_btn: Button,
+    sample_roll_copy_btn: Button,
+    sample_roll_paste_btn: Button,
+    sample_roll_zoom_out: Button,
+    sample_roll_zoom_scale: Scale,
+    sample_roll_zoom_in: Button,
+    sample_roll_translate_left_btn: Button,
+    sample_roll_translate_right_btn: Button,
+    sample_roll_translate_up_btn: Button,
+    sample_roll_translate_down_btn: Button,
+    sample_roll_quantise_start_choice: DropDown,
+    sample_roll_quantise_length_choice: DropDown,
+    sample_roll_quantise_start_checkbox: ToggleButton,
+    sample_roll_quantise_end_checkbox: ToggleButton,
+    sample_roll_quantise_btn: Button,
+    sample_roll_increase_sample_length_btn: Button,
+    sample_roll_decrease_sample_length_btn: Button,
+    sample_roll_available_samples: TreeView,
+    sample_roll_sample_browser_delete_btn: Button,
+    sample_roll_track_name: Label,
+    sample_roll_riff_name: Label,
+    scripting_file_chooser_widget: FileChooserWidget,
+    scripting_script_text_view: TextView,
+    scripting_console_output_text_view: TextView,
+    scripting_console_input_text_view: TextView,
+    scripting_script_name_label: Label,
+    scripting_new_script_btn: Button,
+    scripting_save_script_btn: Button,
+    scripting_save_script_as_btn: Button,
+    scripting_run_script_btn: Button,
+    scripting_console_run_btn: Button,
+    mixer_box: Box,
+    automation_ruler_drawing_area: DrawingArea,
+    automation_drawing_area: DrawingArea,
+    automation_add_mode_btn: ToggleButton,
+    automation_delete_mode_btn: ToggleButton,
+    automation_edit_mode_btn: ToggleButton,
+    automation_select_mode_btn: ToggleButton,
+    automation_zoom_window_mode_btn: ToggleButton,
+    automation_cut_btn: Button,
+    automation_copy_btn: Button,
+    automation_paste_btn: Button,
+    automation_select_all_btn: Button,
+    automation_unselect_all_btn: Button,
+    automation_zoom_out: Button,
+    automation_zoom_scale: Scale,
+    automation_zoom_in: Button,
+    automation_translate_left_btn: Button,
+    automation_translate_right_btn: Button,
+    automation_translate_up_btn: Button,
+    automation_translate_down_btn: Button,
+    automation_quantise_btn: Button,
+    automation_quantise_start_choice: DropDown,
+    automation_grid_edit_note_velocity: ToggleButton,
+    automation_grid_edit_note_expression: ToggleButton,
+    automation_grid_edit_controllers: ToggleButton,
+    automation_grid_edit_pitch_bend: ToggleButton,
+    automation_grid_edit_instrument_parameters: ToggleButton,
+    automation_grid_edit_effect_parameters: ToggleButton,
+    automation_grid_edit_track: ToggleButton,
+    automation_grid_edit_riff: ToggleButton,
+    automation_grid_edit_note_velocity_box: Box,
+    automation_grid_edit_note_expression_box: Box,
+    automation_grid_edit_controllers_box: Box,
+    automation_grid_edit_pitch_bend_box: Box,
+    automation_grid_edit_instrument_parameters_box: Box,
+    automation_grid_edit_effect_parameters_box: Box,
+    automation_edit_panel_stack: Stack,
+    automation_controller_combobox: DropDown,
+    automation_instrument_parameters_combobox: DropDown,
+    automation_effects_combobox: DropDown,
+    automation_effect_parameters_combobox: DropDown,
+    automation_note_expression_type: DropDown,
+    automation_note_expression_id: DropDown,
+    automation_note_expression_port_index: DropDown,
+    automation_note_expression_channel: DropDown,
+    automation_note_expression_key: DropDown,
+    automation_grid_mode_point: ToggleButton,
+    automation_grid_mode_line: ToggleButton,
+    automation_grid_mode_curve: ToggleButton,
+    automation_grid_discrete_events_btn: ToggleButton,
+    automation_grid_continuous_events_btn: ToggleButton,
+    riff_sets_track_panel_scrolled_window: ScrolledWindow,
+    riff_sets_track_panel_view_port: Viewport,
+    riff_sets_scrolled_window: ScrolledWindow,
+    riff_sets_track_panel: Box,
+    riff_set_heads_box: Box,
+    riff_sets_box: Box,
+    new_riff_set_name_entry: Entry,
+    add_riff_set_btn: Button,
+    riff_set_horizontal_adjustment: Adjustment,
+    riff_set_vertical_adjustment: Adjustment,
+    riff_sets_view_port: Viewport,
+    riff_sequences_track_panel_scrolled_window: ScrolledWindow,
+    riff_sequence_vertical_adjustment: Adjustment,
+    riff_sequences_track_panel: Box,
+    riff_sequences_tracks_view_port: Viewport,
+    riff_sequences_box: Box,
+    sequence_combobox: DropDown,
+    riff_sequence_name_entry: Entry,
+    add_sequence_btn: Button,
+    riff_grid_vertical_adjustment: Adjustment,
+    riff_grid_track_panel: Box,
+    riff_grid_tracks_view_port: Viewport,
+    riff_grid_box: Box,
+    grid_combobox: DropDown,
+    riff_grid_name_entry: Entry,
+    add_grid_btn: Button,
+    riff_arrangement_track_panel_scrolled_window: ScrolledWindow,
+    riff_arrangement_track_panel: Box,
+    riff_arrangement_box: Box,
+    riff_arrangement_vertical_adjustment: Adjustment,
+    riff_arrangement_tracks_view_port: Viewport,
+    new_arrangement_name_entry: Entry,
+    add_arrangement_btn: Button,
+    arrangements_combobox: DropDown,
+    riff_arrangement_overview_drawing_area: DrawingArea,
+    riff_arrangement_overview_toggle_button: ToggleButton,
+    riffs_stack: Stack,
+    song_position_txt_ctrl: Label,
+    song_time_txt_ctrl: Label,
+    transport_goto_start_button: ToggleButton,
+    transport_move_back_button: ToggleButton,
+    transport_play_button: ToggleButton,
+    transport_record_button: ToggleButton,
+    transport_stop_button: ToggleButton,
+    transport_loop_button: ToggleButton,
+    transport_pause_button: ToggleButton,
+    transport_move_forward_button: ToggleButton,
+    transport_goto_end_button: ToggleButton,
+    song_tempo_spinner: SpinButton,
+    time_signature_numerator_spinner: SpinButton,
+    time_signature_denominator_spinner: SpinButton,
+    loop_combobox_text: DropDown,
+    delete_loop_btn: Button,
+    save_loop_name_change_btn: Button,
+    loop_combobox_text_entry: Entry,
+    panic_btn: Button,
+    track_grid_view_toggle_button: ToggleButton,
+    riffs_view_toggle_button: ToggleButton,
+    riff_sets_view_toggle_button: ToggleButton,
+    riff_sequence_view_toggle_button: ToggleButton,
+    riff_grid_view_toggle_button: ToggleButton,
+    riff_arrangement_view_toggle_button: ToggleButton,
+});
+
+gtk4_builder_from!(TrackPanel {
+    track_panel: Frame,
+    delete_button: Button,
+    track_number_text: Button,
+    track_name_text_ctrl: Entry,
+    track_details_btn: Button,
+    solo_toggle_btn: ToggleButton,
+    mute_toggle_btn: ToggleButton,
+    record_toggle_btn: ToggleButton,
+    track_instrument_window_visibility_toggle_btn: Button,
+    track_panel_copy_track_button: Button,
+});
+
+gtk4_builder_from!(TrackDetailsDialogue {
+    track_details_dialogue: Window,
+    track_details_panel: Box,
+    track_riff_choice: DropDown,
+    track_details_riff_choice_entry: Entry,
+    track_riff_length_choice: DropDown,
+    track_delete_riff_btn: Button,
+    track_copy_riff_btn: Button,
+    track_details_riff_save_length: Button,
+    track_details_riff_save_name_btn: Button,
+    track_instrument_label: Label,
+    track_instrument_choice: DropDown,
+    track_instrument_window_visibility_toggle_btn: Button,
+    track_midi_device_label: Label,
+    track_midi_device_choice: DropDown,
+    track_midi_channel_label: Label,
+    track_midi_channel_choice: DropDown,
+    track_detail_track_colour_button: ColorButton,
+    track_detail_riff_colour_button: ColorButton,
+    track_send_midi_to_track_open_dialogue_button: Button,
+    track_send_audio_to_track_open_dialogue_button: Button,
+    track_effects_choice_label: Label,
+    track_effects_choice: DropDown,
+    track_effects_btns_label: Label,
+    track_add_effect_button: Button,
+    track_effect_list: TreeView,
+    track_effect_window_visibility_toggle_btn: Button,
+    track_effect_delete_btn: Button,
+    track_effects_scroll_window: ScrolledWindow,
+    track_detail_close_button: Button,
+});
+
+gtk4_builder_from!(MixerBlade {
+    mixer_blade: Frame,
+    mixer_blade_track_name_label: Label,
+    track_details_btn: Button,
+    mixer_blade_track_instrument_show_ui_btn: Button,
+    mixer_blade_track_mute_toggle_btn: ToggleButton,
+    mixer_blade_track_solo_toggle_btn: ToggleButton,
+    mixer_blade_track_record_toggle_btn: ToggleButton,
+    mixer_blade_track_pan_scale: Scale,
+    mixer_blade_volume_scale: Scale,
+    mixer_blade_right_channel_level_spin_button: SpinButton,
+    mixer_blade_left_channel_level_spin_button: SpinButton,
+    mixer_blade_channel_level_drawing_area: DrawingArea,
+});
+
+gtk4_builder_from!(RiffSetBladeHead {
+    riff_set_blade_play: Button,
+    riff_set_blade_record: Button,
+    riff_set_blade_copy: Button,
+    riff_set_blade_delete: Button,
+    riff_set_copy_to_track_view_btn: Button,
+    riff_set_drag_btn: Button,
+    riff_set_name_entry: Entry,
+    riff_set_blade: Frame,
+    riff_set_blade_box: Box,
+    riff_set_blade_head_grid: Grid,
+    riff_set_select_btn: Button,
+});
+
+gtk4_builder_from!(RiffSetBlade {
+    riff_set_box: Box,
+});
+
+gtk4_builder_from!(RiffSequenceBlade {
+    riff_sequence_blade_play: Button,
+    riff_sequence_blade_copy: Button,
+    riff_sequence_blade_delete: Button,
+    riff_sequence_copy_to_track_view_btn: Button,
+    riff_sequence_riff_set_combobox_label: Label,
+    riff_sequence_name_entry: Entry,
+    riff_sequence_blade: Frame,
+    riff_sequence_riff_sets_scrolled_window: ScrolledWindow,
+    riff_set_box: Box,
+    riff_set_head_box: Box,
+    riff_set_combobox: DropDown,
+    add_riff_set_btn: Button,
+    riff_sequence_drag_btn: Button,
+    riff_seq_horizontal_adjustment: Adjustment,
+    riff_sets_view_port: Viewport,
+    riff_sequence_select_btn: Button,
+    riff_sequence_save_name_btn: Button,
+    riff_sequence_controls_scrolled_window: ScrolledWindow,
+    riff_sequence_blade_top_box: Box,
+});
+
+gtk4_builder_from!(RiffGridBlade {
+    riff_grid_blade_play: Button,
+    riff_grid_blade_copy: Button,
+    riff_grid_blade_delete: Button,
+    riff_grid_copy_to_track_view_btn: Button,
+    riff_grid_name_entry: Entry,
+    riff_grid_blade: Frame,
+    riff_grid_drag_btn: Button,
+    riff_grid_horizontal_adjustment: Adjustment,
+    riff_grid_select_btn: Button,
+    riff_grid_scrolled_window: ScrolledWindow,
+    riff_grid_drawing_area: DrawingArea,
+});
+
+gtk4_builder_from!(RiffArrangementBlade {
+    riff_arrangement_blade_play: Button,
+    riff_arrangement_blade_copy: Button,
+    riff_arrangement_blade_delete: Button,
+    riff_arrangement_copy_to_track_view_btn: Button,
+    riff_arrangement_name_entry: Entry,
+    riff_arrangement_blade: Frame,
+    riff_set_box: Box,
+    riff_set_combobox: DropDown,
+    add_riff_set_btn: Button,
+    riff_sequence_combobox: DropDown,
+    riff_grid_combobox: DropDown,
+    add_riff_sequence_btn: Button,
+    add_riff_grid_btn: Button,
+    riff_arr_horizontal_adjustment: Adjustment,
+    riff_items_view_port: Viewport,
+    riff_arrangement_save_name_btn: Button,
+    riff_arrangement_scrolled_window: ScrolledWindow,
+    riff_arrangement_riff_set_entry_tree_store: TreeStore,
+    riff_arrangement_riff_set_entry_completion: EntryCompletion,
+});
+
+gtk4_builder_from!(RiffArrangementRiffSetBlade {
+    local_riff_set_box: Box,
+    riff_set_head_box: Box,
+    riff_set_box: Box,
+    riff_set_scrolled_window: ScrolledWindow,
+});
+
+gtk4_builder_from!(TrackMidiRoutingDialogue {
+    track_midi_routing_dialogue: Window,
+    track_midi_routing_track_combobox_text: DropDown,
+    track_midi_routing_add_track_button: Button,
+    track_midi_routing_scrolled_box: Box,
+    track_midi_routing_close_button: Button,
+});
+
+gtk4_builder_from!(TrackMidiRoutingPanel {
+    track_midi_routing_panel: Frame,
+    track_midi_routing_send_to_track_label: Label,
+    track_midi_routing_midi_channel_combobox_text: DropDown,
+    track_midi_routing_note_from_combobox_text: DropDown,
+    track_midi_routing_note_to_combobox_text: DropDown,
+    track_midi_routing_delete_button: Button,
+});
+
+gtk4_builder_from!(TrackAudioRoutingDialogue {
+    track_audio_routing_dialogue: Window,
+    track_audio_routing_track_combobox_text: DropDown,
+    track_audio_routing_add_track_button: Button,
+    track_audio_routing_scrolled_box: Box,
+    track_audio_routing_close_button: Button,
+});
+
+gtk4_builder_from!(TrackAudioRoutingPanel {
+    track_audio_routing_panel: Frame,
+    track_audio_routing_send_to_track_label: Label,
+    track_audio_routing_left_channel_input_index_combobox_text: DropDown,
+    track_audio_routing_right_channel_input_index_combobox_text: DropDown,
+    track_audio_routing_delete_button: Button,
+});
+
 impl MainWindow {
+
+    fn populate_combo(combo: &gtk4::DropDown, items: &[(&str, &str)]) {
+        for (id, text) in items {
+            combo.append(Some(id), text);
+        }
+    }
+
+    fn populate_static_combos(&self) {
+        {
+            let items = [
+                ("22050", "22050"), ("44100", "44100"), ("48000", "48000"),
+            ];
+            Self::populate_combo(&self.ui.sample_rate_combobox, &items);
+        }
+        {
+            let items = [
+                ("16", "16"), ("32", "32"), ("64", "64"), ("128", "128"), ("256", "256"), ("512", "512"), ("1024", "1024"), ("2048", "2048"),
+            ];
+            Self::populate_combo(&self.ui.block_size_combobox, &items);
+        }
+        {
+            let items = [
+                ("audio_track", "Audio track"), ("midi_track", "Midi track"), ("instrument_track", "Instrument track"),
+            ];
+            Self::populate_combo(&self.ui.toolbar_add_track_combobox, &items);
+            self.ui.toolbar_add_track_combobox.set_active(Some(2));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.track_grid_quantise_start_choice, &items);
+            self.ui.track_grid_quantise_start_choice.set_active_id(Some("1"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.riff_grid_quantise_start_choice, &items);
+            self.ui.riff_grid_quantise_start_choice.set_active_id(Some("1_4"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.riff_grid_quantise_length_choice, &items);
+            self.ui.riff_grid_quantise_length_choice.set_active_id(Some("1_4"));
+        }
+        {
+            let items = [
+                ("normal", "Normal"), ("triplet", "Triplet"),
+            ];
+            Self::populate_combo(&self.ui.piano_roll_subdivision_mode_choice, &items);
+            self.ui.piano_roll_subdivision_mode_choice.set_active_id(Some("normal"));
+        }
+        {
+            let items = [
+                ("1_4_triplet", "1/4 triplet"), ("1_8_triplet", "1/8 triplet"), ("1_16_triplet", "1/16 triplet"),
+            ];
+            Self::populate_combo(&self.ui.piano_roll_triplet_type_choice, &items);
+            self.ui.piano_roll_triplet_type_choice.set_active_id(Some("1_4_triplet"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4_triplet", "1/4 triplet"), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8_triplet", "1/8 triplet"), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16_triplet", "1/16 triplet"), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.piano_roll_quantise_length_choice, &items);
+            self.ui.piano_roll_quantise_length_choice.set_active_id(Some("1_4"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4_triplet", "1/4 triplet"), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8_triplet", "1/8 triplet"), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16_triplet", "1/16 triplet"), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.piano_roll_quantise_start_choice, &items);
+            self.ui.piano_roll_quantise_start_choice.set_active_id(Some("1_4"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4_triplet", "1/4 triplet"), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8_triplet", "1/8 triplet"), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16_triplet", "1/16 triplet"), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.piano_roll_note_length_increment_choice, &items);
+            self.ui.piano_roll_note_length_increment_choice.set_active_id(Some("1_32"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.automation_quantise_start_choice, &items);
+            self.ui.automation_quantise_start_choice.set_active_id(Some("1"));
+        }
+        {
+            let items = [
+                ("Volume", "Volume"), ("Pan", "Pan"), ("Tuning", "Tuning"), ("Vibrato", "Vibrato"), ("Expression", "Expression"), ("Pressure", "Pressure"), ("Brightness", "Brightness"),
+            ];
+            Self::populate_combo(&self.ui.automation_note_expression_type, &items);
+            self.ui.automation_note_expression_type.set_active_id(Some("Volume"));
+        }
+        {
+            let items = [
+                ("-1", "Global"), ("0", "0"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5"), ("6", "6"), ("7", "7"), ("8", "8"), ("9", "9"), ("10", "10"),
+            ];
+            Self::populate_combo(&self.ui.automation_note_expression_id, &items);
+            self.ui.automation_note_expression_id.set_active_id(Some("-1"));
+        }
+        {
+            let items = [
+                ("-1", "Global"), ("0", "0"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5"), ("6", "6"), ("7", "7"), ("8", "8"), ("9", "9"), ("10", "10"),
+            ];
+            Self::populate_combo(&self.ui.automation_note_expression_port_index, &items);
+            self.ui.automation_note_expression_port_index.set_active_id(Some("-1"));
+        }
+        {
+            let items = [
+                ("-1", "Global"), ("0", "0"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5"), ("6", "6"), ("7", "7"), ("8", "8"), ("9", "9"), ("10", "10"),
+            ];
+            Self::populate_combo(&self.ui.automation_note_expression_channel, &items);
+            self.ui.automation_note_expression_channel.set_active_id(Some("-1"));
+        }
+        {
+            let items = [
+                ("-1", "Global"), ("0", "C-2"), ("1", "C#/Db-2"), ("2", "D-2"), ("3", "D#/Eb-2"), ("4", "E-2"), ("5", "F-2"), ("6", "F#/Gb-2"), ("7", "G-2"), ("8", "G#/Ab-2"), ("9", "A-2"), ("10", "A#/Bb-2"), ("11", "B-2"), ("12", "C-1"), ("13", "C#/Db-1"), ("14", "D-1"), ("15", "D#/Eb-1"), ("16", "E-1"), ("17", "F-1"), ("18", "F#/Gb-1"), ("19", "G-1"), ("20", "G#/Ab-1"), ("21", "A-1"), ("22", "A#/Bb-1"), ("23", "B-1"), ("24", "C 0"), ("25", "C#/Db 0"), ("26", "D 0"), ("27", "D#/Eb 0"), ("28", "E 0"), ("29", "F 0"), ("30", "F#/Gb 0"), ("31", "G 0"), ("32", "G#/Ab 0"), ("33", "A 0"), ("34", "A#/Bb 0"), ("35", "B 0"), ("36", "C 1"), ("37", "C#/Db 1"), ("38", "D 1"), ("39", "D#/Eb 1"), ("40", "E 1"), ("41", "F 1"), ("42", "F#/Gb 1"), ("43", "G 1"), ("44", "G#/Ab 1"), ("45", "A 1"), ("46", "A#/Bb 1"), ("47", "B 1"), ("48", "C 2"), ("49", "C#/Db 2"), ("50", "D 2"), ("51", "D#/Eb 2"), ("52", "E 2"), ("53", "F 2"), ("54", "F#/Gb 2"), ("55", "G 2"), ("56", "G#/Ab 2"), ("57", "A 2"), ("58", "A#/Bb 2"), ("59", "B 2"), ("60", "C 3"), ("61", "C#/Db 3"), ("62", "D 3"), ("63", "D#/Eb 3"), ("64", "E 3"), ("65", "F 3"), ("66", "F#/Gb 3"), ("67", "G 3"), ("68", "G#/Ab 3"), ("69", "A 3"), ("70", "A#/Bb 3"), ("71", "B 3"), ("72", "C 4"), ("73", "C#/Db 4"), ("74", "D 4"), ("75", "D#/Eb 4"), ("76", "E 4"), ("77", "F 4"), ("78", "F#/Gb 4"), ("79", "G 4"), ("80", "G#/Ab 4"), ("81", "A 4"), ("82", "A#/Bb 4"), ("83", "B 4"), ("84", "C 5"), ("85", "C#/Db 5"), ("86", "D 5"), ("87", "D#/Eb 5"), ("88", "E 5"), ("89", "F 5"), ("90", "F#/Gb 5"), ("91", "G 5"), ("92", "G#/Ab 5"), ("93", "A 5"), ("94", "A#/Bb 5"), ("95", "B 5"), ("96", "C 6"), ("97", "C#/Db 6"), ("98", "D 6"), ("99", "D#/Eb 6"), ("100", "E 6"), ("101", "F 6"), ("102", "F#/Gb 6"), ("103", "G 6"), ("104", "G#/Ab 6"), ("105", "A 6"), ("106", "A#/Bb 6"), ("107", "B 6"), ("108", "C 7"), ("109", "C#/Db 7"), ("110", "D 7"), ("111", "D#/Eb 7"), ("112", "E 7"), ("113", "F 7"), ("114", "F#/Gb 7"), ("115", "G 7"), ("116", "G#/Ab 7"), ("117", "A 7"), ("118", "A#/Bb 7"), ("119", "B 7"), ("120", "C 8"), ("121", "C#/Db 8"), ("122", "D 8"), ("123", "D#/Eb 8"), ("124", "E 8"), ("125", "F 8"), ("126", "F#/Gb 8"), ("127", "G 8"),
+            ];
+            Self::populate_combo(&self.ui.automation_note_expression_key, &items);
+            self.ui.automation_note_expression_key.set_active_id(Some("-1"));
+        }
+        {
+            let items = [
+                ("0", "Bank select (coarse)"), ("1", "Modulation wheel (coarse)"), ("2", "Breath controller (coarse)"), ("4", "Foot controller (coarse)"), ("5", "Portamento time (coarse)"), ("6", "Data entry (coarse)"), ("7", "Channel volume (coarse)"), ("8", "Balance (coarse)"), ("10", "Pan (coarse)"), ("11", "Expression (coarse)2"), ("12", "Effect control 1 (coarse)"), ("13", "Effect control 2 (coarse)"), ("16", "General purpose controller 1 (coarse)"), ("17", "General purpose controller 2 (coarse)"), ("18", "General purpose controller 3 (coarse)"), ("19", "General purpose controller 4 (coarse)"), ("32", "Bank select (fine)"), ("33", "Modulation wheel (fine)"), ("34", "Breath controller (fine)"), ("36", "Foot controller (fine)"), ("37", "Portamento time (fine)"), ("38", "Data entry (fine)"), ("39", "Channel volume (fine) (formerly main volume)"), ("40", "Balance (fine)"), ("42", "Pan (fine)"), ("43", "Expression (fine)2"), ("44", "Effect control 1 (fine)"), ("45", "Effect control 2 (fine)"), ("64", "Hold (damper, sustain) pedal 1 (on or off) = 64 is on"), ("65", "Portamento pedal (on or off) = 64 is on"), ("66", "Sostenuto pedal (on or off) = 64 is on"), ("67", "Soft pedal (on or off) = 64 is on"), ("68", "legato pedal (on or off) = 64 is on"), ("69", "Hold pedal 2 (on//off) = 64 is on"), ("70", "sound variation"), ("71", "timbre or harmonic intensity or filter resonance"), ("72", "release time"), ("73", "attack time"), ("74", "brightness or cutoff frequency"), ("75", "decay time"), ("76", "vibrato rate"), ("77", "vibrato depth"), ("78", "vibrato delay"), ("79", "undefined"), ("80", "General purpose controller 5"), ("81", "General purpose controller 6"), ("82", "General purpose controller 7"), ("83", "General purpose controller 8"), ("84", "Portamento control"), ("88", "High resolution velocity prefix"), ("91", "Effect 1 depth (default is reverb send level"), ("92", "Effect 2 depth (formerly tremolo depth)"), ("93", "Effect 3 depth (default is chorus send level"), ("94", "Effect 4 depth (formerly celeste depth)"), ("95", "Effect 5 depth (formerly phaser level)"), ("96", "Data button increment"), ("97", "Data button decrement"), ("98", "Non-registered parameter (coarse)"), ("99", "Non-registered parameter (fine)"), ("100", "Registered parameter (coarse)"), ("101", "Registered parameter (fine)"), ("120", "All sound off 0"), ("121", "All controllers off 0"), ("122", "Local control (on or off) 0 off, 127 on"), ("123", "All notes off 0"), ("124", "Omni mode off 0"), ("125", "Omni mode on 0"), ("126", "Mono operation and all notes off"), ("127", "Poly operation and all notes off 0"),
+            ];
+            Self::populate_combo(&self.ui.automation_controller_combobox, &items);
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4_triplet", "1/4 triplet"), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8_triplet", "1/8 triplet"), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16_triplet", "1/16 triplet"), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.sample_roll_quantise_start_choice, &items);
+            self.ui.sample_roll_quantise_start_choice.set_active_id(Some("1_8"));
+        }
+        {
+            let items = [
+                ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4_triplet", "1/4 triplet"), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8_triplet", "1/8 triplet"), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16_triplet", "1/16 triplet"), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+            ];
+            Self::populate_combo(&self.ui.sample_roll_quantise_length_choice, &items);
+            self.ui.sample_roll_quantise_length_choice.set_active_id(Some("1_16"));
+        }
+    }
+
+    fn populate_track_details_combos(track_details_dialogue: &TrackDetailsDialogue) {
+        let riff_length_items = [
+            ("10", "10"), ("9", "9"), ("8", "8"), ("7", "7"), ("6", "6"), ("5", "5"), ("4", "4"), ("3", "3"), ("2", "2"), ("1_5", "1.5"), ("1", "1"), ("1_2_dot", "1/2."), ("1_2", "1/2"), ("1_4_dot", "1/4."), ("1_4", "1/4"), ("1_8_dot", "1/8."), ("1_8", "1/8"), ("1_16_dot", "1/16."), ("1_16", "1/16"), ("1_32_dot", "1/32."), ("1_32", "1/32"), ("1_64_dot", "1/64."), ("1_64", "1/64"),
+        ];
+        Self::populate_combo(&track_details_dialogue.track_riff_length_choice, &riff_length_items);
+        track_details_dialogue.track_riff_length_choice.set_active(Some(10));
+        let midi_channel_items = [
+            ("0", "1"), ("1", "2"), ("2", "3"), ("3", "4"), ("4", "5"), ("5", "6"), ("6", "7"), ("7", "8"), ("8", "9"), ("9", "10"), ("10", "11"), ("11", "12"), ("12", "13"), ("13", "14"), ("14", "15"), ("15", "16"),
+        ];
+        Self::populate_combo(&track_details_dialogue.track_midi_channel_choice, &midi_channel_items);
+        track_details_dialogue.track_midi_channel_choice.set_active_id(Some("0"));
+    }
+
+    fn populate_midi_routing_panel_combos(track_midi_routing_panel: &TrackMidiRoutingPanel) {
+        let midi_channel_items = [
+            ("0", "1"), ("1", "2"), ("2", "3"), ("3", "4"), ("4", "5"), ("5", "6"), ("6", "7"), ("7", "8"), ("8", "9"), ("9", "10"), ("10", "11"), ("11", "12"), ("12", "13"), ("13", "14"), ("14", "15"), ("15", "16"),
+        ];
+        Self::populate_combo(&track_midi_routing_panel.track_midi_routing_midi_channel_combobox_text, &midi_channel_items);
+        let note_items = [
+            ("0", "C-2"), ("1", "C#/Db-2"), ("2", "D-2"), ("3", "D#/Eb-2"), ("4", "E-2"), ("5", "F-2"), ("6", "F#/Gb-2"), ("7", "G-2"), ("8", "G#/Ab-2"), ("9", "A-2"), ("10", "A#/Bb-2"), ("11", "B-2"), ("12", "C-1"), ("13", "C#/Db-1"), ("14", "D-1"), ("15", "D#/Eb-1"), ("16", "E-1"), ("17", "F-1"), ("18", "F#/Gb-1"), ("19", "G-1"), ("20", "G#/Ab-1"), ("21", "A-1"), ("22", "A#/Bb-1"), ("23", "B-1"), ("24", "C 0"), ("25", "C#/Db 0"), ("26", "D 0"), ("27", "D#/Eb 0"), ("28", "E 0"), ("29", "F 0"), ("30", "F#/Gb 0"), ("31", "G 0"), ("32", "G#/Ab 0"), ("33", "A 0"), ("34", "A#/Bb 0"), ("35", "B 0"), ("36", "C 1"), ("37", "C#/Db 1"), ("38", "D 1"), ("39", "D#/Eb 1"), ("40", "E 1"), ("41", "F 1"), ("42", "F#/Gb 1"), ("43", "G 1"), ("44", "G#/Ab 1"), ("45", "A 1"), ("46", "A#/Bb 1"), ("47", "B 1"), ("48", "C 2"), ("49", "C#/Db 2"), ("50", "D 2"), ("51", "D#/Eb 2"), ("52", "E 2"), ("53", "F 2"), ("54", "F#/Gb 2"), ("55", "G 2"), ("56", "G#/Ab 2"), ("57", "A 2"), ("58", "A#/Bb 2"), ("59", "B 2"), ("60", "C 3"), ("61", "C#/Db 3"), ("62", "D 3"), ("63", "D#/Eb 3"), ("64", "E 3"), ("65", "F 3"), ("66", "F#/Gb 3"), ("67", "G 3"), ("68", "G#/Ab 3"), ("69", "A 3"), ("70", "A#/Bb 3"), ("71", "B 3"), ("72", "C 4"), ("73", "C#/Db 4"), ("74", "D 4"), ("75", "D#/Eb 4"), ("76", "E 4"), ("77", "F 4"), ("78", "F#/Gb 4"), ("79", "G 4"), ("80", "G#/Ab 4"), ("81", "A 4"), ("82", "A#/Bb 4"), ("83", "B 4"), ("84", "C 5"), ("85", "C#/Db 5"), ("86", "D 5"), ("87", "D#/Eb 5"), ("88", "E 5"), ("89", "F 5"), ("90", "F#/Gb 5"), ("91", "G 5"), ("92", "G#/Ab 5"), ("93", "A 5"), ("94", "A#/Bb 5"), ("95", "B 5"), ("96", "C 6"), ("97", "C#/Db 6"), ("98", "D 6"), ("99", "D#/Eb 6"), ("100", "E 6"), ("101", "F 6"), ("102", "F#/Gb 6"), ("103", "G 6"), ("104", "G#/Ab 6"), ("105", "A 6"), ("106", "A#/Bb 6"), ("107", "B 6"), ("108", "C 7"), ("109", "C#/Db 7"), ("110", "D 7"), ("111", "D#/Eb 7"), ("112", "E 7"), ("113", "F 7"), ("114", "F#/Gb 7"), ("115", "G 7"), ("116", "G#/Ab 7"), ("117", "A 7"), ("118", "A#/Bb 7"), ("119", "B 7"), ("120", "C 8"), ("121", "C#/Db 8"), ("122", "D 8"), ("123", "D#/Eb 8"), ("124", "E 8"), ("125", "F 8"), ("126", "F#/Gb 8"), ("127", "G 8"), ("128", "G#/Ab 8"), ("129", "A 8"), ("130", "A#/Bb 8"), ("131", "B 8"),
+        ];
+        Self::populate_combo(&track_midi_routing_panel.track_midi_routing_note_from_combobox_text, &note_items);
+        Self::populate_combo(&track_midi_routing_panel.track_midi_routing_note_to_combobox_text, &note_items);
+    }
+
+    fn populate_audio_routing_panel_combos(track_audio_routing_panel: &TrackAudioRoutingPanel) {
+        let midi_channel_items = [
+            ("0", "1"), ("1", "2"), ("2", "3"), ("3", "4"), ("4", "5"), ("5", "6"), ("6", "7"), ("7", "8"), ("8", "9"), ("9", "10"), ("10", "11"), ("11", "12"), ("12", "13"), ("13", "14"), ("14", "15"), ("15", "16"),
+        ];
+        Self::populate_combo(&track_audio_routing_panel.track_audio_routing_left_channel_input_index_combobox_text, &midi_channel_items);
+        Self::populate_combo(&track_audio_routing_panel.track_audio_routing_right_channel_input_index_combobox_text, &midi_channel_items);
+    }
 
     pub fn new(
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         tx_to_audio: Sender<AudioLayerInwardEvent>,
         state: Arc<Mutex<DAWState>>
     ) -> MainWindow {
-        let application = gtk::Application::new(
+        let application = gtk4::Application::new(
             Some(GTK_APPLICATION_ID),
             Default::default(),
         );
 
-        let glade_src = include_str!("daw.glade");
+        let glade_src = include_str!("daw.ui");
         let ui = Ui::from_string(glade_src).unwrap();
 
         let wnd_main: ApplicationWindow = ui.wnd_main.clone();
         wnd_main.maximize();
-        wnd_main.set_application(Some(&application));
+
+        // GTK4 requires windows to be associated with an application only after
+        // the application's startup signal has been emitted (i.e. during run()).
+        let wnd_main_for_startup = wnd_main.clone();
+        application.connect_startup(move |app| {
+            wnd_main_for_startup.set_application(Some(app));
+        });
 
         // setup drag and drop
         let _ = DRAG_N_DROP_TARGETS.len();
@@ -775,7 +1478,7 @@ impl MainWindow {
         {
             let state = state.clone();
             let tx_to_audio = tx_to_audio.clone();
-            wnd_main.connect_delete_event(move |window, _| {
+            wnd_main.connect_close_request(move |window| {
                 let dirty = if let Ok(state) = state.lock() {
                     state.dirty
                 }
@@ -784,10 +1487,10 @@ impl MainWindow {
                 };
 
                 if dirty {
-                    let message_dialogue = MessageDialogBuilder::new()
-                        .parent(window)
-                        .message_type(gtk::MessageType::Question)
-                        .buttons(gtk::ButtonsType::YesNo)
+                    let message_dialogue = gtk4::MessageDialog::builder()
+                        .transient_for(window)
+                        .message_type(gtk4::MessageType::Question)
+                        .buttons(gtk4::ButtonsType::YesNo)
                         .text("There are unsaved changes - quit anyway?")
                         .title("Unsaved Changes")
                         .modal(true)
@@ -795,33 +1498,32 @@ impl MainWindow {
 
                     let result = message_dialogue.run();
 
-                    message_dialogue.hide();
+                    message_dialogue.set_visible(false);
 
                     if result == ResponseType::Yes {
                         if let Ok(mut state) = state.lock() {
                             state.close_all_tracks(tx_to_audio.clone());
                         }
-                        gtk::Inhibit(false)
+                        glib::Propagation::Proceed
                     }
                     else {
-                        gtk::Inhibit(true)
+                        glib::Propagation::Stop
                     }
                 }
                 else {
                     if let Ok(mut state) = state.lock() {
                         state.close_all_tracks(tx_to_audio.clone());
                     }
-                    gtk::Inhibit(false)
+                    glib::Propagation::Proceed
                 }
             });
         }
 
         let selected_style_provider = CssProvider::new();
-        selected_style_provider.load_from_data("frame { background-color: #3f3f3f; }".as_bytes()).unwrap();
-        let _ = selected_style_provider.set_property("selected", true);
+        selected_style_provider.load_from_data("frame { background-color: #3f3f3f; }");
 
-        let sample_roll_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        sample_roll_window.set_title("Sample Roll".to_string().as_str());
+        let sample_roll_window = gtk4::Window::new();
+        sample_roll_window.set_title(Some("Sample Roll".to_string().as_str()));
         sample_roll_window.set_deletable(false);
         sample_roll_window.set_height_request(800);
         sample_roll_window.set_width_request(900);
@@ -829,8 +1531,8 @@ impl MainWindow {
         let sample_roll_window_stack = Stack::new();
         sample_roll_window.set_child(Some(&sample_roll_window_stack));
 
-        let automation_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        automation_window.set_title("Automation".to_string().as_str());
+        let automation_window = gtk4::Window::new();
+        automation_window.set_title(Some("Automation".to_string().as_str()));
         automation_window.set_deletable(false);
         automation_window.set_height_request(800);
         automation_window.set_width_request(900);
@@ -838,8 +1540,8 @@ impl MainWindow {
         let automation_window_stack = Stack::new();
         automation_window.set_child(Some(&automation_window_stack));
 
-        let sample_library_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        sample_library_window.set_title("Sample Library".to_string().as_str());
+        let sample_library_window = gtk4::Window::new();
+        sample_library_window.set_title(Some("Sample Library".to_string().as_str()));
         sample_library_window.set_deletable(false);
         sample_library_window.set_height_request(800);
         sample_library_window.set_width_request(900);
@@ -847,8 +1549,8 @@ impl MainWindow {
         let sample_library_window_stack = Stack::new();
         sample_library_window.set_child(Some(&sample_library_window_stack));
 
-        let scripting_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        scripting_window.set_title("Scripting".to_string().as_str());
+        let scripting_window = gtk4::Window::new();
+        scripting_window.set_title(Some("Scripting".to_string().as_str()));
         scripting_window.set_deletable(false);
         scripting_window.set_height_request(800);
         scripting_window.set_width_request(900);
@@ -856,8 +1558,8 @@ impl MainWindow {
         let scripting_window_stack = Stack::new();
         scripting_window.set_child(Some(&scripting_window_stack));
 
-        let mixer_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        mixer_window.set_title("Mixer".to_string().as_str());
+        let mixer_window = gtk4::Window::new();
+        mixer_window.set_title(Some("Mixer".to_string().as_str()));
         mixer_window.set_deletable(false);
         mixer_window.set_height_request(550);
         mixer_window.set_width_request(900);
@@ -865,8 +1567,8 @@ impl MainWindow {
         let mixer_window_stack = Stack::new();
         mixer_window.set_child(Some(&mixer_window_stack));
 
-        let piano_roll_window = gtk::Window::new(gtk::WindowType::Toplevel);
-        piano_roll_window.set_title("Piano Roll".to_string().as_str());
+        let piano_roll_window = gtk4::Window::new();
+        piano_roll_window.set_title(Some("Piano Roll".to_string().as_str()));
         piano_roll_window.set_deletable(false);
         piano_roll_window.set_height_request(800);
         piano_roll_window.set_width_request(900);
@@ -881,12 +1583,13 @@ impl MainWindow {
         filter.set_name(Some("DAW project file"));
         filter.add_pattern("*.mid");
         midi_file_import_file_chooser.add_filter(&filter);
-        midi_file_import_file_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
-        midi_file_import_file_chooser.add_button("Ok", gtk::ResponseType::Ok);
+        midi_file_import_file_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
+        midi_file_import_file_chooser.add_button("Ok", gtk4::ResponseType::Ok);
 
 
         let mut main_window = MainWindow {
             ui: ui.clone(),
+            application: application.clone(),
             piano_roll_grid: None,
             piano_roll_grid_ruler: None,
             sample_roll_grid: None,
@@ -923,6 +1626,8 @@ impl MainWindow {
             widgets: vec![],
             midi_file_import_file_chooser,
         };
+
+        main_window.populate_static_combos();
 
         main_window.setup_menus(tx_from_ui.clone(), state.clone());
         main_window.setup_main_tool_bar(tx_from_ui.clone());
@@ -973,8 +1678,6 @@ impl MainWindow {
                     let mut centre_split_pane_position= centre_split_pane.position();
                     let centre_split_pane_max_position = centre_split_pane.max_position();
 
-                    // debug!("Centre split pane position: {}", centre_split_pane_position);
-
                     if centre_split_pane_position < 230 {
                         centre_split_pane.set_position(230);
                         centre_split_pane_position = 230;
@@ -998,7 +1701,7 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let recent_chooser_menu: RecentChooserMenu = ui.recent_chooser_menu.clone();
+            let recent_chooser_menu: MenuButton = ui.recent_chooser_menu.clone();
             let window = ui.wnd_main.clone();
             ui.recent_chooser_menu.connect_item_activated(move |_xxx| {
                 {
@@ -1006,7 +1709,7 @@ impl MainWindow {
                     if let Some(recent_info) = recent_info {
                         let mut path = std::path::PathBuf::new();
                         if let Some(file_name) = recent_info.uri_display() {
-                            window.set_title(format!("DAW - {}", file_name.as_str()).as_str());
+                            window.set_title(Some(format!("DAW - {}", file_name.as_str()).as_str()));
                             path.set_file_name(&file_name);
                             {
                                 let tx_from_ui = tx_from_ui.clone();
@@ -1219,18 +1922,17 @@ impl MainWindow {
         self.track_details_dialogues.clear();
 
         // remove track panels
-        let vbox = self.ui.top_level_vbox.clone();
-        self.ui.top_level_vbox.foreach(move |child| {
-            vbox.remove(child);
-        });
+        let children = self.ui.top_level_vbox.children();
+        for child in children {
+            self.ui.top_level_vbox.remove(&child);
+        }
 
         // remove mixer blades
-        let mixer_box = self.ui.mixer_box.clone();
-        self.ui.mixer_box.foreach(move |child| {
+        for child in self.ui.mixer_box.children() {
             if child.widget_name() != Uuid::nil().to_string() {
-                mixer_box.remove(child);
+                self.ui.mixer_box.remove(&child);
             }
-        });
+        }
 
         // remove riff set track panels
         let children = &mut self.ui.riff_sets_track_panel.children();
@@ -1239,16 +1941,14 @@ impl MainWindow {
         }
 
         // remove riff set blade heads
-        let riff_set_heads_box = self.ui.riff_set_heads_box.clone();
-        self.ui.riff_set_heads_box.foreach(move |child| {
-            riff_set_heads_box.remove(child);
-        });
+        for child in self.ui.riff_set_heads_box.children() {
+            self.ui.riff_set_heads_box.remove(&child);
+        }
 
         // remove riff set blades
-        let riff_sets_box = self.ui.riff_sets_box.clone();
-        self.ui.riff_sets_box.foreach(move |child| {
-            riff_sets_box.remove(child);
-        });
+        for child in self.ui.riff_sets_box.children() {
+            self.ui.riff_sets_box.remove(&child);
+        }
 
         // remove riff sequences from riff sequences combo
         self.ui.sequence_combobox.remove_all();
@@ -1260,10 +1960,9 @@ impl MainWindow {
         }
 
         // remove riff sequence blades
-        let riff_sequences_box = self.ui.riff_sequences_box.clone();
-        self.ui.riff_sequences_box.foreach(move |child| {
-            riff_sequences_box.remove(child);
-        });
+        for child in self.ui.riff_sequences_box.children() {
+            self.ui.riff_sequences_box.remove(&child);
+        }
 
         // remove riff grid track panels
         let children = &mut self.ui.riff_grid_track_panel.children();
@@ -1281,10 +1980,9 @@ impl MainWindow {
         }
 
         // remove riff arrangement blades
-        let riff_arrangement_box = self.ui.riff_arrangement_box.clone();
-        self.ui.riff_arrangement_box.foreach(move |child| {
-            riff_arrangement_box.remove(child);
-        });
+        for child in self.ui.riff_arrangement_box.children() {
+            self.ui.riff_arrangement_box.remove(&child);
+        }
 
         // reset loops
         self.ui.loop_combobox_text.remove_all();
@@ -1315,7 +2013,7 @@ impl MainWindow {
         // track details dialogues
         for (_, dialogue) in self.track_details_dialogues.iter_mut() {
             if dialogue.track_details_panel.widget_name() == track_uuid {
-                dialogue.track_details_dialogue.set_title(track_name.as_str());
+                dialogue.track_details_dialogue.set_title(Some(track_name.as_str()));
                 break;
             }
         }
@@ -1709,7 +2407,7 @@ impl MainWindow {
                            general_track_type: GeneralTrackType,
     ) -> (EntryBuffer, ToggleButton, ToggleButton)
     {
-        let track_panel_glade_src = include_str!("track_panel.glade");
+        let track_panel_glade_src = include_str!("track_panel.ui");
 
         let track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
@@ -1719,12 +2417,12 @@ impl MainWindow {
         track_panel.track_number_text.set_label(track_number_label_txt.as_str());
         track_panel.track_name_text_ctrl.set_text(track_name);
 
-        debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.allocation().height);
+        debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.allocation().height());
         
         track_panel.track_number_text.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
     
         {
             let track_uuid = track_uuid.to_string();
@@ -1818,7 +2516,7 @@ impl MainWindow {
                     for child in riff_track_panel_vbox.children() {
                         child.style_context().remove_provider(&selected_track_style_provider);
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                         }
                     }
                 }
@@ -1876,7 +2574,7 @@ impl MainWindow {
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
     ) {
-        let track_panel_glade_src = include_str!("track_panel.glade");
+        let track_panel_glade_src = include_str!("track_panel.ui");
 
         let riff_set_track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         riff_set_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
@@ -1890,9 +2588,9 @@ impl MainWindow {
         riff_set_track_panel.track_name_text_ctrl.set_buffer(&entry_buffer);
         
         riff_set_track_panel.track_number_text.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
     
         {
             let track_uuid = track_uuid.to_string();
@@ -1949,7 +2647,7 @@ impl MainWindow {
                     for child in riff_track_panel_vbox.children() {
                         child.style_context().remove_provider(&selected_track_style_provider);
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                         }
                     }
                 }
@@ -1980,7 +2678,7 @@ impl MainWindow {
                                           track_mute_toggle_state: ToggleButton,
                                           track_solo_toggle_state: ToggleButton,
     ) {
-        let track_panel_glade_src = include_str!("track_panel.glade");
+        let track_panel_glade_src = include_str!("track_panel.ui");
 
         let riff_sequence_track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         riff_sequence_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
@@ -1995,9 +2693,9 @@ impl MainWindow {
         riff_sequence_track_panel.track_name_text_ctrl.set_buffer(&entry_buffer);
         
         riff_sequence_track_panel.track_number_text.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
     
         {
             let track_uuid = track_uuid.to_string();
@@ -2054,7 +2752,7 @@ impl MainWindow {
                     for child in riff_track_panel_vbox.children() {
                         child.style_context().remove_provider(&selected_track_style_provider);
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                         }
                     }
                 }
@@ -2085,14 +2783,14 @@ impl MainWindow {
                                           track_mute_toggle_state: ToggleButton,
                                           track_solo_toggle_state: ToggleButton,
     ) {
-        let track_panel_glade_src = include_str!("track_panel.glade");
+        let track_panel_glade_src = include_str!("track_panel.ui");
 
         let riff_grid_track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         riff_grid_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
         riff_grid_track_panel.delete_button.connect_clicked(|_item| {
             debug!("First delete button clicked.");
         });
-        let track_panel: Frame = riff_grid_track_panel.track_panel.clone();
+        let _track_panel: Frame = riff_grid_track_panel.track_panel.clone();
         // track_panel.set_height_request(RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT);
         self.ui.riff_grid_track_panel.pack_start(&riff_grid_track_panel.track_panel, false, false, 0);
         let track_number_label_txt = format!("   {}", self.ui.riff_grid_track_panel.children().len());
@@ -2100,9 +2798,9 @@ impl MainWindow {
         riff_grid_track_panel.track_name_text_ctrl.set_buffer(&entry_buffer);
 
         riff_grid_track_panel.track_number_text.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK,
+            gdk4::ModifierType::BUTTON1_MASK,
             DRAG_N_DROP_TARGETS.as_ref(),
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
 
         {
             let track_uuid = track_uuid.to_string();
@@ -2159,7 +2857,7 @@ impl MainWindow {
                     for child in riff_track_panel_vbox.children() {
                         child.style_context().remove_provider(&selected_track_style_provider);
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                         }
                     }
                 }
@@ -2193,7 +2891,7 @@ impl MainWindow {
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
     ) {
-        let track_panel_glade_src = include_str!("track_panel.glade");
+        let track_panel_glade_src = include_str!("track_panel.ui");
 
         let riff_arrangement_track_panel: TrackPanel = TrackPanel::from_string(track_panel_glade_src).unwrap();
         riff_arrangement_track_panel.track_panel.set_widget_name(track_uuid.to_string().as_str());
@@ -2209,9 +2907,9 @@ impl MainWindow {
         riff_arrangement_track_panel.track_name_text_ctrl.set_buffer(&entry_buffer);
         
         riff_arrangement_track_panel.track_number_text.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
     
         {
             let track_uuid = track_uuid.to_string();
@@ -2268,7 +2966,7 @@ impl MainWindow {
                     for child in riff_track_panel_vbox.children() {
                         child.style_context().remove_provider(&selected_track_style_provider);
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                         }
                     }
                 }
@@ -2304,7 +3002,7 @@ impl MainWindow {
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
     ) {
-        let mixer_blade_glade_src = include_str!("mixer_blade.glade");
+        let mixer_blade_glade_src = include_str!("mixer_blade.ui");
 
         let mixer_blade: MixerBlade = MixerBlade::from_string(mixer_blade_glade_src).unwrap();
         mixer_blade.mixer_blade.set_widget_name(track_uuid.to_string().as_str());
@@ -2346,7 +3044,7 @@ impl MainWindow {
             let gap_between_channel_levels = 5.0;
             let number_of_scale_graduations = 72.0;
             let graduations = vec![(0.0, "6"), (6.0, "0"), (12.0, "6"), (18.0, "12"), (24.0, "18"), (30.0, "24"), (36.0, "30"), (42.0, "36"), (48.0, "42"), (54.0, "48"), (60.0, "54"), (66.0, "60")];
-            mixer_blade.mixer_blade_channel_level_drawing_area.connect_draw(move |drawing_area, context| {
+            mixer_blade.mixer_blade_channel_level_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                 context.set_source_rgba(1.0, 1.0, 1.0, 1.0);
                 let drawing_area_height = drawing_area.height_request() as f64;
                 let graduation_height = drawing_area_height / number_of_scale_graduations;
@@ -2389,7 +3087,6 @@ impl MainWindow {
                 context.rectangle(17.0 + level_meter_width + gap_between_channel_levels, (number_of_scale_graduations - right_channel) * graduation_height, level_meter_width, drawing_area_height);
                 let _ = context.fill();
 
-                gtk::Inhibit(false)
             });
         }
 
@@ -2414,7 +3111,7 @@ impl MainWindow {
                     }
                 }
 
-                Inhibit(false)
+                glib::Propagation::Proceed
             });
         }
 
@@ -2437,7 +3134,7 @@ impl MainWindow {
                     }
                 }
 
-                Inhibit(false)
+                glib::Propagation::Proceed
             });
         }
 
@@ -2478,11 +3175,12 @@ impl MainWindow {
         midi_devices: Option<Vec<String>>,
         state_arc: Arc<Mutex<DAWState>>,
     ) {
-        let track_details_dialogue_glade_src = include_str!("track_details_dialogue.glade");
+        let track_details_dialogue_glade_src = include_str!("track_details_dialogue.ui");
 
         let track_effects_list_store = ListStore::new(&[String::static_type(), String::static_type(), String::static_type(), RGBA::static_type(), RGBA::static_type()]);
 
         let track_details_dialogue: TrackDetailsDialogue = TrackDetailsDialogue::from_string(track_details_dialogue_glade_src).unwrap();
+        Self::populate_track_details_combos(&track_details_dialogue);
         track_details_dialogue.track_details_panel.set_widget_name(track_uuid.to_string().as_str());
         track_details_dialogue.track_effect_list.set_model(Some(&track_effects_list_store));
 
@@ -2524,7 +3222,7 @@ impl MainWindow {
             _ => {}
         }
 
-        track_details_dialogue.track_details_dialogue.set_title(track_name.to_string().as_str());
+        track_details_dialogue.track_details_dialogue.set_title(Some(track_name.to_string().as_str()));
 
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -2625,7 +3323,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             track_details_dialogue.track_detail_track_colour_button.connect_color_set(move |track_detail_track_colour_button| {
                 let selected_colour = track_detail_track_colour_button.rgba();
-                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red() as f64, selected_colour.green() as f64, selected_colour.blue() as f64, selected_colour.alpha() as f64), Some(track_uuid.to_string()))) {
                     Err(_) => debug!("Problem sending message with tx from ui lock when the track colour has been changed."),
                     _ => (),
                 }
@@ -2639,7 +3337,7 @@ impl MainWindow {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
                         let selected_colour = track_detail_riff_colour_button.rgba();
-                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffColourChanged(active_id.to_string(),selected_colour.red, selected_colour.green, selected_colour.blue, selected_colour.alpha), Some(track_uuid.to_string()))) {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffColourChanged(active_id.to_string(),selected_colour.red() as f64, selected_colour.green() as f64, selected_colour.blue() as f64, selected_colour.alpha() as f64), Some(track_uuid.to_string()))) {
                             Err(_) => debug!("Problem sending message with tx from ui lock when a riff colour has been changed."),
                             _ => (),
                         }
@@ -2651,7 +3349,7 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let track_midi_routing_dialogue = self.add_track_midi_routing_dialogue(track_name.clone(), track_uuid.clone(), tx_from_ui.clone(), general_track_type.clone());
+            let track_midi_routing_dialogue = self.add_track_midi_routing_dialogue(track_name, track_uuid.clone(), tx_from_ui.clone(), general_track_type.clone());
             let state_arc = state_arc.clone();
             let source_track_uuid = track_uuid.to_string();
             track_details_dialogue.track_send_midi_to_track_open_dialogue_button.connect_clicked(move |_| {
@@ -2750,9 +3448,9 @@ impl MainWindow {
 
                 let return_value =  track_midi_routing_dialogue.track_midi_routing_dialogue.run();
 
-                track_midi_routing_dialogue.track_midi_routing_dialogue.hide();
+                track_midi_routing_dialogue.track_midi_routing_dialogue.set_visible(false);
 
-                if return_value == gtk::ResponseType::Close {
+                if return_value == gtk4::ResponseType::Close {
                     debug!("track_midi_routing_dialogue Close on hide.");
                 }
             });
@@ -2760,7 +3458,7 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let track_audio_routing_dialogue = self.add_track_audio_routing_dialogue(track_name.clone(), track_uuid.clone(), tx_from_ui.clone(), general_track_type.clone());
+            let track_audio_routing_dialogue = self.add_track_audio_routing_dialogue(track_name, track_uuid.clone(), tx_from_ui.clone(), general_track_type.clone());
             let state_arc = state_arc.clone();
             let source_track_uuid = track_uuid.to_string();
             track_details_dialogue.track_send_audio_to_track_open_dialogue_button.connect_clicked(move |_| {
@@ -2859,9 +3557,9 @@ impl MainWindow {
 
                 let return_value =  track_audio_routing_dialogue.track_audio_routing_dialogue.run();
 
-                track_audio_routing_dialogue.track_audio_routing_dialogue.hide();
+                track_audio_routing_dialogue.track_audio_routing_dialogue.set_visible(false);
 
-                if return_value == gtk::ResponseType::Close {
+                if return_value == gtk4::ResponseType::Close {
                     debug!("track_audio_routing_dialogue Close on hide.");
                 }
             });
@@ -2878,7 +3576,7 @@ impl MainWindow {
                     }
                 }
 
-                gtk::Inhibit(false)
+                false
             });
         }
 
@@ -2923,7 +3621,7 @@ impl MainWindow {
                     debug!("track_details_dialogue.track_details_riff_choice_entry.connect_key_release_event: no selected riff.");
                 }
 
-                gtk::Inhibit(false)
+                false
             });
         }
 
@@ -3017,7 +3715,7 @@ impl MainWindow {
 
                     if let Some(tree_model) = track_riff_choice.model() {
                         if let Some(list_store) = tree_model.dynamic_cast_ref::<ListStore>() {
-                            if let Some(list_store_iter) = list_store.iter_first() {
+                            if let Some(mut list_store_iter) = list_store.iter_first() {
                                 loop  {
                                     if let Ok(id_column_value) = list_store.value(&list_store_iter, 1).get::<String>() {
                                         unsafe {
@@ -3028,7 +3726,7 @@ impl MainWindow {
                                         }
                                     }
 
-                                    if !list_store.iter_next(&list_store_iter) {
+                                    if !list_store.iter_next(&mut list_store_iter) {
                                         break;
                                     }
                                 }
@@ -3079,10 +3777,10 @@ impl MainWindow {
                             (0, &name),
                             (1, &file),
                             (2, &uuid.to_string()),
-                            (3, &(RGBA::black())),
-                            (4, &(RGBA::white())),
+                            (3, &(gdk4::RGBA::BLACK)),
+                            (4, &(gdk4::RGBA::WHITE)),
                         ]);
-                        track_effects_list.show_all();
+                        track_effects_list.set_visible(true);
 
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
                             Err(_) => debug!("Problem sending message with tx from ui lock when a track effect is being added"),
@@ -3193,7 +3891,7 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         _general_track_type: GeneralTrackType,
     ) -> TrackMidiRoutingDialogue {
-        let track_midi_routing_dialogue_glade_src = include_str!("track_midi_routing_dialogue.glade");
+        let track_midi_routing_dialogue_glade_src = include_str!("track_midi_routing_dialogue.ui");
         let track_midi_routing_dialogue: TrackMidiRoutingDialogue = TrackMidiRoutingDialogue::from_string(track_midi_routing_dialogue_glade_src).unwrap();
 
         {
@@ -3206,10 +3904,11 @@ impl MainWindow {
                         let routing_description = track_midi_routing_track_combobox_text.active_text().unwrap().to_string();
                         debug!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
 
-                        let track_midi_routing_panel_glade_src = include_str!("track_midi_routing_panel.glade");
+                        let track_midi_routing_panel_glade_src = include_str!("track_midi_routing_panel.ui");
                         let track_midi_routing_panel: TrackMidiRoutingPanel = TrackMidiRoutingPanel::from_string(track_midi_routing_panel_glade_src).unwrap();
+                        Self::populate_midi_routing_panel_combos(&track_midi_routing_panel);
 
-                        track_midi_routing_scrolled_box.add(&track_midi_routing_panel.track_midi_routing_panel);
+                        track_midi_routing_scrolled_box.append(&track_midi_routing_panel.track_midi_routing_panel);
                         
                         if let Some(midi_routing) = DAWUtils::parse_midi_routing_id(active_id.to_string(), routing_description.clone()) {
                             Self::setup_track_midi_routing_panel(track_midi_routing_panel, midi_routing, routing_description, tx_from_ui.clone(), track_midi_routing_scrolled_box.clone(), track_uuid);
@@ -3232,7 +3931,7 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         _general_track_type: GeneralTrackType,
     ) -> TrackAudioRoutingDialogue {
-        let track_audio_routing_dialogue_glade_src = include_str!("track_audio_routing_dialogue.glade");
+        let track_audio_routing_dialogue_glade_src = include_str!("track_audio_routing_dialogue.ui");
         let track_audio_routing_dialogue: TrackAudioRoutingDialogue = TrackAudioRoutingDialogue::from_string(track_audio_routing_dialogue_glade_src).unwrap();
 
         {
@@ -3245,10 +3944,11 @@ impl MainWindow {
                         let routing_description = track_audio_routing_track_combobox_text.active_text().unwrap().to_string();
                         debug!("Selected track: id={:?}, text={:?}", active_id.to_value(), routing_description.as_str());
 
-                        let track_audio_routing_panel_glade_src = include_str!("track_audio_routing_panel.glade");
+                        let track_audio_routing_panel_glade_src = include_str!("track_audio_routing_panel.ui");
                         let track_audio_routing_panel: TrackAudioRoutingPanel = TrackAudioRoutingPanel::from_string(track_audio_routing_panel_glade_src).unwrap();
+                        Self::populate_audio_routing_panel_combos(&track_audio_routing_panel);
 
-                        track_audio_routing_scrolled_box.add(&track_audio_routing_panel.track_audio_routing_panel);
+                        track_audio_routing_scrolled_box.append(&track_audio_routing_panel.track_audio_routing_panel);
                         
                         if let Some(audio_routing) = DAWUtils::parse_audio_routing_id(active_id.to_string(), routing_description.clone()) {
                             Self::setup_track_audio_routing_panel(track_audio_routing_panel, audio_routing, routing_description, tx_from_ui.clone(), track_audio_routing_scrolled_box.clone(), track_uuid);
@@ -3273,9 +3973,9 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let window = self.ui.wnd_main.clone();
             self.ui.menu_item_new.connect_button_press_event(move |_, _| {
-                window.set_title("DAW - New");
+                window.set_title(Some("DAW - New"));
                 let _ = tx_from_ui.send(DAWEvents::NewFile);
-                Inhibit(true)
+                true
             });
         }
 
@@ -3289,20 +3989,20 @@ impl MainWindow {
                 filter.set_name(Some("DAW project file"));
                 filter.add_pattern("*.fdaw");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     if let Some(filename) = dialog.filename() {
                         if let Some(filename_display) = filename.to_str() {
-                            window.set_title(format!("DAW - {}", filename_display).as_str());
+                            window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
                         }
                         let _ = tx_from_ui.send(DAWEvents::OpenFile(filename));
                     }
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3311,7 +4011,7 @@ impl MainWindow {
             self.ui.menu_item_save.connect_button_press_event(move |_, _| {
                 debug!("Menu item save clicked!");
                 let _ = tx_from_ui.send(DAWEvents::Save);
-                Inhibit(true)
+                true
             });
         }
 
@@ -3326,20 +4026,20 @@ impl MainWindow {
                 filter.set_name(Some("DAW project file"));
                 filter.add_pattern("*.fdaw");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     if let Some(filename) = dialog.filename() {
                         if let Some(filename_display) = filename.to_str() {
-                            window.set_title(format!("DAW - {}", filename_display).as_str());
+                            window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
                         }
                         let _ = tx_from_ui.send(DAWEvents::SaveAs(filename));
                     }
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3348,7 +4048,7 @@ impl MainWindow {
             let dialog = self.midi_file_import_file_chooser.clone();
             self.ui.menu_item_import_midi.connect_button_press_event(move |_menu_item, _btn|{
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     let filename = dialog.filename();
                     let current_folder = dialog.current_folder();
                     if let Some(current_folder) = current_folder {
@@ -3358,9 +4058,9 @@ impl MainWindow {
                     }
                     let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename.unwrap()));
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3374,16 +4074,16 @@ impl MainWindow {
                 filter.set_name(Some("Midi file"));
                 filter.add_pattern("*.mid");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     let filename = dialog.filename();
                     let _ = tx_from_ui.send(DAWEvents::ExportMidiFile(filename.unwrap()));
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3397,16 +4097,16 @@ impl MainWindow {
                 filter.set_name(Some("Midi file"));
                 filter.add_pattern("*.mid");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     let filename = dialog.filename();
                     let _ = tx_from_ui.send(DAWEvents::ExportRiffsToMidiFile(filename.unwrap()));
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3415,16 +4115,16 @@ impl MainWindow {
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_export_midi_riffs_separate.connect_button_press_event(move |_menu_item, _btn|{
                 let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."),     Some(&window), FileChooserAction::SelectFolder);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     let directory = dialog.current_folder();
                     let _ = tx_from_ui.send(DAWEvents::ExportRiffsToSeparateMidiFiles(directory.unwrap()));
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3438,28 +4138,25 @@ impl MainWindow {
                 filter.set_name(Some("Wave file"));
                 filter.add_pattern("*.wav");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     let filename = dialog.filename();
                     let _ = tx_from_ui.send(DAWEvents::ExportWaveFile(filename.unwrap()));
                 }
-                dialog.hide();
+                dialog.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
         {
             let window = self.ui.get_wnd_main().clone();
             self.ui.menu_item_quit.connect_button_press_event(move |_menu_item, _btn|{
-                let event = gdk::Event::new(EventType::Delete);
-                let args = [event.to_value()];
+                window.close();
 
-                let _ = window.emit_by_name_with_values("delete_event", &args);
-
-                Inhibit(false)
+                false
             });
         }
 
@@ -3467,9 +4164,9 @@ impl MainWindow {
             let about_dialogue = self.ui.about_dialogue.clone();
             self.ui.menu_item_about.connect_button_press_event(move |_menu_item, _btn|{
                 about_dialogue.run();
-                about_dialogue.hide();
+                about_dialogue.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3483,7 +4180,7 @@ impl MainWindow {
             let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
             let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
             self.ui.menu_item_preferences.connect_button_press_event(move |_menu_item, _btn|{
-                if let Ok(mut state) = state.lock() {
+                if let Ok(state) = state.lock() {
                     sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
                     block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
                     vst24_plugin_paths_entry.set_text(state.configuration.vst24_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
@@ -3517,9 +4214,9 @@ impl MainWindow {
                         }
                     }
                 }
-                configuration_dialogue.hide();
+                configuration_dialogue.set_visible(false);
 
-                Inhibit(true)
+                true
             });
         }
 
@@ -3528,16 +4225,16 @@ impl MainWindow {
             self.ui.menu_item_scan_plugins.connect_button_press_event(move |_menu_item, _btn|{
                 let _ = tx_from_ui.send(DAWEvents::ScanPlugins);
 
-                Inhibit(true)
+                true
             });
         }
 
         {
-            let mut vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
+            let vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
             let window = self.ui.get_wnd_main().clone();
             let add_vst24_path_chooser = FileChooserDialog::new(Some("Add VST 2.4 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_vst24_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
-            add_vst24_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            add_vst24_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
+            add_vst24_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_vst24_path_button.connect_clicked(move |_| {
                 if add_vst24_path_chooser.run() == ResponseType::Ok {
                     if let Some(directory) = add_vst24_path_chooser.current_folder() {
@@ -3546,22 +4243,22 @@ impl MainWindow {
                             if directory.chars().count() > 0 {
                                 current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
                             }
-                            current_paths.push_str(directory.clone());
+                            current_paths.push_str(directory);
 
                             vst24_plugin_paths_entry.set_text(current_paths.as_str());
                         }
                     }
                 }
-                add_vst24_path_chooser.hide();
+                add_vst24_path_chooser.set_visible(false);
             });
         }
 
         {
-            let mut clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
+            let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
             let window = self.ui.get_wnd_main().clone();
             let add_clap_path_chooser = FileChooserDialog::new(Some("Add Clap plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_clap_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
-            add_clap_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            add_clap_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
+            add_clap_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_clap_path_button.connect_clicked(move |_| {
                 if add_clap_path_chooser.run() == ResponseType::Ok {
                     if let Some(directory) = add_clap_path_chooser.current_folder() {
@@ -3570,22 +4267,22 @@ impl MainWindow {
                             if directory.chars().count() > 0 {
                                 current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
                             }
-                            current_paths.push_str(directory.clone());
+                            current_paths.push_str(directory);
 
                             clap_plugin_paths_entry.set_text(current_paths.as_str());
                         }
                     }
                 }
-                add_clap_path_chooser.hide();
+                add_clap_path_chooser.set_visible(false);
             });
         }
 
         {
-            let mut vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
+            let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
             let window = self.ui.get_wnd_main().clone();
             let add_vst3_path_chooser = FileChooserDialog::new(Some("Add VST 3 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_vst3_path_chooser.add_button("Cancel", gtk::ResponseType::Cancel);
-            add_vst3_path_chooser.add_button("Ok", gtk::ResponseType::Ok);
+            add_vst3_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
+            add_vst3_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_vst3_path_button.connect_clicked(move |_| {
                 if add_vst3_path_chooser.run() == ResponseType::Ok {
                     if let Some(directory) = add_vst3_path_chooser.current_folder() {
@@ -3594,37 +4291,37 @@ impl MainWindow {
                             if directory.chars().count() > 0 {
                                 current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
                             }
-                            current_paths.push_str(directory.clone());
+                            current_paths.push_str(directory);
 
                             vst3_plugin_paths_entry.set_text(current_paths.as_str());
                         }
                     }
                 }
-                add_vst3_path_chooser.hide();
+                add_vst3_path_chooser.set_visible(false);
             });
         }
 
         {
-            let tx_from_ui = tx_from_ui.clone();
+            let _tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_cut.connect_button_press_event(move |_menu_item, _btn|{
                 // TODO implement
-                Inhibit(true)
+                true
             });
         }
 
         {
-            let tx_from_ui = tx_from_ui.clone();
+            let _tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_copy.connect_button_press_event(move |_menu_item, _btn|{
                 // TODO implement
-                Inhibit(true)
+                true
             });
         }
 
         {
-            let tx_from_ui = tx_from_ui.clone();
+            let _tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_paste.connect_button_press_event(move |_menu_item, _btn|{
                 // TODO implement
-                Inhibit(true)
+                true
             });
         }
 
@@ -3632,7 +4329,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.menu_item_regenerate_riff_ref_ids.connect_button_press_event(move |_menu_item, _btn|{
                 let _ = tx_from_ui.send(DAWEvents::RiffReferenceRegenerateIds);
-                Inhibit(true)
+                true
             });
         }
     }
@@ -3696,7 +4393,7 @@ impl MainWindow {
                     }
                 }
 
-                gtk::Inhibit(false)
+                false
             });
         }
 
@@ -3734,7 +4431,7 @@ impl MainWindow {
                     debug!("loop_combobox_text_entry.connect_key_release_event: no selected loop.");
                 }
 
-                gtk::Inhibit(false)
+                false
             });
         }
 
@@ -3748,7 +4445,7 @@ impl MainWindow {
                         Ok(uuid) => {
                             let _ = tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::Deleted, uuid));
                             if let Some(active_index) = loop_combobox_text.active() {
-                                gtk::prelude::ComboBoxTextExt::remove(&loop_combobox_text, active_index as i32);
+                                loop_combobox_text.remove(active_index as i32);
                             }
                             debug!("ui.toolbar_delete_loop.connect_clicked: sent delete loop msg.");
 
@@ -3808,7 +4505,7 @@ impl MainWindow {
 
                     if let Some(tree_model) = loop_combobox_text.model() {
                         if let Some(list_store) = tree_model.dynamic_cast_ref::<ListStore>() {
-                            if let Some(list_store_iter) = list_store.iter_first() {
+                            if let Some(mut list_store_iter) = list_store.iter_first() {
                                 loop  {
                                     if let Ok(id_column_value) = list_store.value(&list_store_iter, 1).get::<String>() {
                                         unsafe {
@@ -3819,7 +4516,7 @@ impl MainWindow {
                                         }
                                     }
 
-                                    if !list_store.iter_next(&list_store_iter) {
+                                    if !list_store.iter_next(&mut list_store_iter) {
                                         break;
                                     }
                                 }
@@ -3892,12 +4589,11 @@ impl MainWindow {
 
         {
             let grid = track_grid_arc.clone();
-            self.ui.track_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.track_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -3905,13 +4601,13 @@ impl MainWindow {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_motion_notify_event(move |track_grid_drawing_area, motion_event| {
                 let coords = motion_event.coords().unwrap();
-                let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -3927,7 +4623,7 @@ impl MainWindow {
 
                 track_grid_drawing_area.queue_draw();
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -3935,13 +4631,13 @@ impl MainWindow {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_button_press_event(move |track_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button3
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -3954,7 +4650,7 @@ impl MainWindow {
                     },
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -3962,13 +4658,13 @@ impl MainWindow {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_button_release_event(move |track_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -3982,7 +4678,7 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, track_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -3998,9 +4694,9 @@ impl MainWindow {
             let track_grid_windowed_zoom_mode_btn = self.ui.track_grid_windowed_zoom_mode_btn.clone();
             let track_grid_add_loop_mode_btn = self.ui.track_grid_add_loop_mode_btn.clone();
             self.ui.track_drawing_area.connect_key_press_event(move |track_drawing_area, event_key| {
-                let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_key.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let control_key_pressed = event_key.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_key.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_key.state().intersects(gdk4::ModifierType::ALT_MASK);
                 let key_pressed_value = event_key.keyval().name();
 
                 if let Some(key_name) = key_pressed_value {
@@ -4081,7 +4777,7 @@ impl MainWindow {
                     }
                 }
                 
-                Inhibit(false)
+                false
             });
         }
 
@@ -4089,44 +4785,43 @@ impl MainWindow {
             let track_grid_vertical_zoom_adjustment = self.ui.track_grid_vertical_zoom_adjustment.clone();
             let track_grid_zoom_adjustment = self.ui.track_grid_zoom_adjustment.clone();
             self.ui.track_drawing_area.connect_scroll_event(move |_, event_scroll| {
-                let control_key_pressed = event_scroll.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_scroll.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_scroll.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let control_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::ALT_MASK);
                 let scroll_direction = event_scroll.scroll_direction();
 
                 if let Some(scroll_direction) = scroll_direction {
-                    debug!("Track grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                    debug!("Track grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", format!("{:?}", scroll_direction), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                     if scroll_direction == ScrollDirection::Up && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                         track_grid_vertical_zoom_adjustment.set_value(track_grid_vertical_zoom_adjustment.value() + track_grid_vertical_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Down && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                         track_grid_vertical_zoom_adjustment.set_value(track_grid_vertical_zoom_adjustment.value() - track_grid_vertical_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Up && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                         track_grid_zoom_adjustment.set_value(track_grid_zoom_adjustment.value() + track_grid_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Down && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                         track_grid_zoom_adjustment.set_value(track_grid_zoom_adjustment.value() - track_grid_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                 }
                 
-                Inhibit(false)
+                false
             });
         }
 
         {
             let grid = track_grid_ruler_arc.clone();
-            self.ui.track_ruler_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.track_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -4494,12 +5189,11 @@ impl MainWindow {
 
         {
             let grid = riff_grid_arc.clone();
-            self.ui.riff_grid_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.riff_grid_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -4507,13 +5201,13 @@ impl MainWindow {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_motion_notify_event(move |riff_grid_drawing_area, motion_event| {
                 let coords = motion_event.coords().unwrap();
-                let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -4529,7 +5223,7 @@ impl MainWindow {
 
                 riff_grid_drawing_area.queue_draw();
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -4537,13 +5231,13 @@ impl MainWindow {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_button_press_event(move |riff_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button3
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -4556,7 +5250,7 @@ impl MainWindow {
                     },
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -4564,13 +5258,13 @@ impl MainWindow {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_button_release_event(move |riff_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -4584,7 +5278,7 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, riff_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -4600,9 +5294,9 @@ impl MainWindow {
             let riff_grid_set_riff_reference_mode_btn = self.ui.riff_grid_set_riff_reference_mode_btn.clone();
             let riff_grid_windowed_zoom_mode_btn= self.ui.riff_grid_windowed_zoom_mode_btn.clone();
             self.ui.riff_grid_drawing_area.connect_key_press_event(move |riff_grid_drawing_area, event_key| {
-                let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_key.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let control_key_pressed = event_key.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_key.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_key.state().intersects(gdk4::ModifierType::ALT_MASK);
                 let key_pressed_value = event_key.keyval().name();
 
                 if let Some(key_name) = key_pressed_value {
@@ -4683,7 +5377,7 @@ impl MainWindow {
                     }
                 }
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -4691,44 +5385,43 @@ impl MainWindow {
             let riff_grid_vertical_zoom_adjustment = self.ui.riff_grid_vertical_zoom_adjustment.clone();
             let riff_grid_zoom_adjustment = self.ui.riff_grid_zoom_adjustment.clone();
             self.ui.riff_grid_drawing_area.connect_scroll_event(move |_, event_scroll| {
-                let control_key_pressed = event_scroll.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_scroll.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_scroll.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let control_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::ALT_MASK);
                 let scroll_direction = event_scroll.scroll_direction();
 
                 if let Some(scroll_direction) = scroll_direction {
-                    debug!("Riff grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                    debug!("Riff grid mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", format!("{:?}", scroll_direction), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                     if scroll_direction == ScrollDirection::Up && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                         riff_grid_vertical_zoom_adjustment.set_value(riff_grid_vertical_zoom_adjustment.value() + riff_grid_vertical_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Down && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                         riff_grid_vertical_zoom_adjustment.set_value(riff_grid_vertical_zoom_adjustment.value() - riff_grid_vertical_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Up && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                         riff_grid_zoom_adjustment.set_value(riff_grid_zoom_adjustment.value() + riff_grid_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                     else if scroll_direction == ScrollDirection::Down && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                         riff_grid_zoom_adjustment.set_value(riff_grid_zoom_adjustment.value() - riff_grid_zoom_adjustment.minimum_increment());
-                        return Inhibit(true);
+                        return true;
                     }
                 }
 
-                Inhibit(false)
+                false
             });
         }
 
         {
             let grid = riff_grid_ruler_arc.clone();
-            self.ui.riff_grid_ruler_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.riff_grid_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -4888,7 +5581,7 @@ impl MainWindow {
         {
             // riff_grid_vertical_zoom_scale
             let grid = riff_grid_arc.clone();
-            let tx_from_ui = tx_from_ui.clone();
+            let _tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_vertical_zoom_scale.connect_value_changed(move |riff_grid_vertical_zoom_scale| {
                 let scale = riff_grid_vertical_zoom_scale.value();
                 match grid.lock() {
@@ -5086,7 +5779,7 @@ impl MainWindow {
             let state = state.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_play.connect_clicked(move |_| {
-                if let Ok(mut state) = state.lock() {
+                if let Ok(state) = state.lock() {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridPlay(selected_riff_grid_uuid.clone()));
                     }
@@ -5099,7 +5792,7 @@ impl MainWindow {
             let state = state.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_copy.connect_clicked(move |_| {
-                if let Ok(mut state) = state.lock() {
+                if let Ok(state) = state.lock() {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridCopy(selected_riff_grid_uuid.clone()));
                     }
@@ -5112,7 +5805,7 @@ impl MainWindow {
             let state = state.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_delete.connect_clicked(move |_| {
-                if let Ok(mut state) = state.lock() {
+                if let Ok(state) = state.lock() {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridDelete(selected_riff_grid_uuid.clone()));
                     }
@@ -5125,7 +5818,7 @@ impl MainWindow {
             let state = state.clone();
             let tx_from_ui = tx_from_ui.clone();
             self.ui.riff_grid_copy_to_track_view_btn.connect_clicked(move |_| {
-                if let Ok(mut state) = state.lock() {
+                if let Ok(state) = state.lock() {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridCopySelectedToTrackViewCursorPosition(selected_riff_grid_uuid.clone()));
                     }
@@ -5141,7 +5834,7 @@ impl MainWindow {
     ) {
         let state_arc = state.clone();
         let changed_event_sender = std::boxed::Box::new(|change: Vec<(TrackEvent, TrackEvent)>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
-            let horatio = change.iter().map(|(original, changed)| (original.clone(), changed.clone())).collect_vec();
+            let _horatio = change.iter().map(|(original, changed)| (original.clone(), changed.clone())).collect_vec();
             let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationChange(change), Some(track_uuid)));
         });
         let copied_event_sender = std::boxed::Box::new(|copies: Vec<TrackEvent>, track_uuid: String, tx_from_ui: Sender<DAWEvents>| {
@@ -5173,12 +5866,11 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
-            self.ui.automation_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.automation_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match automation_grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -5188,12 +5880,11 @@ impl MainWindow {
 
         {
             let automation_grid_ruler = automation_grid_ruler_arc.clone();
-            self.ui.automation_ruler_drawing_area.connect_draw(move |drawing_area, context|{
+            self.ui.automation_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match automation_grid_ruler.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -5333,13 +6024,13 @@ impl MainWindow {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_motion_notify_event(move |automation_drawing_area, motion_event| {
                 let coords = motion_event.coords().unwrap();
-                let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -5355,7 +6046,7 @@ impl MainWindow {
 
                 automation_drawing_area.queue_draw();
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -5363,13 +6054,13 @@ impl MainWindow {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_button_press_event(move |automation_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button3
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -5384,7 +6075,7 @@ impl MainWindow {
                     },
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -5392,13 +6083,13 @@ impl MainWindow {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_button_release_event(move |automation_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -5412,7 +6103,7 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -5425,9 +6116,9 @@ impl MainWindow {
             let automation_edit_mode_btn = self.ui.automation_edit_mode_btn.clone();
             let automation_windowed_zoom_mode_btn = self.ui.automation_zoom_window_mode_btn.clone();
             self.ui.automation_drawing_area.connect_key_press_event(move |automation_drawing_area, event_key| {
-                let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_key.state().intersects(gdk::ModifierType::MOD1_MASK);
+                let control_key_pressed = event_key.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_key.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_key.state().intersects(gdk4::ModifierType::ALT_MASK);
                 let key_pressed_value = event_key.keyval().name();
 
                 if let Some(key_name) = key_pressed_value {
@@ -5482,7 +6173,7 @@ impl MainWindow {
                     }
                 }
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -5874,13 +6565,13 @@ impl MainWindow {
             self.ui.automation_dock_toggle_btn.connect_clicked(move |toggle_button| {
                 if toggle_button.is_active() {
                     sub_panel_stack.remove(&automation_component);
-                    automation_window_stack.add_titled(&automation_component, "automation", "Automation");
-                    automation_window.show_all();
+                    automation_window_stack.add_titled(&automation_component, Some("automation"), "Automation");
+                    automation_window.set_visible(true);
                 }
                 else {
                     automation_window_stack.remove(&automation_component);
-                    sub_panel_stack.add_titled(&automation_component, "automation", "Automation");
-                    automation_window.hide();
+                    sub_panel_stack.add_titled(&automation_component, Some("automation"), "Automation");
+                    automation_window.set_visible(false);
                 }
             });
         }
@@ -5897,13 +6588,13 @@ impl MainWindow {
             self.ui.mixer_dock_toggle_btn.connect_clicked(move |toggle_button| {
                 if toggle_button.is_active() {
                     sub_panel_stack.remove(&mixer_component);
-                    mixer_window_stack.add_titled(&mixer_component, "mixer", "Mixer");
-                    mixer_window.show_all();
+                    mixer_window_stack.add_titled(&mixer_component, Some("mixer"), "Mixer");
+                    mixer_window.set_visible(true);
                 }
                 else {
                     mixer_window_stack.remove(&mixer_component);
-                    sub_panel_stack.add_titled(&mixer_component, "mixer", "Mixer");
-                    mixer_window.hide();
+                    sub_panel_stack.add_titled(&mixer_component, Some("mixer"), "Mixer");
+                    mixer_window.set_visible(false);
                 }
             });
         }
@@ -5918,12 +6609,11 @@ impl MainWindow {
         let piano_ref = Arc::new( Mutex::new(piano));
         {
             let piano_ref = piano_ref.clone();
-            self.ui.piano_roll_piano_keyboard_drawing_area.connect_draw(move |drawing_area, context| {
+            self.ui.piano_roll_piano_keyboard_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                 match piano_ref.lock() {
                     Ok(piano_ref) => piano_ref.paint(context, drawing_area),
                     Err(error) => debug!("Could not lock piano for drawing: {}", error),
                 }
-                Inhibit(false)
             });
         }
 
@@ -5933,13 +6623,13 @@ impl MainWindow {
                 match piano_ref.lock() {
                     Ok(mut piano_ref) => {
                         let coords = event_btn.coords().unwrap();
-                        let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                        let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                        let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                        let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                        let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                        let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                        let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                        let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                             MouseButton::Button1
                         }
-                        else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                        else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                             MouseButton::Button2
                         }
                         else {
@@ -5950,7 +6640,7 @@ impl MainWindow {
                     },
                     Err(error) => debug!("Could not lock piano keyboard for drawing: {}", error),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -5960,13 +6650,13 @@ impl MainWindow {
                 match piano_ref.lock() {
                     Ok(mut piano_ref) => {
                         let coords = event_btn.coords().unwrap();
-                        let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                        let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                        let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                        let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                        let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                        let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                        let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                        let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                             MouseButton::Button1
                         }
-                        else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                        else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                             MouseButton::Button2
                         }
                         else {
@@ -5977,7 +6667,7 @@ impl MainWindow {
                     },
                     Err(error) => debug!("Could not lock piano keyboard for drawing: {}", error),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -6036,12 +6726,11 @@ impl MainWindow {
 
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
-                self.ui.piano_roll_drawing_area.connect_draw(move |drawing_area, context| {
+                self.ui.piano_roll_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                     match piano_roll_grid.lock() {
                         Ok(mut grid) => grid.paint(context, drawing_area),
                         Err(_) => (),
                     }
-                    Inhibit(false)
                 });
             }
 
@@ -6049,13 +6738,13 @@ impl MainWindow {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_motion_notify_event(move |piano_roll_drawing_area, motion_event| {
                     let coords = motion_event.coords().unwrap();
-                    let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button1
                     }
-                    else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -6071,7 +6760,7 @@ impl MainWindow {
 
                     piano_roll_drawing_area.queue_draw();
 
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -6079,13 +6768,13 @@ impl MainWindow {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_button_press_event(move |piano_roll_drawing_area, event_btn| {
                     let coords = event_btn.coords().unwrap();
-                    let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button3
                     }
-                    else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -6100,7 +6789,7 @@ impl MainWindow {
                         },
                         Err(_) => (),
                     }
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -6108,13 +6797,13 @@ impl MainWindow {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
                     let coords = event_btn.coords().unwrap();
-                    let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button1
                     }
-                    else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -6128,7 +6817,7 @@ impl MainWindow {
                         Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                         Err(_) => (),
                     }
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -6143,9 +6832,9 @@ impl MainWindow {
                 let piano_roll_set_riff_start_note_mode_btn = self.ui.piano_roll_select_riff_start_note_mode_btn.clone();
                 let piano_roll_windowed_zoom_mode_btn = self.ui.piano_roll_windowed_zoom_mode_btn.clone();
                 self.ui.piano_roll_drawing_area.connect_key_press_event(move |piano_roll_drawing_area, event_key| {
-                    let control_key_pressed = event_key.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_key.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_key.state().intersects(gdk::ModifierType::MOD1_MASK);
+                    let control_key_pressed = event_key.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_key.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_key.state().intersects(gdk4::ModifierType::ALT_MASK);
                     let key_pressed_value = event_key.keyval().name();
 
                     if let Some(key_name) = key_pressed_value {
@@ -6222,7 +6911,7 @@ impl MainWindow {
                         }
                     }
                     
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -6230,33 +6919,33 @@ impl MainWindow {
                 let piano_roll_vertical_zoom_adjustment = self.ui.piano_roll_vertical_zoom_adjustment.clone();
                 let piano_roll_zoom_adjustment = self.ui.piano_roll_zoom_adjustment.clone();
                 self.ui.piano_roll_drawing_area.connect_scroll_event(move |_, event_scroll| {
-                    let control_key_pressed = event_scroll.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_scroll.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_scroll.state().intersects(gdk::ModifierType::MOD1_MASK);
+                    let control_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_scroll.state().intersects(gdk4::ModifierType::ALT_MASK);
                     let scroll_direction = event_scroll.scroll_direction();
 
                     if let Some(scroll_direction) = scroll_direction {
-                        debug!("Piano roll mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", scroll_direction.to_string(), shift_key_pressed, control_key_pressed, alt_key_pressed);
+                        debug!("Piano roll mouse scroll: scroll direction={}, Shift key: {}, Control key: {}, Alt key: {}", format!("{:?}", scroll_direction), shift_key_pressed, control_key_pressed, alt_key_pressed);
 
                         if scroll_direction == ScrollDirection::Up && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                             piano_roll_vertical_zoom_adjustment.set_value(piano_roll_vertical_zoom_adjustment.value() + piano_roll_vertical_zoom_adjustment.minimum_increment());
-                            return Inhibit(true);
+                            return true;
                         }
                         else if scroll_direction == ScrollDirection::Down && control_key_pressed && shift_key_pressed && !alt_key_pressed {
                             piano_roll_vertical_zoom_adjustment.set_value(piano_roll_vertical_zoom_adjustment.value() - piano_roll_vertical_zoom_adjustment.minimum_increment());
-                            return Inhibit(true);
+                            return true;
                         }
                         else if scroll_direction == ScrollDirection::Up && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                             piano_roll_zoom_adjustment.set_value(piano_roll_zoom_adjustment.value() + piano_roll_zoom_adjustment.minimum_increment());
-                            return Inhibit(true);
+                            return true;
                         }
                         else if scroll_direction == ScrollDirection::Down && control_key_pressed && !shift_key_pressed && alt_key_pressed {
                             piano_roll_zoom_adjustment.set_value(piano_roll_zoom_adjustment.value() - piano_roll_zoom_adjustment.minimum_increment());
-                            return Inhibit(true);
+                            return true;
                         }
                     }
                     
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -6335,12 +7024,11 @@ impl MainWindow {
 
             {
                 let piano_roll_grid_ruler = piano_roll_grid_ruler_arc;
-                self.ui.piano_roll_ruler_drawing_area.connect_draw(move |drawing_area, context| {
+                self.ui.piano_roll_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                     match piano_roll_grid_ruler.lock() {
                         Ok(mut grid_ruler) => grid_ruler.paint(context, drawing_area),
                         Err(_) => (),
                     }
-                    Inhibit(false)
                 });
             }
 
@@ -6737,13 +7425,13 @@ impl MainWindow {
                 self.ui.piano_roll_dock_toggle_btn.connect_clicked(move |toggle_button| {
                     if toggle_button.is_active() {
                         sub_panel_stack.remove(&piano_roll_component);
-                        piano_roll_window_stack.add_titled(&piano_roll_component, "piano_roll", "Piano Roll");
-                        piano_roll_window.show_all();
+                        piano_roll_window_stack.add_titled(&piano_roll_component, Some("piano_roll"), "Piano Roll");
+                        piano_roll_window.set_visible(true);
                     }
                     else {
                         piano_roll_window_stack.remove(&piano_roll_component);
-                        sub_panel_stack.add_titled(&piano_roll_component, "piano_roll", "Piano Roll");
-                        piano_roll_window.hide();
+                        sub_panel_stack.add_titled(&piano_roll_component, Some("piano_roll"), "Piano Roll");
+                        piano_roll_window.set_visible(false);
                     }
                 });
             }
@@ -6757,7 +7445,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.sample_library_file_chooser_widget.connect_selection_changed(move |file_chooser_widget| {
-                if let Some(file_name) = file_chooser_widget.filename() {
+                if let Some(file_name) = file_chooser_widget.file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -6777,7 +7465,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui;
             let sample_library_file_chooser_widget = self.ui.sample_library_file_chooser_widget.clone();
             self.ui.sample_library_add_sample_to_song_btn.connect_clicked(move |_| {
-                if let Some(file_name) = sample_library_file_chooser_widget.filename() {
+                if let Some(file_name) = sample_library_file_chooser_widget.file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -6801,13 +7489,13 @@ impl MainWindow {
             self.ui.sample_library_dock_toggle_btn.connect_clicked(move |toggle_button| {
                 if toggle_button.is_active() {
                     sub_panel_stack.remove(&sample_library_component);
-                    sample_library_window_stack.add_titled(&sample_library_component, "sample_library", "Sample Library");
-                    sample_library_window.show_all();
+                    sample_library_window_stack.add_titled(&sample_library_component, Some("sample_library"), "Sample Library");
+                    sample_library_window.set_visible(true);
                 }
                 else {
                     sample_library_window_stack.remove(&sample_library_component);
-                    sub_panel_stack.add_titled(&sample_library_component, "sample_library", "Sample Library");
-                    sample_library_window.hide();
+                    sub_panel_stack.add_titled(&sample_library_component, Some("sample_library"), "Sample Library");
+                    sample_library_window.set_visible(false);
                 }
             });
         }
@@ -6821,7 +7509,7 @@ impl MainWindow {
             let scripting_script_text_view = self.ui.scripting_script_text_view.clone();
             let scripting_script_name_label = self.ui.scripting_script_name_label.clone();
             self.ui.scripting_file_chooser_widget.connect_selection_changed(move |file_chooser_widget| {
-                if let Some(file_name) = file_chooser_widget.filename() {
+                if let Some(file_name) = file_chooser_widget.file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -6829,7 +7517,7 @@ impl MainWindow {
                             match std::fs::read_to_string(file_name.clone()) {
                                 Ok(script_text) => {
                                     scripting_script_name_label.set_label(file_name.to_str().expect("Could not get file name."));
-                                    scripting_script_text_view.buffer().expect("Couldn't get text view buffer.").set_text(script_text.as_str());
+                                    scripting_script_text_view.buffer().set_text(script_text.as_str());
                                 }
                                 Err(_) => {}
                             }
@@ -6846,21 +7534,19 @@ impl MainWindow {
             let scripting_script_name_label = self.ui.scripting_script_name_label.clone();
             self.ui.scripting_run_script_btn.connect_clicked(move |_| {
                 let file_name = scripting_script_name_label.label().to_string();
-                let text_buffer = scripting_script_text_view.buffer().expect("Couldn't get text view buffer.");
+                let text_buffer = scripting_script_text_view.buffer();
                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
-                if let Some(script) = script_text {
-                    if script.len() > 0 {
-                        debug!("Scripting - running: selected file name={:?}", file_name);
+                if script_text.len() > 0 {
+                    debug!("Scripting - running: selected file name={:?}", file_name);
 
-                        match tx_from_ui.send(DAWEvents::RunLuaScript(script.to_string())) {
-                            Ok(_) => {}
-                            Err(_) => {}
-                        }
+                    match tx_from_ui.send(DAWEvents::RunLuaScript(script_text.to_string())) {
+                        Ok(_) => {}
+                        Err(_) => {}
                     }
-                    else {
-                        debug!("Script is empty.");
-                    }
+                }
+                else {
+                    debug!("Script is empty.");
                 }
             });
         }
@@ -6870,27 +7556,24 @@ impl MainWindow {
             let scripting_console_input_text_view = self.ui.scripting_console_input_text_view.clone();
             let scripting_console_output_text_view = self.ui.scripting_console_output_text_view.clone();
             self.ui.scripting_console_run_btn.connect_clicked(move |_| {
-                let console_input_text_buffer = scripting_console_input_text_view.buffer().expect("Couldn't get text view buffer.");
+                let console_input_text_buffer = scripting_console_input_text_view.buffer();
                 let script_text = console_input_text_buffer.text(&console_input_text_buffer.start_iter(), &console_input_text_buffer.end_iter(), true);
 
-                if let Some(script) = script_text {
-                    if script.len() > 0 {
-                        debug!("Scripting - running console input");
-                        if let Some(console_output_text_buffer) = scripting_console_output_text_view.buffer() {
-                            let console_input_text = format!(">> {}\n", script.as_str());
-                            console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_input_text.as_str());
-                        }
+                if script_text.len() > 0 {
+                    debug!("Scripting - running console input");
+                    let console_output_text_buffer = scripting_console_output_text_view.buffer();
+                        let console_input_text = format!(">> {}\n", script_text.as_str());
+                        console_output_text_buffer.insert(&mut console_output_text_buffer.end_iter(), console_input_text.as_str());
 
-                        match tx_from_ui.send(DAWEvents::RunLuaScript(script.to_string())) {
-                            Ok(_) => {}
-                            Err(_) => {}
-                        }
+                    match tx_from_ui.send(DAWEvents::RunLuaScript(script_text.to_string())) {
+                        Ok(_) => {}
+                        Err(_) => {}
+                    }
 
-                        console_input_text_buffer.set_text("");
-                    }
-                    else {
-                        debug!("Script is empty.");
-                    }
+                    console_input_text_buffer.set_text("");
+                }
+                else {
+                    debug!("Script is empty.");
                 }
             });
         }
@@ -6904,19 +7587,18 @@ impl MainWindow {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
-                            if let Some(text_buffer) = scripting_script_text_view.buffer() {
+                            let text_buffer = scripting_script_text_view.buffer();
                                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
-                                if let Some(script) = script_text {
+                                if script_text.len() > 0 {
                                     debug!("Saving file name={}", file_name);
 
                                     if let Ok(mut file) = std::fs::File::create(file_name) {
-                                        if let Err(error) = file.write_all(script.as_bytes()) {
+                                        if let Err(error) = file.write_all(script_text.as_bytes()) {
                                             debug!("Could not write script to a file: {}", error);
                                         }
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -6936,20 +7618,20 @@ impl MainWindow {
                 filter.set_name(Some("DAW Lua script file"));
                 filter.add_pattern("*.lua");
                 dialog.add_filter(&filter);
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Ok", gtk::ResponseType::Ok);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let result = dialog.run();
-                if result == gtk::ResponseType::Ok {
+                if result == gtk4::ResponseType::Ok {
                     if let Some(path) = dialog.filename() {
                         if let Some(file_name) = path.to_str() {
-                            if let Some(text_buffer) = scripting_script_text_view.buffer() {
+                            let text_buffer = scripting_script_text_view.buffer();
                                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
-                                if let Some(script) = script_text {
+                                if script_text.len() > 0 {
                                     debug!("Saving as file name={}", file_name);
 
                                     if let Ok(mut file) = std::fs::File::create(file_name) {
-                                        if let Err(error) = file.write_all(script.as_bytes()) {
+                                        if let Err(error) = file.write_all(script_text.as_bytes()) {
                                             debug!("Could not write script to a file: {}", error);
                                         }
                                         else {
@@ -6957,11 +7639,10 @@ impl MainWindow {
                                         }
                                     }
                                 }
-                            }
-                        }
                     }
                 }
-                dialog.hide();
+                }
+                dialog.set_visible(false);
             });
         }
 
@@ -6970,9 +7651,8 @@ impl MainWindow {
             let scripting_script_name_label = self.ui.scripting_script_name_label.clone();
             self.ui.scripting_new_script_btn.connect_clicked(move |_| {
                 scripting_script_name_label.set_label("");
-                if let Some(text_buffer) = scripting_script_text_view.buffer() {
-                    text_buffer.set_text("");
-                }
+                let text_buffer = scripting_script_text_view.buffer();
+                text_buffer.set_text("");
             });
         }
 
@@ -6984,13 +7664,13 @@ impl MainWindow {
             self.ui.scripting_dock_toggle_btn.connect_clicked(move |toggle_button| {
                 if toggle_button.is_active() {
                     sub_panel_stack.remove(&scripting_component);
-                    scripting_window_stack.add_titled(&scripting_component, "scripting", "Scripting");
-                    scripting_window.show_all();
+                    scripting_window_stack.add_titled(&scripting_component, Some("scripting"), "Scripting");
+                    scripting_window.set_visible(true);
                 }
                 else {
                     scripting_window_stack.remove(&scripting_component);
-                    sub_panel_stack.add_titled(&scripting_component, "scripting", "Scripting");
-                    scripting_window.hide();
+                    sub_panel_stack.add_titled(&scripting_component, Some("scripting"), "Scripting");
+                    scripting_window.set_visible(false);
                 }
             });
         }
@@ -7004,7 +7684,7 @@ impl MainWindow {
                     (0, &sample_name),
                     (1, &sample_uuid),
                 ]);
-                self.ui.sample_roll_available_samples.show_all();
+                self.ui.sample_roll_available_samples.set_visible(true);
             }
         }
     }
@@ -7043,12 +7723,11 @@ impl MainWindow {
 
             {
                 let sample_roll_grid = sample_roll_grid_arc.clone();
-                self.ui.sample_roll_drawing_area.connect_draw(move |drawing_area, context| {
+                self.ui.sample_roll_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                     match sample_roll_grid.lock() {
                         Ok(mut grid) => grid.paint(context, drawing_area),
                         Err(_) => (),
                     }
-                    Inhibit(false)
                 });
             }
 
@@ -7057,13 +7736,13 @@ impl MainWindow {
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 self.ui.sample_roll_drawing_area.connect_motion_notify_event(move |_, motion_event| {
                     let coords = motion_event.coords().unwrap();
-                    let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button1
                     }
-                    else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -7075,7 +7754,7 @@ impl MainWindow {
                         },
                         Err(_) => (),
                     }
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -7084,13 +7763,13 @@ impl MainWindow {
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 self.ui.sample_roll_drawing_area.connect_button_press_event(move |_, event_btn| {
                     let coords = event_btn.coords().unwrap();
-                    let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button3
                     }
-                    else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -7105,7 +7784,7 @@ impl MainWindow {
                         },
                         Err(_) => (),
                     }
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -7115,13 +7794,13 @@ impl MainWindow {
                 let sample_roll_available_samples = self.ui.sample_roll_available_samples.clone();
                 self.ui.sample_roll_drawing_area.connect_button_release_event(move |_, event_btn| {
                     let coords = event_btn.coords().unwrap();
-                    let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                    let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                    let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                    let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                         MouseButton::Button1
                     }
-                    else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                         MouseButton::Button2
                     }
                     else {
@@ -7164,7 +7843,7 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     }
-                    Inhibit(false)
+                    false
                 });
             }
 
@@ -7205,12 +7884,11 @@ impl MainWindow {
 
             {
                 let sample_roll_grid_ruler = sample_roll_grid_ruler_arc;
-                self.ui.sample_roll_ruler_drawing_area.connect_draw(move |drawing_area, context| {
+                self.ui.sample_roll_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                     match sample_roll_grid_ruler.lock() {
                         Ok(mut grid_ruler) => grid_ruler.paint(context, drawing_area),
                         Err(_) => (),
                     }
-                    Inhibit(false)
                 });
             }
 
@@ -7427,13 +8105,13 @@ impl MainWindow {
             self.ui.sample_roll_dock_toggle_btn.connect_clicked(move |toggle_button| {
                 if toggle_button.is_active() {
                     sub_panel_stack.remove(&sample_roll_component);
-                    sample_roll_window_stack.add_titled(&sample_roll_component, "Sample_roll", "Sample Roll");
-                    sample_roll_window.show_all();
+                    sample_roll_window_stack.add_titled(&sample_roll_component, Some("sample_roll"), "Sample Roll");
+                    sample_roll_window.set_visible(true);
                 }
                 else {
                     sample_roll_window_stack.remove(&sample_roll_component);
-                    sub_panel_stack.add_titled(&sample_roll_component, "sample_roll", "Sample Roll");
-                    sample_roll_window.hide();
+                    sub_panel_stack.add_titled(&sample_roll_component, Some("sample_roll"), "Sample Roll");
+                    sample_roll_window.set_visible(false);
                 }
             });
         }
@@ -7463,12 +8141,11 @@ impl MainWindow {
 
         {
             let grid = beat_grid_arc.clone();
-            drawing_area.connect_draw(move |drawing_area, context| {
+            drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
             drawing_area.queue_draw();
         }
@@ -7478,13 +8155,13 @@ impl MainWindow {
             let drawing_area = drawing_area.clone();
             drawing_area.clone().connect_button_release_event(move |_, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -7495,7 +8172,7 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, &drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -7514,7 +8191,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui;
             let state_arc = state_arc;
             let selected_track_style_provider = self.selected_style_provider.clone();
-            let mut riff_set_view_riff_set_beat_grids = self.riff_set_view_riff_set_beat_grids.clone();
+            let riff_set_view_riff_set_beat_grids = self.riff_set_view_riff_set_beat_grids.clone();
             self.ui.add_riff_set_btn.connect_clicked(move |_| {
                 if new_riff_set_name_entry.text().len() > 0 {
                     let riff_set_uuid = Uuid::new_v4();
@@ -7543,8 +8220,8 @@ impl MainWindow {
 
                     riff_set_blade_head.riff_set_blade.set_margin_top(20);
                     riff_set_blade_head.riff_set_blade.set_height_request(100);
-                    riff_set_blade_head.riff_set_blade_delete.hide();
-                    riff_set_blade_head.riff_set_drag_btn.hide();
+                    riff_set_blade_head.riff_set_blade_delete.set_visible(false);
+                    riff_set_blade_head.riff_set_drag_btn.set_visible(false);
 
                     // move the new blade to the right position if there is a selection
                     let mut selected_child_position = None;
@@ -7574,14 +8251,14 @@ impl MainWindow {
                     new_riff_set_name_entry.set_text("");
                 }
                 else {
-                    let dialogue = gtk::MessageDialog::builder()
+                    let dialogue = gtk4::MessageDialog::builder()
                         .modal(true)
                         .text("Need a riff set name.")
-                        .buttons(gtk::ButtonsType::Close)
+                        .buttons(gtk4::ButtonsType::Close)
                         .title("Problem")
                         .build();
                     dialogue.run();
-                    dialogue.hide();
+                    dialogue.set_visible(false);
                 }
             });
         }
@@ -7601,13 +8278,13 @@ impl MainWindow {
         riff_set_instance_id: String,
         vertical_adjustment: Option<&Adjustment>,
     ) -> (RiffSetBladeHead, RiffSetBlade, Box) {
-        let riff_set_blade_head_glade_src = include_str!("riff_set_blade_head.glade");
+        let riff_set_blade_head_glade_src = include_str!("riff_set_blade_head.ui");
         let riff_set_blade_head: RiffSetBladeHead = RiffSetBladeHead::from_string(riff_set_blade_head_glade_src).unwrap();
         riff_set_blade_head.riff_set_blade_play.set_widget_name(riff_set_uuid.as_str());
         riff_set_blade_head.riff_set_drag_btn.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
     
         {
             let riff_set_uuid = riff_set_uuid.clone();
@@ -7625,7 +8302,7 @@ impl MainWindow {
         }
 
 
-        let riff_set_blade_glade_src = include_str!("riff_set_blade.glade");
+        let riff_set_blade_glade_src = include_str!("riff_set_blade.ui");
         let riff_set_blade: RiffSetBlade = RiffSetBlade::from_string(riff_set_blade_glade_src).unwrap();
         let riff_set_box: Box = riff_set_blade.riff_set_box.clone();
 
@@ -7640,7 +8317,7 @@ impl MainWindow {
 
         let mut blade_box = Box::new(Orientation::Vertical, 0);
         if let RiffSetType::RiffArrangement(_) = riff_set_type { // A riff arrangement is the parent
-            let riff_arrangement_riff_set_blade_glade_src = include_str!("riff_arrangement_riff_set_blade.glade");
+            let riff_arrangement_riff_set_blade_glade_src = include_str!("riff_arrangement_riff_set_blade.ui");
             let riff_arrangement_riff_set_blade: RiffArrangementRiffSetBlade = RiffArrangementRiffSetBlade::from_string(riff_arrangement_riff_set_blade_glade_src).unwrap();
             let local_riff_set_box = riff_arrangement_riff_set_blade.local_riff_set_box.clone();
             let riff_set_head_box = riff_arrangement_riff_set_blade.riff_set_head_box.clone();
@@ -7650,7 +8327,7 @@ impl MainWindow {
             riff_arrangement_riff_set_blade.riff_set_scrolled_window.set_vscrollbar_policy(PolicyType::Never);
             riff_set_head_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);
             riff_set_box.pack_start(&riff_set_blade.riff_set_box, false, false, 2);
-            riff_sets_box.pack_start(&local_riff_set_box, false, false, 0);
+            riff_sets_box.append(&local_riff_set_box);
             blade_box = local_riff_set_box;
 
             blade_box.set_widget_name(riff_set_instance_id.as_str());
@@ -7706,17 +8383,17 @@ impl MainWindow {
             RiffSetType::RiffSet => {
             }
             RiffSetType::RiffSequence(_) => {
-                riff_set_blade_head.riff_set_blade_record.hide();
-                riff_set_blade_head.riff_set_blade_copy.hide();
-                riff_set_blade_head.riff_set_copy_to_track_view_btn.hide();
-                // riff_set_blade_head.riff_set_select_btn.hide();
-                // riff_set_blade_head.riff_set_blade_delete.hide();
-                // riff_set_blade_head.riff_set_drag_btn.hide();
+                riff_set_blade_head.riff_set_blade_record.set_visible(false);
+                riff_set_blade_head.riff_set_blade_copy.set_visible(false);
+                riff_set_blade_head.riff_set_copy_to_track_view_btn.set_visible(false);
+                // riff_set_blade_head.riff_set_select_btn.set_visible(false);
+                // riff_set_blade_head.riff_set_blade_delete.set_visible(false);
+                // riff_set_blade_head.riff_set_drag_btn.set_visible(false);
             }
             RiffSetType::RiffArrangement(_) => {
-                riff_set_blade_head.riff_set_blade_record.hide();
-                riff_set_blade_head.riff_set_blade_copy.hide();
-                riff_set_blade_head.riff_set_copy_to_track_view_btn.hide();
+                riff_set_blade_head.riff_set_blade_record.set_visible(false);
+                riff_set_blade_head.riff_set_blade_copy.set_visible(false);
+                riff_set_blade_head.riff_set_copy_to_track_view_btn.set_visible(false);
             }
         }
 
@@ -7770,7 +8447,7 @@ impl MainWindow {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_set_blade.style_context().add_provider(&selected_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_set_blade.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                             riff_set_blade.set_data("selected", 1u32);
                             selected_bool = true;
                         }
@@ -7793,15 +8470,15 @@ impl MainWindow {
                     }
                 }
 
-                gtk::Inhibit(true)
+                true
             });
         }
 
         {
             let rs_box = riff_sets_box.clone();
-            let rs_heads_box = riff_set_heads_box.clone();
+            let _rs_heads_box = riff_set_heads_box.clone();
             let blade_head = riff_set_blade_head.riff_set_blade.clone();
-            let blade = riff_set_blade.riff_set_box.clone();
+            let _blade = riff_set_blade.riff_set_box.clone();
             let tx_from_ui = tx_from_ui.clone();
             let riff_set_type = riff_set_type.clone();
             let blade_box = blade_box.clone();
@@ -7844,7 +8521,7 @@ impl MainWindow {
         }
 
         {
-            let rs_box = riff_sets_box.clone();
+            let _rs_box = riff_sets_box.clone();
             let blade_head = riff_set_blade_head.riff_set_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
             // let selected_track_style_provider= selected_track_style_provider.clone();
@@ -7854,7 +8531,7 @@ impl MainWindow {
                 // for child in rs_box.children() {
                 //     child.style_context().remove_provider(&selected_track_style_provider);
                 //     if child.widget_name() == uuid {
-                //         child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                //         child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                 //     }
                 // }
 
@@ -7876,7 +8553,7 @@ impl MainWindow {
                 for child in rs_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                     }
                 }
 
@@ -7898,14 +8575,14 @@ impl MainWindow {
 
                 entry.set_tooltip_text(Some(name.as_str()));
 
-                if event_key.keyval() == gdk::keys::constants::Return {
+                if event_key.keyval() == gdk4::Key::Return {
                     match tx_from_ui.send(DAWEvents::RiffSetNameChange(uuid, name)) {
                         Ok(_) => (),
                         Err(error) => debug!("Failed to send riff set name change: {}", error),
                     }
                 }
 
-                gtk::Inhibit(true)
+                true
             });
         }
 
@@ -8001,7 +8678,7 @@ impl MainWindow {
             let selected_track_style_provider = self.selected_style_provider.clone();
             let riff_sequence_vertical_adjustment = self.ui.riff_sequence_vertical_adjustment.clone();
             self.ui.add_sequence_btn.connect_clicked(move |_| {
-                riff_sequences_box.children().iter_mut().for_each(|child| child.hide());
+                riff_sequences_box.children().iter_mut().for_each(|child| child.set_visible(false));
                 if riff_sequence_name_entry.text().len() > 0 {
                     let riff_sequence_blade = MainWindow::add_riff_sequence_blade(
                         riff_sequences_box.clone(),
@@ -8023,14 +8700,14 @@ impl MainWindow {
                     }
                 }
                 else {
-                    let dialogue = gtk::MessageDialog::builder()
+                    let dialogue = gtk4::MessageDialog::builder()
                         .modal(true)
                         .text("Need a sequence name.")
-                        .buttons(gtk::ButtonsType::Close)
+                        .buttons(gtk4::ButtonsType::Close)
                         .title("Problem")
                         .build();
                     dialogue.run();
-                    dialogue.hide();
+                    dialogue.set_visible(false);
                 }
             });
         }
@@ -8042,11 +8719,11 @@ impl MainWindow {
             self.ui.sequence_combobox.connect_changed(move |sequence_combobox| {
                 if let Some(uuid) = sequence_combobox.active_id() {
                     debug!("ui.sequence_combobox.active_id={}", uuid);
-                    riff_sequences_box.children().iter_mut().for_each(|child| child.hide());
+                    riff_sequences_box.children().iter_mut().for_each(|child| child.set_visible(false));
                     riff_sequences_box.children().iter_mut().for_each(|child| {
                         debug!("Found sequence uuid={}", child.widget_name());
                         if child.widget_name() == uuid {
-                            child.show();
+                            child.set_visible(true);
                         }
                     });
                     let _ = tx_from_ui.send(DAWEvents::RiffSequenceSelected(uuid.to_string()));
@@ -8058,7 +8735,7 @@ impl MainWindow {
     pub fn setup_riff_grids_view(
         &mut self,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
-        state_arc: Arc<Mutex<DAWState>>
+        _state_arc: Arc<Mutex<DAWState>>
     ) {
         {
             let riff_grid_name_entry = self.ui.riff_grid_name_entry.clone();
@@ -8074,14 +8751,14 @@ impl MainWindow {
                     let _ = tx_from_ui.send(DAWEvents::RiffGridAdd(uuid.to_string(), name));
                 }
                 else {
-                    let dialogue = gtk::MessageDialog::builder()
+                    let dialogue = gtk4::MessageDialog::builder()
                         .modal(true)
                         .text("Need a grid name.")
-                        .buttons(gtk::ButtonsType::Close)
+                        .buttons(gtk4::ButtonsType::Close)
                         .title("Problem")
                         .build();
                     dialogue.run();
-                    dialogue.hide();
+                    dialogue.set_visible(false);
                 }
             });
         }
@@ -8120,7 +8797,7 @@ impl MainWindow {
         else {
             Uuid::new_v4()
         };
-        let riff_sequence_blade_glade_src = include_str!("riff_sequence_blade.glade");
+        let riff_sequence_blade_glade_src = include_str!("riff_sequence_blade.ui");
 
         let riff_sequence_blade = RiffSequenceBlade::from_string(riff_sequence_blade_glade_src).unwrap();
         riff_sequences_box.pack_start(&riff_sequence_blade.riff_sequence_blade, true, true, 0);
@@ -8139,23 +8816,23 @@ impl MainWindow {
         riff_sequence_blade.riff_sequence_blade_play.set_widget_name(uuid.to_string().as_str());
         riff_sequence_blade.riff_sequence_riff_sets_scrolled_window.set_vadjustment(riff_sequence_vertical_adjustment);
         riff_sequence_blade.riff_sequence_drag_btn.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK, 
+            gdk4::ModifierType::BUTTON1_MASK, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
 
         let riff_set_type = match riff_sequence_type.clone() {
             RiffSequenceType::RiffSequence => {
-                riff_sequence_blade.riff_sequence_drag_btn.hide();
-                riff_sequence_blade.riff_sequence_select_btn.hide();
+                riff_sequence_blade.riff_sequence_drag_btn.set_visible(false);
+                riff_sequence_blade.riff_sequence_select_btn.set_visible(false);
                 RiffSetType::RiffSequence(uuid.to_string())
             },
             RiffSequenceType::RiffArrangement(riff_sequence_uuid) => {
                 riff_sequence_blade.riff_sequence_blade_top_box.set_margin_bottom(5);
-                riff_sequence_blade.riff_sequence_blade_copy.hide();
-                riff_sequence_blade.riff_sequence_riff_set_combobox_label.hide();
-                riff_sequence_blade.riff_sequence_copy_to_track_view_btn.hide();
-                riff_sequence_blade.riff_set_combobox.hide();
-                riff_sequence_blade.add_riff_set_btn.hide();
+                riff_sequence_blade.riff_sequence_blade_copy.set_visible(false);
+                riff_sequence_blade.riff_sequence_riff_set_combobox_label.set_visible(false);
+                riff_sequence_blade.riff_sequence_copy_to_track_view_btn.set_visible(false);
+                riff_sequence_blade.riff_set_combobox.set_visible(false);
+                riff_sequence_blade.add_riff_set_btn.set_visible(false);
                 riff_sequence_blade.riff_sequence_controls_scrolled_window.set_hscrollbar_policy(PolicyType::Never);
                 riff_sequence_blade.riff_sequence_controls_scrolled_window.set_height_request(20);
                 RiffSetType::RiffArrangement(riff_sequence_uuid)
@@ -8222,11 +8899,11 @@ impl MainWindow {
                         }
                     }
 
-                    if let Some(mut selected) = riff_sequence_blade_frame.data::<u32>("selected") {
+                    if let Some(selected) = riff_sequence_blade_frame.data::<u32>("selected") {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_sequence_blade_frame.style_context().add_provider(&selected_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_sequence_blade_frame.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                             riff_sequence_blade_frame.set_data("selected", 1u32);
                             selected_bool = true;
                         }
@@ -8243,7 +8920,7 @@ impl MainWindow {
                     }
                 }
 
-                gtk::Inhibit(true)
+                true
             });
         }
 
@@ -8267,7 +8944,7 @@ impl MainWindow {
 
         // populate the riff_set_combobox
         if let Some(combobox_riff_sets_data) = riff_sets_data {
-            let riff_set_combobox: ComboBoxText = riff_sequence_blade.riff_set_combobox.clone();
+            let riff_set_combobox: DropDown = riff_sequence_blade.riff_set_combobox.clone();
             for (index, (riff_set_uuid, riff_set_name)) in combobox_riff_sets_data.iter().enumerate() {
                 riff_set_combobox.append(Some(riff_set_uuid.as_str()), format!("{}. {}", index + 1, riff_set_name.as_str()).as_str());
             }
@@ -8275,7 +8952,7 @@ impl MainWindow {
         else {
             match state_arc.lock() {
                 Ok(state) => {
-                    let riff_set_combobox: ComboBoxText = riff_sequence_blade.riff_set_combobox.clone();
+                    let riff_set_combobox: DropDown = riff_sequence_blade.riff_set_combobox.clone();
                     for (index, riff_set) in state.project().song().riff_sets().iter().enumerate() {
                         riff_set_combobox.append(Some(riff_set.uuid().as_str()), format!("{}. {}", index + 1, riff_set.name()).as_str());
                     }
@@ -8290,7 +8967,7 @@ impl MainWindow {
         {
             let blade = riff_sequence_blade.riff_sequence_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_set_combobox: ComboBoxText = riff_sequence_blade.riff_set_combobox.clone();
+            let riff_set_combobox: DropDown = riff_sequence_blade.riff_set_combobox.clone();
             riff_sequence_blade.add_riff_set_btn.connect_clicked(move |_| {
                 if let Some(riff_set_uuid) = riff_set_combobox.active_id() {
                     let riff_sequence_uuid = blade.widget_name().to_string();
@@ -8370,7 +9047,7 @@ impl MainWindow {
                 for child in riff_sequences_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == riff_sequence_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                     }
                 }
 
@@ -8403,7 +9080,7 @@ impl MainWindow {
         else {
             Uuid::new_v4()
         };
-        let riff_grid_blade_glade_src = include_str!("riff_grid_blade.glade");
+        let riff_grid_blade_glade_src = include_str!("riff_grid_blade.ui");
 
         let riff_grid_blade = RiffGridBlade::from_string(riff_grid_blade_glade_src).unwrap();
         riff_grid_box.pack_start(&riff_grid_blade.riff_grid_blade, true, true, 0);
@@ -8422,18 +9099,18 @@ impl MainWindow {
         riff_grid_blade.riff_grid_blade_play.set_widget_name(uuid.to_string().as_str());
         riff_grid_blade.riff_grid_scrolled_window.set_vadjustment(riff_grid_vertical_adjustment);
         riff_grid_blade.riff_grid_drag_btn.drag_source_set(
-            gdk::ModifierType::BUTTON1_MASK,
+            gdk4::ModifierType::BUTTON1_MASK,
             DRAG_N_DROP_TARGETS.as_ref(),
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
 
         match riff_grid_type.clone() {
             RiffGridType::RiffGrid => {
-                riff_grid_blade.riff_grid_drag_btn.hide();
-                riff_grid_blade.riff_grid_select_btn.hide();
+                riff_grid_blade.riff_grid_drag_btn.set_visible(false);
+                riff_grid_blade.riff_grid_select_btn.set_visible(false);
             },
             RiffGridType::RiffArrangement(_) => {
-                riff_grid_blade.riff_grid_blade_copy.hide();
-                riff_grid_blade.riff_grid_copy_to_track_view_btn.hide();
+                riff_grid_blade.riff_grid_blade_copy.set_visible(false);
+                riff_grid_blade.riff_grid_copy_to_track_view_btn.set_visible(false);
             },
         };
 
@@ -8483,11 +9160,11 @@ impl MainWindow {
                         }
                     }
 
-                    if let Some(mut selected) = riff_grid_blade_frame.data::<u32>("selected") {
+                    if let Some(selected) = riff_grid_blade_frame.data::<u32>("selected") {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_grid_blade_frame.style_context().add_provider(&selected_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_grid_blade_frame.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                             riff_grid_blade_frame.set_data("selected", 1u32);
                             selected_bool = true;
                         }
@@ -8504,7 +9181,7 @@ impl MainWindow {
                     }
                 }
 
-                gtk::Inhibit(true)
+                true
             });
         }
 
@@ -8560,7 +9237,7 @@ impl MainWindow {
                 for child in riff_grid_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == riff_grid_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                     }
                 }
 
@@ -8597,7 +9274,7 @@ impl MainWindow {
             use_globally_selected_riff_grid_uuid,
             Some(uuid.to_string())
                                                                                             );
-        let mut riff_grid = BeatGrid::new_with_custom(
+        let riff_grid = BeatGrid::new_with_custom(
             1.0,
             1.0,
             51.0,
@@ -8613,12 +9290,11 @@ impl MainWindow {
 
         {
             let grid = riff_grid_arc.clone();
-            riff_grid_blade.riff_grid_drawing_area.connect_draw(move |drawing_area, context|{
+            riff_grid_blade.riff_grid_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -8643,7 +9319,7 @@ impl MainWindow {
         for riff_sequence_details in riff_sequences.iter() {
             self.ui.sequence_combobox.append(Some(riff_sequence_details.0.as_str()), riff_sequence_details.1.as_str());
         }
-        if !restore_selected && self.ui.sequence_combobox.children().len() > 0 {
+        if !restore_selected && self.ui.sequence_combobox.len() > 0 {
             self.ui.sequence_combobox.set_active(Some(0));
         }
 
@@ -8668,7 +9344,7 @@ impl MainWindow {
         for riff_grid_details in riff_grids.iter() {
             self.ui.grid_combobox.append(Some(riff_grid_details.0.as_str()), riff_grid_details.1.as_str());
         }
-        if !restore_selected && self.ui.grid_combobox.children().len() > 0 {
+        if !restore_selected && self.ui.grid_combobox.len() > 0 {
             self.ui.grid_combobox.set_active(Some(0));
         }
 
@@ -8703,7 +9379,7 @@ impl MainWindow {
             let riff_arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
             let _arrangement_vertical_adjustment = self.ui.riff_arrangement_vertical_adjustment.clone();
             self.ui.add_arrangement_btn.connect_clicked(move |_| {
-                riff_arrangement_box.children().iter_mut().for_each(|child| child.hide());
+                riff_arrangement_box.children().iter_mut().for_each(|child| child.set_visible(false));
                 if new_arrangement_name_entry.text().len() > 0 {
                     let riff_arrangement_blade = MainWindow::add_riff_arrangement_blade(
                         riff_arrangement_box.clone(),
@@ -8727,14 +9403,14 @@ impl MainWindow {
                     }
                 }
                 else {
-                    let dialogue = gtk::MessageDialog::builder()
+                    let dialogue = gtk4::MessageDialog::builder()
                         .modal(true)
                         .text("Need an arrangement name.")
-                        .buttons(gtk::ButtonsType::Close)
+                        .buttons(gtk4::ButtonsType::Close)
                         .title("Problem")
                         .build();
                     dialogue.run();
-                    dialogue.hide();
+                    dialogue.set_visible(false);
                 }
             });
         }
@@ -8745,11 +9421,11 @@ impl MainWindow {
             self.ui.arrangements_combobox.connect_changed(move |arrangements_combobox| {
                 if let Some(uuid) = arrangements_combobox.active_id() {
                     debug!("ui.arrangements_combobox.active_id={}", uuid);
-                    riff_arrangement_box.children().iter_mut().for_each(|child| child.hide());
+                    riff_arrangement_box.children().iter_mut().for_each(|child| child.set_visible(false));
                     riff_arrangement_box.children().iter_mut().for_each(|child| {
                         debug!("Found arrangement uuid={}", child.widget_name());
                         if child.widget_name() == uuid {
-                            child.show();
+                            child.set_visible(true);
                         }
                     });
 
@@ -8792,12 +9468,11 @@ impl MainWindow {
 
         {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
-            self.ui.riff_arrangement_overview_drawing_area.connect_draw(move |drawing_area, context| {
+            self.ui.riff_arrangement_overview_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                 match riff_arrangement_overview_grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
-                Inhibit(false)
             });
         }
 
@@ -8805,13 +9480,13 @@ impl MainWindow {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_motion_notify_event(move |piano_roll_drawing_area, motion_event| {
                 let coords = motion_event.coords().unwrap();
-                let control_key_pressed = motion_event.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = motion_event.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = motion_event.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if motion_event.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if motion_event.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if motion_event.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if motion_event.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -8827,7 +9502,7 @@ impl MainWindow {
 
                 piano_roll_drawing_area.queue_draw();
 
-                Inhibit(false)
+                false
             });
         }
 
@@ -8835,13 +9510,13 @@ impl MainWindow {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_button_press_event(move |piano_roll_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button3
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -8854,7 +9529,7 @@ impl MainWindow {
                     },
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
 
@@ -8862,13 +9537,13 @@ impl MainWindow {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
                 let coords = event_btn.coords().unwrap();
-                let control_key_pressed = event_btn.state().intersects(gdk::ModifierType::CONTROL_MASK);
-                let shift_key_pressed = event_btn.state().intersects(gdk::ModifierType::SHIFT_MASK);
-                let alt_key_pressed = event_btn.state().intersects(gdk::ModifierType::MOD1_MASK);
-                let mouse_button = if event_btn.state().intersects(gdk::ModifierType::BUTTON1_MASK) {
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
                     MouseButton::Button1
                 }
-                else if event_btn.state().intersects(gdk::ModifierType::BUTTON2_MASK) {
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
                     MouseButton::Button2
                 }
                 else {
@@ -8882,7 +9557,7 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
-                Inhibit(false)
+                false
             });
         }
     }
@@ -8890,7 +9565,7 @@ impl MainWindow {
 
     fn add_riff_arrangement_blade(
         riff_arrangements_box: Box,
-        riff_arrangements_combobox: ComboBoxText,
+        riff_arrangements_combobox: DropDown,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state_arc: Arc<Mutex<DAWState>>,
         riff_sets_data: Option<Vec<(String, String)>>,
@@ -8900,7 +9575,7 @@ impl MainWindow {
         send_riff_arrangement_add_message: bool,
         visible: bool,
         selected_track_style_provider: CssProvider,
-        riff_arrangement_vertical_adjustment: Adjustment,
+        _riff_arrangement_vertical_adjustment: Adjustment,
     ) -> RiffArrangementBlade {
         let uuid = if let Some(existing_uuid) = riff_arrangement_uuid {
             match Uuid::parse_str(existing_uuid.as_str()) {
@@ -8911,7 +9586,7 @@ impl MainWindow {
         else {
             Uuid::new_v4()
         };
-        let riff_arrangement_blade_glade_src = include_str!("riff_arrangement_blade.glade");
+        let riff_arrangement_blade_glade_src = include_str!("riff_arrangement_blade.ui");
 
 
         let riff_arrangement_blade = RiffArrangementBlade::from_string(riff_arrangement_blade_glade_src).unwrap();
@@ -8957,7 +9632,7 @@ impl MainWindow {
 
         // populate the riff_set_combobox
         if let Some(combobox_riff_sets_data) = riff_sets_data {
-            let riff_set_combobox: ComboBoxText = riff_arrangement_blade.riff_set_combobox.clone();
+            let riff_set_combobox: DropDown = riff_arrangement_blade.riff_set_combobox.clone();
             for (index, (riff_set_uuid, riff_set_name)) in combobox_riff_sets_data.iter().enumerate() {
                 riff_set_combobox.append(Some(riff_set_uuid.as_str()), format!("{}. {}", index + 1, riff_set_name.as_str()).as_str());
             }
@@ -8965,7 +9640,7 @@ impl MainWindow {
         else {
             match state_arc.lock() {
                 Ok(state) => {
-                    let riff_set_combobox: ComboBoxText = riff_arrangement_blade.riff_set_combobox.clone();
+                    let riff_set_combobox: DropDown = riff_arrangement_blade.riff_set_combobox.clone();
                     for (index, riff_set) in state.project().song().riff_sets().iter().enumerate() {
                         riff_set_combobox.append(Some(riff_set.uuid().as_str()), format!("{}. {}", index + 1, riff_set.name()).as_str());
                     }
@@ -8978,7 +9653,7 @@ impl MainWindow {
 
         // populate the riff_sequence_combobox
         if let Some(combobox_riff_sequences_data) = riff_sequences_data {
-            let riff_sequence_combobox: ComboBoxText = riff_arrangement_blade.riff_sequence_combobox.clone();
+            let riff_sequence_combobox: DropDown = riff_arrangement_blade.riff_sequence_combobox.clone();
             for (index, (riff_sequence_uuid, riff_sequence_name)) in combobox_riff_sequences_data.iter().enumerate() {
                 riff_sequence_combobox.append(Some(riff_sequence_uuid.as_str()), format!("{}. {}", index + 1, riff_sequence_name.as_str()).as_str());
             }
@@ -8986,7 +9661,7 @@ impl MainWindow {
         else {
             match state_arc.lock() {
                 Ok(state) => {
-                    let riff_sequence_combobox: ComboBoxText = riff_arrangement_blade.riff_sequence_combobox.clone();
+                    let riff_sequence_combobox: DropDown = riff_arrangement_blade.riff_sequence_combobox.clone();
                     for (index, riff_sequence) in state.project().song().riff_sequences().iter().enumerate() {
                         riff_sequence_combobox.append(Some(riff_sequence.uuid().as_str()), format!("{}. {}", index + 1, riff_sequence.name()).as_str());
                     }
@@ -8999,7 +9674,7 @@ impl MainWindow {
 
         // populate the riff_grid_combobox
         if let Some(combobox_riff_grids_data) = riff_grids_data {
-            let riff_grid_combobox: ComboBoxText = riff_arrangement_blade.riff_grid_combobox.clone();
+            let riff_grid_combobox: DropDown = riff_arrangement_blade.riff_grid_combobox.clone();
             for (index, (riff_grid_uuid, riff_grid_name)) in combobox_riff_grids_data.iter().enumerate() {
                 riff_grid_combobox.append(Some(riff_grid_uuid.as_str()), format!("{}. {}", index + 1, riff_grid_name.as_str()).as_str());
             }
@@ -9007,7 +9682,7 @@ impl MainWindow {
         else {
             match state_arc.lock() {
                 Ok(state) => {
-                    let riff_grid_combobox: ComboBoxText = riff_arrangement_blade.riff_grid_combobox.clone();
+                    let riff_grid_combobox: DropDown = riff_arrangement_blade.riff_grid_combobox.clone();
                     for (index, riff_grid) in state.project().song().riff_grids().iter().enumerate() {
                         riff_grid_combobox.append(Some(riff_grid.uuid().as_str()), format!("{}. {}", index + 1, riff_grid.name()).as_str());
                     }
@@ -9022,7 +9697,7 @@ impl MainWindow {
         {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_set_combobox: ComboBoxText = riff_arrangement_blade.riff_set_combobox.clone();
+            let riff_set_combobox: DropDown = riff_arrangement_blade.riff_set_combobox.clone();
             riff_arrangement_blade.add_riff_set_btn.connect_clicked(move |_| {
                 if let Some(riff_set_uuid) = riff_set_combobox.active_id() {
                     let riff_arrangement_uuid = blade.widget_name().to_string();
@@ -9039,7 +9714,7 @@ impl MainWindow {
         {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_sequence_combobox: ComboBoxText = riff_arrangement_blade.riff_sequence_combobox.clone();
+            let riff_sequence_combobox: DropDown = riff_arrangement_blade.riff_sequence_combobox.clone();
             riff_arrangement_blade.add_riff_sequence_btn.connect_clicked(move |_| {
                 if let Some(riff_sequence_uuid) = riff_sequence_combobox.active_id().as_ref() {
                     let riff_arrangement_uuid = blade.widget_name().to_string();
@@ -9056,7 +9731,7 @@ impl MainWindow {
         {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_grid_combobox: ComboBoxText = riff_arrangement_blade.riff_grid_combobox.clone();
+            let riff_grid_combobox: DropDown = riff_arrangement_blade.riff_grid_combobox.clone();
             riff_arrangement_blade.add_riff_grid_btn.connect_clicked(move |_| {
                 if let Some(riff_grid_uuid) = riff_grid_combobox.active_id().as_ref() {
                     let riff_arrangement_uuid = blade.widget_name().to_string();
@@ -9083,9 +9758,9 @@ impl MainWindow {
                         if active_id.to_string() == riff_arrangement_uuid {
                             if let Some(active_position) = riff_arrangements_combobox.active() {
                                 // remove the riff arrangement from the arrangements_combobox
-                                gtk::prelude::ComboBoxTextExt::remove(&riff_arrangements_combobox, active_position as i32);
+                                riff_arrangements_combobox.remove(active_position as i32);
                                 // set the first riff arrangement in the arrangements_combobox as visible
-                                if riff_arrangements_combobox.children().len() > 0 {
+                                if riff_arrangements_combobox.len() > 0 {
                                     riff_arrangements_combobox.set_active(Some(0));
                                 }
                             }
@@ -9105,7 +9780,7 @@ impl MainWindow {
         {
             let blade = riff_arrangement_blade.riff_arrangement_blade.clone();
             let tx_from_ui = tx_from_ui.clone();
-            let riff_arrangements_box = riff_arrangements_box.clone();
+            let _riff_arrangements_box = riff_arrangements_box.clone();
             // let selected_track_style_provider = selected_track_style_provider.clone();
             riff_arrangement_blade.riff_arrangement_blade_play.connect_clicked(move |_| {
                 let riff_arrangement_uuid = blade.widget_name().to_string();
@@ -9113,7 +9788,7 @@ impl MainWindow {
                 // for child in riff_arrangements_box.children() {
                 //     child.style_context().remove_provider(&selected_track_style_provider);
                 //     if child.widget_name() == riff_arrangement_uuid {
-                //         child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                //         child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                 //     }
                 // }
 
@@ -9135,7 +9810,7 @@ impl MainWindow {
                 for child in riff_arrangements_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == riff_arrangement_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                     }
                 }
 
@@ -9157,7 +9832,7 @@ impl MainWindow {
                 for child in riff_arrangements_box.children() {
                     child.style_context().remove_provider(&selected_track_style_provider);
                     if child.widget_name() == riff_arrangement_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
+                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
                     }
                 }
 
@@ -9169,7 +9844,7 @@ impl MainWindow {
         }
 
         if !visible {
-            riff_arrangement_blade.riff_arrangement_blade.hide();
+            riff_arrangement_blade.riff_arrangement_blade.set_visible(false);
         }
 
         riff_arrangement_blade
@@ -9177,27 +9852,24 @@ impl MainWindow {
 
     pub fn start(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let css_provider = CssProvider::new();
-        let freedom_daw_style = include_bytes!("daw_style.css");
-        css_provider.load_from_data(freedom_daw_style).expect("Couldn't load CSS");
-        gtk::StyleContext::add_provider_for_screen(
-            &gdk::Screen::default().expect("Error adding css provider."),
+        let freedom_daw_style = include_str!("daw_style.css");
+        css_provider.load_from_data(freedom_daw_style);
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::prelude::RootExt::display(&self.ui.wnd_main),
             &css_provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
         glib::set_application_name("DAW");
-        self.ui.wnd_main.set_wmclass("DAW", "DAW");
         {
-            self.ui.wnd_main.connect_delete_event(move |_, _| {
+            self.ui.wnd_main.connect_close_request(move |_window| {
                 match tx_from_ui.send(DAWEvents::Shutdown) {
                     Ok(_) => {}
                     Err(_) => {}
                 }
-
-                gtk::main_quit();
-                Inhibit(false)
+                glib::Propagation::Proceed
             });
         }
-        self.ui.wnd_main.show();
+        self.ui.wnd_main.set_visible(true);
     }
 
     pub fn add_riff_sequence_riff_set_blade(
@@ -9212,12 +9884,12 @@ impl MainWindow {
         state_arc: Arc<Mutex<DAWState>>,
     ) {
         // find the riff item box
-        let mut riff_set_boxes = self.find_riff_sequence_riff_set_boxes();
+        let riff_set_boxes = self.find_riff_sequence_riff_set_boxes();
 
         // if there is a riff set box add a new blade to it and populate a map of beat grids
         if let Some((riff_set_heads_box, riff_sets_box)) = riff_set_boxes {
             let riff_set_beat_grids: Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>> = Arc::new(Mutex::new(HashMap::new()));
-            let (riff_set_blade_head, riff_set_blade_drawing_areas, blade_box) = MainWindow::add_riff_set_blade(
+            let (riff_set_blade_head, riff_set_blade_drawing_areas, _blade_box) = MainWindow::add_riff_set_blade(
                 tx_from_ui.clone(),
                 riff_sets_box.clone(),
                 riff_set_heads_box.clone(),
@@ -9269,7 +9941,7 @@ impl MainWindow {
         state_arc: Arc<Mutex<DAWState>>,
     ) {
         // find the riff item box
-        let mut riff_item_box = self.find_riff_arrangement_riff_item_box();
+        let riff_item_box = self.find_riff_arrangement_riff_item_box();
 
         // if there is a riff set box add a new blade to it and populate a map of beat grids
         if let Some(riff_item_box) = riff_item_box {
@@ -9292,7 +9964,7 @@ impl MainWindow {
             Self::style_riff_arrangement_riff_set(&riff_set_blade_head, &riff_set_blade_drawing_areas);
 
             // move the new blade to the right position if there is a selection - find a selected blade if there is one and add it after that or just add it to the end of the list
-            let mut selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
+            let selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
             if let Some(selected_child_position) = selected_child_position {
                 riff_item_box.set_child_position(&blade_box, selected_child_position as i32 + 1);
             }
@@ -9311,12 +9983,12 @@ impl MainWindow {
         track_uuids: Vec<String>,
         selected_track_style_provider: CssProvider,
         riff_arrangement_vertical_adjustment: Adjustment,
-        riff_sequence_name: String,
+        _riff_sequence_name: String,
         state_arc: Arc<Mutex<DAWState>>,
         state: &DAWState,
     ) {
         // find the riff item box
-        let mut riff_item_box = self.find_riff_arrangement_riff_item_box();
+        let riff_item_box = self.find_riff_arrangement_riff_item_box();
 
         // if there is a riff set box add a new blade to it and populate a map of beat grids
         if let Some(riff_item_box) = riff_item_box {
@@ -9339,19 +10011,19 @@ impl MainWindow {
             );
 
             // move the new blade to the right position if there is a selection - find a selected blade if there is one and add it after that or just add it to the end of the list
-            let mut selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
+            let selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
             if let Some(selected_child_position) = selected_child_position {
                 riff_item_box.set_child_position(&riff_sequence_blade.riff_sequence_blade, selected_child_position as i32 + 1);
             }
 
             let mut riff_sequence_blade_width = 0;
-            let mut riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
+            let riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
             if let Some(riff_sequence) = state.project().song().riff_sequences().iter().find(|current_riff_sequence| current_riff_sequence.uuid() == riff_sequence_uuid.to_string()) {
                 riff_sequence_blade.riff_sequence_name_entry.set_text(riff_sequence.name());
 
                 for riff_set_reference in riff_sequence.riff_sets().iter() {
                     if let Some(riff_set) = state.project().song().riff_sets().iter().find(|current_riff_set| current_riff_set.uuid() == riff_set_reference.item_uuid().to_string()) {
-                        let (riff_set_blade_head, riff_set_blade_drawing_areas, _) = MainWindow::add_riff_set_blade(
+                        let (riff_set_blade_head, _riff_set_blade_drawing_areas, _) = MainWindow::add_riff_set_blade(
                             tx_from_ui.clone(),
                             riff_sequence_blade.riff_set_box.clone(),
                             riff_sequence_blade.riff_set_head_box.clone(),
@@ -9384,7 +10056,7 @@ impl MainWindow {
         riff_arrangement_uuid: String,
         riff_grid_uuid: String,
         item_uuid: String,
-        track_uuids: Vec<String>,
+        _track_uuids: Vec<String>,
         selected_track_style_provider: CssProvider,
         riff_arrangement_vertical_adjustment: Adjustment,
         riff_grid_name: String,
@@ -9392,10 +10064,10 @@ impl MainWindow {
         state: &DAWState,
     ) {
         // find the riff item box
-        let mut riff_item_box = self.find_riff_arrangement_riff_item_box();
+        let riff_item_box = self.find_riff_arrangement_riff_item_box();
 
         // if there is a riff set box add a new blade to it and populate a map of beat grids
-        let mut riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
+        let riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
         if let Some(riff_item_box) = riff_item_box {
             let mut riff_sets = vec![];
             for riff_set in state.project().song().riff_sets().iter() {
@@ -9416,7 +10088,7 @@ impl MainWindow {
             riff_grid_blade.riff_grid_name_entry.set_text(riff_grid_name.as_str());
 
             // move the new blade to the right position if there is a selection - find a selected blade if there is one and add it after that or just add it to the end of the list
-            let mut selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
+            let selected_child_position = Self::get_selected_riff_item_position(&riff_item_box);
             if let Some(selected_child_position) = selected_child_position {
                 riff_item_box.set_child_position(&riff_grid_blade.riff_grid_blade, selected_child_position as i32 + 1);
             }
@@ -9433,7 +10105,8 @@ impl MainWindow {
 
     pub fn style_riff_arrangement_riff_set(riff_set_blade_head: &RiffSetBladeHead, riff_set_blade_drawing_areas: &RiffSetBlade) {
         riff_set_blade_head.riff_set_blade.set_margin_bottom(33);
-        riff_set_blade_head.riff_set_blade.set_height_request(riff_set_blade_head.riff_set_blade.height_request() - 40);
+        let current_height = riff_set_blade_head.riff_set_blade.height_request();
+        riff_set_blade_head.riff_set_blade.set_height_request((current_height - 40).max(-1));
         riff_set_blade_head.riff_set_blade.set_width_request(69);
         riff_set_blade_drawing_areas.riff_set_box.set_width_request(69);
     }
@@ -9442,10 +10115,10 @@ impl MainWindow {
         riff_set_blade_head.riff_set_blade.set_margin_bottom(0);
         riff_set_blade_head.riff_set_blade.set_margin_bottom(0);
         riff_set_blade_head.riff_set_blade.set_height_request(20);
-        riff_set_blade_head.riff_set_blade_play.hide();
-        riff_set_blade_head.riff_set_select_btn.hide();
-        riff_set_blade_head.riff_set_blade_delete.hide();
-        riff_set_blade_head.riff_set_drag_btn.hide();
+        riff_set_blade_head.riff_set_blade_play.set_visible(false);
+        riff_set_blade_head.riff_set_select_btn.set_visible(false);
+        riff_set_blade_head.riff_set_blade_delete.set_visible(false);
+        riff_set_blade_head.riff_set_drag_btn.set_visible(false);
     }
 
     pub fn get_selected_riff_item_position(riff_item_box: &Box) -> Option<usize> {
@@ -9765,7 +10438,7 @@ impl MainWindow {
         let midi_input_devices: Vec<String> = state.midi_devices();
 
         let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
-        let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
         for key in instrument_keys.iter() {
             if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
                 let adjusted_key = key.replace(char::from(0), "");
@@ -9775,7 +10448,7 @@ impl MainWindow {
         }
 
         let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
-        let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
         for key in effect_keys.iter() {
             if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
                 let adjusted_key = key.replace(char::from(0), "");
@@ -9850,11 +10523,12 @@ impl MainWindow {
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
-                        let track_midi_routing_panel_glade_src = include_str!("track_midi_routing_panel.glade");
+                        let track_midi_routing_panel_glade_src = include_str!("track_midi_routing_panel.ui");
                         let track_midi_routing_panel: TrackMidiRoutingPanel = TrackMidiRoutingPanel::from_string(track_midi_routing_panel_glade_src).unwrap();
+                        Self::populate_midi_routing_panel_combos(&track_midi_routing_panel);
                         let track_midi_routing_scrolled_box = midi_routing_dialogue.track_midi_routing_scrolled_box.clone();
 
-                        track_midi_routing_scrolled_box.add(&track_midi_routing_panel.track_midi_routing_panel);
+                        track_midi_routing_scrolled_box.append(&track_midi_routing_panel.track_midi_routing_panel);
                         Self::setup_track_midi_routing_panel(track_midi_routing_panel, route.clone(), route.description.clone(), tx_from_ui.clone(), track_midi_routing_scrolled_box, track.uuid())
                     }
                 }
@@ -9863,11 +10537,12 @@ impl MainWindow {
             match self.track_audio_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(audio_routing_dialogue) => {
                     for route in track.audio_routings().iter() {
-                        let track_audio_routing_panel_glade_src = include_str!("track_audio_routing_panel.glade");
+                        let track_audio_routing_panel_glade_src = include_str!("track_audio_routing_panel.ui");
                         let track_audio_routing_panel: TrackAudioRoutingPanel = TrackAudioRoutingPanel::from_string(track_audio_routing_panel_glade_src).unwrap();
+                        Self::populate_audio_routing_panel_combos(&track_audio_routing_panel);
                         let track_audio_routing_scrolled_box = audio_routing_dialogue.track_audio_routing_scrolled_box.clone();
 
-                        track_audio_routing_scrolled_box.add(&track_audio_routing_panel.track_audio_routing_panel);
+                        track_audio_routing_scrolled_box.append(&track_audio_routing_panel.track_audio_routing_panel);
                         Self::setup_track_audio_routing_panel(track_audio_routing_panel, route.clone(), route.description.clone(), tx_from_ui.clone(), track_audio_routing_scrolled_box, track.uuid())
                     }
                 }
@@ -9977,7 +10652,7 @@ impl MainWindow {
                         (0, &sample.name().to_string()),
                         (1, &sample_uuid),
                     ]);
-                    self.ui.sample_roll_available_samples.show_all();
+                    self.ui.sample_roll_available_samples.set_visible(true);
                 }
             }
         }
@@ -10007,7 +10682,7 @@ impl MainWindow {
         tx_from_ui: Sender<DAWEvents>,
         state: &mut DAWState,
         state_arc: Arc<Mutex<DAWState>>,
-        mut track_uuids: Vec<String>,
+        track_uuids: Vec<String>,
         restore_selected: bool
     ) {
         let selected_index = self.ui.arrangements_combobox.active();
@@ -10033,7 +10708,7 @@ impl MainWindow {
             let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
             let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
             let riff_grids: Vec<(String, String)> = state.project().song().riff_grids().iter().map(|riff_grid| (riff_grid.uuid(), riff_grid.name().to_string())).collect();
-            let mut riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
+            let riff_item_beat_grids  = Arc::new(Mutex::new(HashMap::new()));
             self.setup_riff_arrangement(
                 riff_arrangement,
                 self.ui.clone(),
@@ -10096,7 +10771,7 @@ impl MainWindow {
         tx_from_ui: &Sender<DAWEvents>,
         state: &mut DAWState,
         state_arc: &Arc<Mutex<DAWState>>,
-        mut track_uuids: &mut Vec<String>,
+        track_uuids: &mut Vec<String>,
         restore_selected: bool
     ) {
         let selected_index = self.ui.sequence_combobox.active();
@@ -10129,7 +10804,7 @@ impl MainWindow {
                 Some(&self.ui.riff_sequence_vertical_adjustment),
             );
 
-            riff_sequence_blade.riff_sequence_blade.hide();
+            riff_sequence_blade.riff_sequence_blade.set_visible(false);
 
             self.ui.sequence_combobox.append(Some(riff_sequence.uuid().as_str()), riff_sequence.name());
 
@@ -10143,9 +10818,9 @@ impl MainWindow {
 
             // add the sequence to the sequences data
             // state.
-            let mut riff_sequence_riff_set_beat_grids = Arc::new(Mutex::new(HashMap::new()));
+            let riff_sequence_riff_set_beat_grids = Arc::new(Mutex::new(HashMap::new()));
             for riff_set_reference in riff_sequence.riff_sets().iter() {
-                let (_, riff_set_blade, _) = MainWindow::add_riff_set_blade(
+                let (_, _riff_set_blade, _) = MainWindow::add_riff_set_blade(
                     tx_from_ui.clone(),
                     riff_sequence_blade.riff_set_box.clone(),
                     riff_sequence_blade.riff_set_head_box.clone(),
@@ -10200,7 +10875,7 @@ impl MainWindow {
         }
     }
 
-    pub fn update_riff_sets(&mut self, tx_from_ui: &Sender<DAWEvents>, state: &mut DAWState, state_arc: &Arc<Mutex<DAWState>>, mut track_uuids: &mut Vec<String>) {
+    pub fn update_riff_sets(&mut self, tx_from_ui: &Sender<DAWEvents>, state: &mut DAWState, state_arc: &Arc<Mutex<DAWState>>, track_uuids: &mut Vec<String>) {
         // remove the current riff sets
         for widget in self.ui.riff_sets_box.children().iter() {
             self.ui.riff_sets_box.remove(widget);
@@ -10282,7 +10957,7 @@ impl MainWindow {
 
                         // re-populate the track instrument choice
                         track_instrument_choice.remove_all();
-                        let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+                        let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
                         for key in instrument_keys.iter() {
                             if let Some(value) = instrument_plugins.get(*key) {
                                 let adjusted_key = key.replace(char::from(0), "");
@@ -10311,7 +10986,7 @@ impl MainWindow {
                                 }
 
                                 track_instrument_choice.unblock_signal(signal_handler_id);
-                                track_instrument_choice.show_all();
+                                track_instrument_choice.set_visible(true);
                                 track_instrument_choice.activate();
                             }
                         }
@@ -10342,7 +11017,7 @@ impl MainWindow {
         // re-populate the track effects choice
         let track_effects_choice = track_details_dialogue.track_effects_choice.clone();
         track_effects_choice.remove_all();
-        let effects_keys = effects_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+        let effects_keys = effects_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
         for key in effects_keys.iter() {
             if let Some(value) = effects_plugins.get(*key) {
                 let adjusted_key = key.replace(char::from(0), "");
@@ -10361,8 +11036,8 @@ impl MainWindow {
                         (0, &effect.name().to_string()),
                         (1, &effect.file().to_string()),
                         (2, &effect.uuid().to_string()),
-                        (3, &(RGBA::black())),
-                        (4, &(RGBA::white())),
+                        (3, &(gdk4::RGBA::BLACK)),
+                        (4, &(gdk4::RGBA::WHITE)),
                     ]);
                 }
                 track_effects_list.set_model(Some(model));
@@ -10375,7 +11050,7 @@ impl MainWindow {
             let active_instrument_id = panel.track_instrument_choice.active_id();
             panel.track_instrument_choice.remove_all();
 
-            let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+            let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
             for key in instrument_keys.iter() {
                 if let Some(value) = instrument_plugins.get(*key) {
                     let adjusted_key = key.replace(char::from(0), "");
@@ -10391,13 +11066,13 @@ impl MainWindow {
                         debug!("Failed to set the active id for: track={}, instrument={}", track_uuid, active_instrument_id.as_str());
                     }
                     panel.track_instrument_choice.unblock_signal(signal_handler_id);
-                    panel.track_instrument_choice.show_all();
+                    panel.track_instrument_choice.set_visible(true);
                     panel.track_instrument_choice.activate();
                 }
             }
 
             panel.track_effects_choice.remove_all();
-            let effect_keys = effect_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, value)| key).collect_vec();
+            let effect_keys = effect_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
             for key in effect_keys.iter() {
                 if let Some(value) = effect_plugins.get(*key) {
                     panel.track_effects_choice.append(Some(key.replace(char::from(0), "").as_str()), value.replace(char::from(0), "").as_str());
@@ -10519,8 +11194,8 @@ impl MainWindow {
                                     if let Some(blade_box_grid) = blade_box_grid_widget.dynamic_cast_ref::<Grid>() {
                                         for child in blade_box_grid.children().iter() {
                                             if child.widget_name() == combo_box_widget_name {
-                                                if let Some(item_combobox) = child.dynamic_cast_ref::<ComboBoxText>() {
-                                                    let item_combobox: &ComboBoxText = item_combobox;
+                                                if let Some(item_combobox) = child.dynamic_cast_ref::<DropDown>() {
+                                                    let item_combobox: &DropDown = item_combobox;
                                                     item_combobox.remove_all();
                                                     for (index, (uuid, name)) in items.iter().enumerate() {
                                                         item_combobox.append(Some(uuid), format!("{}. {}", index + 1, name).as_str());
@@ -11173,7 +11848,7 @@ impl MainWindow {
                 if let Ok(riff_arrangement_view_riff_set_ref_beat_grids) = self.riff_arrangement_view_riff_set_ref_beat_grids.lock() {
                     if let Some(riff_arrangement_riff_item_beat_grids) = riff_arrangement_view_riff_set_ref_beat_grids.get(&riff_arrangement_uuid.to_string()) {
                         if let Ok(riff_arrangement_riff_item_beat_grids) = riff_arrangement_riff_item_beat_grids.lock() {
-                            for (key, thing) in riff_arrangement_riff_item_beat_grids.iter() {
+                            for (key, _thing) in riff_arrangement_riff_item_beat_grids.iter() {
                                 debug!("riff_arrangement_riff_item_beat_grids key={}", key);
                             }
                             let playing_key_to_match = if let Some(playing_riff_sequence) = playing_riff_sequence.clone() {
@@ -11182,7 +11857,7 @@ impl MainWindow {
                             else {
                                 playing_riff_item.uuid()
                             };
-                            if let Some((key, playing_riff_item_beat_grids)) = riff_arrangement_riff_item_beat_grids.iter().find(|(key, value)| key.contains(playing_key_to_match.as_str())) {
+                            if let Some((_key, playing_riff_item_beat_grids)) = riff_arrangement_riff_item_beat_grids.iter().find(|(key, _value)| key.contains(playing_key_to_match.as_str())) {
                                 for (_, track_beat_grid) in playing_riff_item_beat_grids.iter() {
                                     if let Ok(mut beat_grid) = track_beat_grid.lock() {
                                         beat_grid.set_track_cursor_time_in_beats(adjusted_play_position_in_beats);
@@ -11195,7 +11870,7 @@ impl MainWindow {
                             else {
                                 before_riff_item.uuid()
                             };
-                            if let Some((key, playing_before_riff_item_beat_grids)) = riff_arrangement_riff_item_beat_grids.iter().find(|(key, value)| key.contains(before_key_to_match.as_str())) {
+                            if let Some((_key, playing_before_riff_item_beat_grids)) = riff_arrangement_riff_item_beat_grids.iter().find(|(key, _value)| key.contains(before_key_to_match.as_str())) {
                                 for (_, track_beat_grid) in playing_before_riff_item_beat_grids.iter() {
                                     if let Ok(mut beat_grid) = track_beat_grid.lock() {
                                         beat_grid.set_track_cursor_time_in_beats(0.0);
@@ -11516,11 +12191,11 @@ impl MainWindow {
         riff_set_heads_box.drag_dest_set(
             DestDefaults::ALL, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
 
         riff_set_heads_box.connect_drag_motion(move |_, _ , x , _y, _| {
-            if let Some(window) = riff_sets_view_port.window() {
-                let view_port_width = window.width();
+            {
+                let view_port_width = riff_sets_view_port.allocation().width();
                 let horizontal_adjustment_position = riff_set_horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -11543,10 +12218,10 @@ impl MainWindow {
                     let riff_set_uuid = riff_set_uuid.to_string();
                     // get the child at x and y
                     for child in riff_set_heads_box.children().iter() {
-                        if child.allocation().x <= x && 
-                            x <= (child.allocation().x + child.allocation().width) &&
-                            child.allocation().y <= y && 
-                            y <= (child.allocation().y + child.allocation().height) {
+                        if child.allocation().x() <= x && 
+                            x <= (child.allocation().x() + child.allocation().width()) &&
+                            child.allocation().y() <= y && 
+                            y <= (child.allocation().y() + child.allocation().height()) {
                             let drop_zone_child_position = riff_set_heads_box.child_position(child);
                             
                             // move the dropped child to the found position
@@ -11598,11 +12273,11 @@ impl MainWindow {
         riff_items_box.drag_dest_set(
             DestDefaults::ALL,
             DRAG_N_DROP_TARGETS.as_ref(),
-            gdk::DragAction::COPY);
+            gdk4::DragAction::COPY);
 
         riff_items_box.connect_drag_motion(move |_, _, x, _y, _| {
-            if let Some(window) = riff_items_view_port.window() {
-                let view_port_width = window.width();
+            {
+                let view_port_width = riff_items_view_port.allocation().width();
                 let horizontal_adjustment_position = riff_items_horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -11625,10 +12300,10 @@ impl MainWindow {
                     let riff_item_uuid = riff_item_uuid.to_string();
                     // get the child at x and y
                     for drop_zone_child in riff_items_box.children().iter() {
-                        if drop_zone_child.allocation().x <= x &&
-                            x <= (drop_zone_child.allocation().x + drop_zone_child.allocation().width) &&
-                            drop_zone_child.allocation().y <= y &&
-                            y <= (drop_zone_child.allocation().y + drop_zone_child.allocation().height) {
+                        if drop_zone_child.allocation().x() <= x &&
+                            x <= (drop_zone_child.allocation().x() + drop_zone_child.allocation().width()) &&
+                            drop_zone_child.allocation().y() <= y &&
+                            y <= (drop_zone_child.allocation().y() + drop_zone_child.allocation().height()) {
                             let drop_zone_child_position = riff_items_box.child_position(drop_zone_child);
 
                             // move the dropped child to the found position
@@ -11659,12 +12334,12 @@ impl MainWindow {
         item_box.drag_dest_set(
             DestDefaults::ALL, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY
+            gdk4::DragAction::COPY
         );
 
         item_box.connect_drag_motion(move |_, _ , x , _y, _| {
-            if let Some(window) = view_port.window() {
-                let view_port_width = window.width();
+            {
+                let view_port_width = view_port.allocation().width();
                 let horizontal_adjustment_position = horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -11685,10 +12360,10 @@ impl MainWindow {
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in item_box.children().iter() {
-                    if child.allocation().x <= x && 
-                        x <= (child.allocation().x + child.allocation().width) &&
-                        child.allocation().y <= y && 
-                        y <= (child.allocation().y + child.allocation().height) {
+                    if child.allocation().x() <= x && 
+                        x <= (child.allocation().x() + child.allocation().width()) &&
+                        child.allocation().y() <= y && 
+                        y <= (child.allocation().y() + child.allocation().height()) {
                         let drop_zone_child_position = item_box.child_position(child);
                         
                         // move the dropped child to the found position
@@ -11715,12 +12390,12 @@ impl MainWindow {
         vertical_box.drag_dest_set(
             DestDefaults::ALL, 
             DRAG_N_DROP_TARGETS.as_ref(), 
-            gdk::DragAction::COPY
+            gdk4::DragAction::COPY
         );
 
         vertical_box.connect_drag_motion(move |_, _ , x , y, _| {
-            if let Some(window) = view_port.window() {
-                let view_port_width = window.width();
+            {
+                let view_port_width = view_port.allocation().width();
                 let vertical_adjustment_position = vertical_adjustment.value() as i32;
 
                 debug!("Dragging a track: view_port_width={}, tracks_vertical_adjustment_position={}, x={}, y={}, tracks_vertical_adjustment_position + view_port_width - y={}, y - tracks_vertical_adjustment_position={}", view_port_width, vertical_adjustment.value(), x, y, vertical_adjustment_position + view_port_width - y, y - vertical_adjustment_position);
@@ -11742,10 +12417,10 @@ impl MainWindow {
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in vertical_box.children().iter() {
-                    if child.allocation().x <= x && 
-                        x <= (child.allocation().x + child.allocation().width) &&
-                        child.allocation().y <= y && 
-                        y <= (child.allocation().y + child.allocation().height) {
+                    if child.allocation().x() <= x && 
+                        x <= (child.allocation().x() + child.allocation().width()) &&
+                        child.allocation().y() <= y && 
+                        y <= (child.allocation().y() + child.allocation().height()) {
                         let drop_zone_child_position = vertical_box.child_position(child);
                         
                         // move the dropped child to the found position

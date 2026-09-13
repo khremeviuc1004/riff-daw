@@ -1,8 +1,4 @@
-use std::ffi::CString;
-use std::os::raw::c_char;
 use std::sync::mpsc::Sender;
-use cxx::UniquePtr;
-use log::debug;
 use crate::event::AudioPluginHostOutwardEvent;
 
 #[cxx::bridge(namespace = "org::hremeviuc")]

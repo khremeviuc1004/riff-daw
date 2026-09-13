@@ -1,9 +1,7 @@
 use std::{collections::HashMap, sync::{Arc, mpsc::Sender, Mutex}};
 use std::{path::Path};
-use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use crossbeam_channel::SendError;
 use log::*;
 
 use pathsearch::find_executable_in_path;
@@ -33,7 +31,7 @@ pub fn create_vst24_audio_plugin(
     time_signature_denominator: i32,
 ) -> (Arc<Mutex<VstHost>>, PluginInstance) {
     let mut path_buf = PathBuf::new();
-    let mut path = Path::new(library_path.clone());
+    let mut path = Path::new(library_path);
     let host = Arc::new(Mutex::new(VstHost::new(
         track_uuid, 
         match &sub_plugin_id {
@@ -56,7 +54,7 @@ pub fn create_vst24_audio_plugin(
     if !path.exists() || !path.is_file() {
         if let Ok(vst_path) = std::env::var("VST_PATH") {
             path_buf.push(vst_path.as_str());
-            path_buf.push(library_path.clone());
+            path_buf.push(library_path);
             path = path_buf.as_path();
         }
     }
@@ -266,7 +264,7 @@ pub fn create_vst3_audio_plugin(
     time_signature_numerator: i32,
     time_signature_denominator: i32,
  ) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
-    let path = Path::new(audio_plugin_path.clone());
+    let path = Path::new(audio_plugin_path);
 
     debug!("Loading {}...", path.to_str().unwrap());
     match plugin_libraries.lock() {

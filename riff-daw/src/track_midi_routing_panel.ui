@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface>
+  <requires lib="gtk" version="4.0" />
+  <object class="GtkFrame" id="track_midi_routing_panel">
+    <property name="visible">True</property>
+    <property name="label-xalign">0</property>
+    <child>
+      <object class="GtkGrid">
+        <property name="visible">True</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Midi Channel</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDropDown" id="track_midi_routing_midi_channel_combobox_text">
+            <property name="visible">True</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Track</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="track_midi_routing_send_to_track_label">
+            <property name="visible">True</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="halign">start</property>
+            <property name="label" translatable="yes">Note Range From</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDropDown" id="track_midi_routing_note_from_combobox_text">
+            <property name="visible">True</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="label" translatable="yes">To</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDropDown" id="track_midi_routing_note_to_combobox_text">
+            <property name="visible">True</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="track_midi_routing_delete_button">
+            <property name="visible">True</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <placeholder />
+        </child>
+        <child>
+          <placeholder />
+        </child>
+        <child>
+          <placeholder />
+        </child>
+        <child>
+          <placeholder />
+        </child>
+      </object>
+    </child>
+    <child type="label_item">
+      <placeholder />
+    </child>
+  </object>
+</interface>

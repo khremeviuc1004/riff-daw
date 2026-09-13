@@ -400,7 +400,7 @@ impl HistoryAction for RiffDeleteNoteAction {
                                                     TrackEvent::Note(note) => note.note() == self.note() && note.position() <= self.position() && self.position() <= (note.position() + note.length()),
                                                     _ => false,
                                                 });
-                                                if let Some((index, item)) = note {
+                                                if let Some((index, _item)) = note {
                                                     self.deleted_note = Some(riff.events_mut().remove(index));
                                                 }
 
@@ -1130,7 +1130,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
-                                        let mut riff_changed = false;
+                                        let riff_changed = false;
 
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
@@ -1399,7 +1399,7 @@ impl RiffAdd {
         id: Uuid,
         name: String,
         duration: f64,
-        state: &mut Arc<Mutex<DAWState>>,
+        _state: &mut Arc<Mutex<DAWState>>,
         track_id: Option<String>,
     ) -> Self {
         Self {

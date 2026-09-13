@@ -1,0 +1,111 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface>
+  <requires lib="gtk" version="4.0" />
+  <object class="GtkImage" id="copy_symbol">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="delete_symbol">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="image1">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="image2">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="image3">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="play_symbol">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkImage" id="record_symbol">
+    <property name="visible">True</property>
+  </object>
+  <object class="GtkFrame" id="riff_set_blade">
+    <property name="visible">True</property>
+    <property name="vexpand">True</property>
+    <property name="label-xalign">0</property>
+    <child>
+      <object class="GtkBox" id="riff_set_blade_box">
+        <property name="name">riff_set_blade_alignment_box</property>
+        <property name="visible">True</property>
+        <property name="margin-start">2</property>
+        <property name="margin-end">2</property>
+        <property name="margin-bottom">3</property>
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkGrid" id="riff_set_blade_head_grid">
+            <property name="visible">True</property>
+            <property name="halign">start</property>
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkButton" id="riff_set_blade_record">
+                <property name="visible">True</property>
+                <property name="tooltip-text" translatable="yes">Record</property>
+                <property name="halign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_blade_copy">
+                <property name="visible">True</property>
+                <property name="tooltip-text" translatable="yes">Duplicate</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_blade_delete">
+                <property name="visible">True</property>
+                <property name="tooltip-text" translatable="yes">Delete</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkEntry" id="riff_set_name_entry">
+                <property name="width-request">10</property>
+                <property name="visible">True</property>
+                <property name="valign">start</property>
+                <property name="width-chars">9</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_blade_play">
+                <property name="visible">True</property>
+                <property name="tooltip-text" translatable="yes">Play</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_copy_to_track_view_btn">
+                <property name="visible">True</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_drag_btn">
+                <property name="visible">True</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_set_select_btn">
+                <property name="visible">True</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+              </object>
+            </child>
+            <child>
+              <placeholder />
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="label_item">
+      <placeholder />
+    </child>
+  </object>
+</interface>

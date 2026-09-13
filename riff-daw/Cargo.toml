@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gladis = "1.0.1"
-gdk = "0.14.3"
-gtk = "0.14.3"
-gio = "0.14.3"
+gtk4 = { version = "0.11", features = ["v4_16"] }
+gdk4 = "0.11"
+gdk4-x11 = "0.11"
+glib = "0.22"
+gio = "0.22"
 serde = { version = "1.0.132", features = ["derive"] }
 serde_json = { version = "1.0.73", features = ["preserve_order"] }
-cairo-rs = "0.14.9"
+cairo-rs = "0.22"
 jack = "0.10.0"
 rb = "0.4.1"
 vst = { path = "../lib/vst-rs" }

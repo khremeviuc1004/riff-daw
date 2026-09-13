@@ -1,8 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::convert::From;
-use std::ops::IndexMut;
 use std::sync::{Arc, Mutex};
-use crossbeam_channel::TrySendError;
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
 use rb::RbConsumer;
 use vst::api::{TimeInfo, TimeInfoFlags};
@@ -485,13 +483,13 @@ impl Audio {
             // TODO this would work better for track deletes if the track uuid was used as the key
             for (track_key, audio_consumer_details) in self.audio_consumers.iter_mut().enumerate() {
                 let consumer = audio_consumer_details.consumer();
-                if let Some(mut new_audio_block) = self.audio_block_pool.pop() {
+                if let Some(new_audio_block) = self.audio_block_pool.pop() {
                     self.audio_blocks.push(new_audio_block);
 
                     match consumer.read(&mut self.audio_blocks) {
                         Ok(read) => {
                             if read == 1 {
-                                if let Some(mut audio_block) = self.audio_blocks.pop() {
+                                if let Some(audio_block) = self.audio_blocks.pop() {
                                     if self.block_number_buffer.contains_key(&audio_block.block) {
                                         if let Some(tracks) = self.block_number_buffer.get_mut(&audio_block.block) {
                                             tracks.insert(track_key as i32, audio_block);
@@ -622,7 +620,7 @@ impl Audio {
                 Ok(read) => if read > 0 {
                     // debug!("Jack audio received some midi events: {}", read);
                     if let Some(midi_output_port) = midi_consumer_detail.midi_out_port_mut() {
-                        let mut midi_out_writer = midi_output_port.writer(process_scope.clone());
+                        let mut midi_out_writer = midi_output_port.writer(process_scope);
                         for count in 0..read {
                             let (frames, byte1, byte2, byte3, active) = self.jack_midi_buffer[count];
                             if active {
@@ -887,7 +885,7 @@ impl Audio {
 impl ProcessHandler for Audio {
     fn process(&mut self, client: &Client, process_scope: &ProcessScope) -> Control {
         if self.low_priority_processing_delay_counter >= self.low_priority_processing_delay_count {
-            self.handle_inward_events(client.clone());
+            self.handle_inward_events(client);
         }
 
         self.zero_jack_buffers(process_scope);

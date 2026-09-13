@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/../Cargo.toml" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="9bffdc9d-91d5-4cb1-b5e8-9404e0363740" name="Changes" comment="Created vst3_checker project.">
+      <change afterPath="$PROJECT_DIR$/../ardour/ardour_export_to_freedom_daw.lua" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../riff-daw/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../riff-daw/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../riff-daw/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vst3_checker.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../vst_checker/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../vst_checker/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../vst_checker/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../vst_checker/.idea/vst_checker.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/daw.glade" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/daw.glade" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/domain.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/domain.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/event.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/event.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/grid.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/grid.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/state.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/state.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/ui.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/ui.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../riff-daw/src/vst3cxxbridge.cc" beforeDir="false" afterPath="$PROJECT_DIR$/../riff-daw/src/vst3cxxbridge.cc" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:release" />
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;khremeviuc1004&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:khremeviuc1004/riff-daw.git&quot;,
+    &quot;accountId&quot;: &quot;0914b8ef-4434-4c84-bbd6-9f8c4f777c30&quot;
+  }
+}</component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="zniY6Lzc" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 8
+}</component>
+  <component name="ProjectId" id="2rBbmsyMBRUbO4nfaQAArm0qnKd" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Cargo.Run vst3_checker.executor&quot;: &quot;Debug&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/kevin/Desktop/Data/Personal/Development/Rust/riff-daw/vst_checker&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
+    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src" />
+      <recent name="$PROJECT_DIR$/include" />
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Cargo.Run vst3_checker">
+    <configuration name="Run clap_checker" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="run --package clap_checker --bin clap_checker" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run riff-daw" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="run --package riff-daw --bin riff-daw" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run vst3_checker" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="release" />
+      <option name="command" value="run --package vst3_checker --bin vst3_checker -- &quot;$USER_HOME$/.vst3/u-he/ACE.vst3&quot;" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run vst_checker" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="run --package vst_checker --bin vst_checker" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test riff-daw" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="test" />
+      <option name="command" value="test --workspace" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Run clap_checker" />
+      <item itemvalue="Cargo.Run riff-daw" />
+      <item itemvalue="Cargo.Run vst3_checker" />
+      <item itemvalue="Cargo.Run vst_checker" />
+      <item itemvalue="Cargo.Test riff-daw" />
+    </list>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="9bffdc9d-91d5-4cb1-b5e8-9404e0363740" name="Changes" comment="" />
+      <created>1736035577823</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1736035577823</updated>
+      <workItem from="1736035579015" duration="10354000" />
+      <workItem from="1736052668201" duration="1199000" />
+      <workItem from="1736111486710" duration="1381000" />
+      <workItem from="1736123050125" duration="2002000" />
+      <workItem from="1736210611958" duration="12279000" />
+      <workItem from="1736226909868" duration="4114000" />
+      <workItem from="1736284634754" duration="6834000" />
+      <workItem from="1736399615502" duration="740000" />
+      <workItem from="1736463239741" duration="878000" />
+      <workItem from="1737000910046" duration="30000" />
+    </task>
+    <task id="LOCAL-00001" summary="Created vst3_checker project.">
+      <option name="closed" value="true" />
+      <created>1736226038224</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1736226038224</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Created vst3_checker project." />
+    <option name="LAST_COMMIT_MESSAGE" value="Created vst3_checker project." />
+  </component>
+</project>

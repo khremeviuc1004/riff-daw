@@ -7,13 +7,13 @@ use std::sync::{Arc, Mutex, LazyLock};
 
 use cairo::glib::{BindingFlags, SignalHandlerId};
 use crossbeam_channel::Sender;
-use gdk4::{EventType, RGBA, ScrollDirection};
-use gtk4::{ResponseType, PolicyType, TreeStore, EntryCompletion};
-use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer, FileChooserAction, FileChooserWidget, FileFilter, Frame, glib, Grid, Label, ListStore, MenuButton, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, TreeView, Viewport, Widget, Window};
+use gdk4::{EventType, ScrollDirection};
+use gtk4::{ResponseType, PolicyType};
+use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorDialogButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer , FileChooserAction, FileFilter, Frame, glib, Grid, Label, ListView, MenuButton, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, Viewport, Widget, Window};
 
-use crate::combo_box_text_compat::ComboBoxTextCompat;
+use crate::combo_box_text_compat::{ComboItemObject, ComboBoxTextCompat};
 use crate::gladis4::FromGtk4Builder;
-use crate::gtk4_compat::{DestDefaults, FileChooserDialog, FileChooserWidgetCompat, GdkEventCompat, GtkBoxCompat, GtkContainerCompat, GtkDialogRunCompat, GtkDragSourceCompat, GtkDropDestCompat, RecentChooserMenuCompat, TargetEntry, TargetFlags, TreeModelValueCompat, WidgetEventCompat};
+use crate::gtk4_compat::{DestDefaults, FileChooserDialog, EmbeddedFileChooser, EmbeddedFileChooserCompat, FileChooserWidgetCompat, GdkEventCompat, GtkBoxCompat, GtkContainerCompat, GtkDialogRunCompat, GtkDragSourceCompat, GtkDropDestCompat, RecentChooserMenuCompat, TargetEntry, TargetFlags, WidgetEventCompat};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use log::*;
@@ -287,7 +287,8 @@ pub struct Ui {
     pub piano_roll_track_name: Label,
     pub piano_roll_riff_name: Label,
 
-    pub sample_library_file_chooser_widget: FileChooserWidget,
+    #[allow(deprecated)] // no GTK4 replacement for the embedded chooser widget
+    pub sample_library_file_chooser_widget: EmbeddedFileChooser,
     pub sample_library_add_sample_to_song_btn: Button,
 
     pub sample_roll_drawing_area: DrawingArea,
@@ -320,13 +321,14 @@ pub struct Ui {
     pub sample_roll_increase_sample_length_btn: Button,
     pub sample_roll_decrease_sample_length_btn: Button,
 
-    pub sample_roll_available_samples: TreeView,
+    pub sample_roll_available_samples: ListView,
     pub sample_roll_sample_browser_delete_btn: Button,
 
     pub sample_roll_track_name: Label,
     pub sample_roll_riff_name: Label,
 
-    pub scripting_file_chooser_widget: FileChooserWidget,
+    #[allow(deprecated)] // no GTK4 replacement for the embedded chooser widget
+    pub scripting_file_chooser_widget: EmbeddedFileChooser,
     pub scripting_script_text_view: TextView,
     pub scripting_console_output_text_view: TextView,
     pub scripting_console_input_text_view: TextView,
@@ -526,8 +528,8 @@ pub struct TrackDetailsDialogue {
     pub track_midi_channel_label: Label,
     pub track_midi_channel_choice: DropDown,
 
-    pub track_detail_track_colour_button: ColorButton,
-    pub track_detail_riff_colour_button: ColorButton,
+    pub track_detail_track_colour_button: ColorDialogButton,
+    pub track_detail_riff_colour_button: ColorDialogButton,
 
     pub track_send_midi_to_track_open_dialogue_button: Button,
     pub track_send_audio_to_track_open_dialogue_button: Button,
@@ -536,7 +538,7 @@ pub struct TrackDetailsDialogue {
     pub track_effects_choice: DropDown,
     pub track_effects_btns_label: Label,
     pub track_add_effect_button: Button,
-    pub track_effect_list: TreeView,
+    pub track_effect_list: ListView,
     pub track_effect_window_visibility_toggle_btn: Button,
     pub track_effect_delete_btn: Button,
     pub track_effects_scroll_window: ScrolledWindow,
@@ -637,8 +639,6 @@ pub struct RiffArrangementBlade {
     pub riff_items_view_port: Viewport,
     pub riff_arrangement_save_name_btn: Button,
     pub riff_arrangement_scrolled_window: ScrolledWindow,
-    pub riff_arrangement_riff_set_entry_tree_store: TreeStore,
-    pub riff_arrangement_riff_set_entry_completion: EntryCompletion,
 }
 
 #[derive(Clone)]
@@ -917,7 +917,7 @@ gtk4_builder_from!(Ui {
     mixer_dock_toggle_btn: ToggleButton,
     piano_roll_track_name: Label,
     piano_roll_riff_name: Label,
-    sample_library_file_chooser_widget: FileChooserWidget,
+    sample_library_file_chooser_widget: EmbeddedFileChooser,
     sample_library_add_sample_to_song_btn: Button,
     sample_roll_drawing_area: DrawingArea,
     sample_roll_ruler_drawing_area: DrawingArea,
@@ -942,11 +942,11 @@ gtk4_builder_from!(Ui {
     sample_roll_quantise_btn: Button,
     sample_roll_increase_sample_length_btn: Button,
     sample_roll_decrease_sample_length_btn: Button,
-    sample_roll_available_samples: TreeView,
+    sample_roll_available_samples: ListView,
     sample_roll_sample_browser_delete_btn: Button,
     sample_roll_track_name: Label,
     sample_roll_riff_name: Label,
-    scripting_file_chooser_widget: FileChooserWidget,
+    scripting_file_chooser_widget: EmbeddedFileChooser,
     scripting_script_text_view: TextView,
     scripting_console_output_text_view: TextView,
     scripting_console_input_text_view: TextView,
@@ -1101,15 +1101,15 @@ gtk4_builder_from!(TrackDetailsDialogue {
     track_midi_device_choice: DropDown,
     track_midi_channel_label: Label,
     track_midi_channel_choice: DropDown,
-    track_detail_track_colour_button: ColorButton,
-    track_detail_riff_colour_button: ColorButton,
+    track_detail_track_colour_button: ColorDialogButton,
+    track_detail_riff_colour_button: ColorDialogButton,
     track_send_midi_to_track_open_dialogue_button: Button,
     track_send_audio_to_track_open_dialogue_button: Button,
     track_effects_choice_label: Label,
     track_effects_choice: DropDown,
     track_effects_btns_label: Label,
     track_add_effect_button: Button,
-    track_effect_list: TreeView,
+    track_effect_list: ListView,
     track_effect_window_visibility_toggle_btn: Button,
     track_effect_delete_btn: Button,
     track_effects_scroll_window: ScrolledWindow,
@@ -1203,8 +1203,6 @@ gtk4_builder_from!(RiffArrangementBlade {
     riff_items_view_port: Viewport,
     riff_arrangement_save_name_btn: Button,
     riff_arrangement_scrolled_window: ScrolledWindow,
-    riff_arrangement_riff_set_entry_tree_store: TreeStore,
-    riff_arrangement_riff_set_entry_completion: EntryCompletion,
 });
 
 gtk4_builder_from!(RiffArrangementRiffSetBlade {
@@ -1248,6 +1246,13 @@ gtk4_builder_from!(TrackAudioRoutingPanel {
 });
 
 impl MainWindow {
+
+    fn hit_test_in(child: &Widget, container: &impl IsA<Widget>, x: i32, y: i32) -> bool {
+        match child.compute_bounds(container) {
+            Some(r) => (r.x() as i32) <= x && x <= (r.x() + r.width()) as i32 && (r.y() as i32) <= y && y <= (r.y() + r.height()) as i32,
+            None => false,
+        }
+    }
 
     fn populate_combo(combo: &gtk4::DropDown, items: &[(&str, &str)]) {
         for (id, text) in items {
@@ -1487,20 +1492,9 @@ impl MainWindow {
                 };
 
                 if dirty {
-                    let message_dialogue = gtk4::MessageDialog::builder()
-                        .transient_for(window)
-                        .message_type(gtk4::MessageType::Question)
-                        .buttons(gtk4::ButtonsType::YesNo)
-                        .text("There are unsaved changes - quit anyway?")
-                        .title("Unsaved Changes")
-                        .modal(true)
-                        .build();
+                    let result = crate::gtk4_compat::alert_dialog(Some(window), "There are unsaved changes - quit anyway?", &["No", "Yes"]);
 
-                    let result = message_dialogue.run();
-
-                    message_dialogue.set_visible(false);
-
-                    if result == ResponseType::Yes {
+                    if result == Some(1) {
                         if let Ok(mut state) = state.lock() {
                             state.close_all_tracks(tx_to_audio.clone());
                         }
@@ -1520,7 +1514,7 @@ impl MainWindow {
         }
 
         let selected_style_provider = CssProvider::new();
-        selected_style_provider.load_from_data("frame { background-color: #3f3f3f; }");
+        // selected styling is done via the .riff-daw-selected CSS class (see daw_style.css)
 
         let sample_roll_window = gtk4::Window::new();
         sample_roll_window.set_title(Some("Sample Roll".to_string().as_str()));
@@ -2417,7 +2411,7 @@ impl MainWindow {
         track_panel.track_number_text.set_label(track_number_label_txt.as_str());
         track_panel.track_name_text_ctrl.set_text(track_name);
 
-        debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.allocation().height());
+        debug!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$ Track panel height: {}", track_panel.track_panel.size(Orientation::Vertical));
         
         track_panel.track_number_text.drag_source_set(
             gdk4::ModifierType::BUTTON1_MASK, 
@@ -2514,9 +2508,9 @@ impl MainWindow {
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
-                        child.style_context().remove_provider(&selected_track_style_provider);
+                        child.remove_css_class("riff-daw-selected");
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            child.add_css_class("riff-daw-selected");
                         }
                     }
                 }
@@ -2645,9 +2639,9 @@ impl MainWindow {
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
-                        child.style_context().remove_provider(&selected_track_style_provider);
+                        child.remove_css_class("riff-daw-selected");
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            child.add_css_class("riff-daw-selected");
                         }
                     }
                 }
@@ -2750,9 +2744,9 @@ impl MainWindow {
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
-                        child.style_context().remove_provider(&selected_track_style_provider);
+                        child.remove_css_class("riff-daw-selected");
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            child.add_css_class("riff-daw-selected");
                         }
                     }
                 }
@@ -2855,9 +2849,9 @@ impl MainWindow {
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
-                        child.style_context().remove_provider(&selected_track_style_provider);
+                        child.remove_css_class("riff-daw-selected");
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            child.add_css_class("riff-daw-selected");
                         }
                     }
                 }
@@ -2964,9 +2958,9 @@ impl MainWindow {
                 // remove the style from all the other frames
                 for riff_track_panel_vbox in track_panel_vertical_boxes.iter() {
                     for child in riff_track_panel_vbox.children() {
-                        child.style_context().remove_provider(&selected_track_style_provider);
+                        child.remove_css_class("riff-daw-selected");
                         if child.widget_name() == track_uuid.to_string() {
-                            child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            child.add_css_class("riff-daw-selected");
                         }
                     }
                 }
@@ -3177,12 +3171,11 @@ impl MainWindow {
     ) {
         let track_details_dialogue_glade_src = include_str!("track_details_dialogue.ui");
 
-        let track_effects_list_store = ListStore::new(&[String::static_type(), String::static_type(), String::static_type(), RGBA::static_type(), RGBA::static_type()]);
 
         let track_details_dialogue: TrackDetailsDialogue = TrackDetailsDialogue::from_string(track_details_dialogue_glade_src).unwrap();
         Self::populate_track_details_combos(&track_details_dialogue);
         track_details_dialogue.track_details_panel.set_widget_name(track_uuid.to_string().as_str());
-        track_details_dialogue.track_effect_list.set_model(Some(&track_effects_list_store));
+        let (_, track_effects_list_store) = crate::gtk4_compat::setup_text_list_view(&track_details_dialogue.track_effect_list);
 
 
         match general_track_type {
@@ -3321,7 +3314,7 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            track_details_dialogue.track_detail_track_colour_button.connect_color_set(move |track_detail_track_colour_button| {
+            track_details_dialogue.track_detail_track_colour_button.connect_rgba_notify(move |track_detail_track_colour_button| {
                 let selected_colour = track_detail_track_colour_button.rgba();
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red() as f64, selected_colour.green() as f64, selected_colour.blue() as f64, selected_colour.alpha() as f64), Some(track_uuid.to_string()))) {
                     Err(_) => debug!("Problem sending message with tx from ui lock when the track colour has been changed."),
@@ -3333,7 +3326,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
-            track_details_dialogue.track_detail_riff_colour_button.connect_color_set(move |track_detail_riff_colour_button| {
+            track_details_dialogue.track_detail_riff_colour_button.connect_rgba_notify(move |track_detail_riff_colour_button| {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
                         let selected_colour = track_detail_riff_colour_button.rgba();
@@ -3713,25 +3706,11 @@ impl MainWindow {
                         }
                     }
 
-                    if let Some(tree_model) = track_riff_choice.model() {
-                        if let Some(list_store) = tree_model.dynamic_cast_ref::<ListStore>() {
-                            if let Some(mut list_store_iter) = list_store.iter_first() {
-                                loop  {
-                                    if let Ok(id_column_value) = list_store.value(&list_store_iter, 1).get::<String>() {
-                                        unsafe {
-                                            if (*selected_riff_uuid) == id_column_value {
-                                                list_store.set_value(&list_store_iter, 0, &track_details_riff_choice_entry.text().to_value());
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    if !list_store.iter_next(&mut list_store_iter) {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                    unsafe {
+                        track_riff_choice.update_text(
+                            (*selected_riff_uuid).as_str(),
+                            track_details_riff_choice_entry.text().as_str(),
+                        );
                     }
                 }
                 else {
@@ -3773,13 +3752,7 @@ impl MainWindow {
 
                         debug!("Add effect: id={}, text={}, uuid={}", file.as_str(), name.as_str(), uuid);
 
-                        track_effects_list_store.insert_with_values(None, &[
-                            (0, &name),
-                            (1, &file),
-                            (2, &uuid.to_string()),
-                            (3, &(gdk4::RGBA::BLACK)),
-                            (4, &(gdk4::RGBA::WHITE)),
-                        ]);
+                        track_effects_list_store.append(&ComboItemObject::new(Some(uuid.to_string().as_str()), name.as_str()));
                         track_effects_list.set_visible(true);
 
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
@@ -3797,27 +3770,27 @@ impl MainWindow {
             let track_effects_list = track_details_dialogue.track_effect_list.clone();
             let track_effects_list_store = track_effects_list_store;
             track_details_dialogue.track_effect_delete_btn.connect_clicked(move |_| {
-                let selection = track_effects_list.selection();
-                let (data_row_list, data_model) = selection.selected_rows();
-                let mut tree_iterator_list = vec![];
-
-                for tree_path in data_row_list.iter() {
-                    let row = data_model.iter(tree_path);
-                    if let Some(xxx) = row {
-                        tree_iterator_list.push(xxx);
-                    }
-                }
-
-                for tree_iterator in tree_iterator_list {
-                    if let Some((model, iter)) = selection.selected() {
-                        if let Ok(effect_uuid) = model.value(&iter, 2).get::<String>() {
-                            match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectDeleted(effect_uuid), Some(track_uuid.to_string()))) {
-                                Ok(_) => {
-                                    track_effects_list_store.remove(&tree_iterator);
-                                    track_effects_list.set_model(Some(&track_effects_list_store));
-                                },
-                                Err(_) => debug!("Couldn't send effect delete message."),
-                            }
+                if let (Some(row), Some(store)) = (
+                    crate::gtk4_compat::list_view_selected_row(&track_effects_list),
+                    crate::gtk4_compat::list_view_store(&track_effects_list),
+                ) {
+                    if let Some(effect_uuid) = row.id() {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectDeleted(effect_uuid.clone()), Some(track_uuid.to_string()))) {
+                            Ok(_) => {
+                                let remove_at = store
+                                    .iter::<glib::Object>()
+                                    .flatten()
+                                    .position(|item| {
+                                        item.downcast_ref::<ComboItemObject>()
+                                            .and_then(ComboItemObject::id)
+                                            .as_deref()
+                                            == Some(effect_uuid.as_str())
+                                    });
+                                if let Some(index) = remove_at {
+                                    store.remove(index as u32);
+                                }
+                            },
+                            Err(_) => debug!("Couldn't send effect delete message."),
                         }
                     }
                 }
@@ -3836,17 +3809,14 @@ impl MainWindow {
 
 
         {
-            track_details_dialogue.track_effect_list.connect_cursor_changed(move |tree_view| {
-                debug!("Track effect list row selected.");
-                let selection = tree_view.selection();
-                if let Some((model, iter)) = selection.selected() {
-                    debug!("{}, {}, {}",
-                        model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
-                        model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
-                        model.value(&iter, 2).get::<String>().expect("Tree view selection, column 2"),
-                    );
-                }
-            });
+            if let Some(track_effects_selection) = crate::gtk4_compat::list_view_selection(&track_details_dialogue.track_effect_list) {
+                track_effects_selection.connect_selection_changed(move |selection, _position, _n_selected| {
+                    debug!("Track effect list row selected.");
+                    if let Some(row) = selection.selected_item().and_then(|item| item.downcast::<ComboItemObject>().ok()) {
+                        debug!("{:?}, {}", row.id(), row.text());
+                    }
+                });
+            }
         }
 
         {
@@ -3854,14 +3824,9 @@ impl MainWindow {
             let track_effect_list = track_details_dialogue.track_effect_list.clone();
             track_details_dialogue.track_effect_window_visibility_toggle_btn.connect_clicked(move |_| {
                 debug!("Track effect toggle visibility clicked.");
-                let selection = track_effect_list.selection();
-                if let Some((model, iter)) = selection.selected() {
-                    debug!("{}, {}, {}",
-                        model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
-                        model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
-                        model.value(&iter, 2).get::<String>().expect("Tree view selection, column 2"),
-                    );
-                    if let Ok(effect_uuid) = model.value(&iter, 2).get::<String>() {
+                if let Some(row) = crate::gtk4_compat::list_view_selected_row(&track_effect_list) {
+                    debug!("{:?}, {}", row.id(), row.text());
+                    if let Some(effect_uuid) = row.id() {
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
                             Err(_) => debug!("Problem sending message with tx from ui lock when toggling effect window visibility"),
                             _ => (),
@@ -4503,25 +4468,11 @@ impl MainWindow {
                         }
                     }
 
-                    if let Some(tree_model) = loop_combobox_text.model() {
-                        if let Some(list_store) = tree_model.dynamic_cast_ref::<ListStore>() {
-                            if let Some(mut list_store_iter) = list_store.iter_first() {
-                                loop  {
-                                    if let Ok(id_column_value) = list_store.value(&list_store_iter, 1).get::<String>() {
-                                        unsafe {
-                                            if (*selected_loop_uuid) == id_column_value {
-                                                list_store.set_value(&list_store_iter, 0, &loop_combobox_text_entry.text().to_value());
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    if !list_store.iter_next(&mut list_store_iter) {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                    unsafe {
+                        loop_combobox_text.update_text(
+                            (*selected_loop_uuid).as_str(),
+                            loop_combobox_text_entry.text().as_str(),
+                        );
                     }
                 }
                 else {
@@ -7445,7 +7396,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             self.ui.sample_library_file_chooser_widget.connect_selection_changed(move |file_chooser_widget| {
-                if let Some(file_name) = file_chooser_widget.file().and_then(|file| file.path()) {
+                if let Some(file_name) = file_chooser_widget.selected_file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -7465,7 +7416,7 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui;
             let sample_library_file_chooser_widget = self.ui.sample_library_file_chooser_widget.clone();
             self.ui.sample_library_add_sample_to_song_btn.connect_clicked(move |_| {
-                if let Some(file_name) = sample_library_file_chooser_widget.file().and_then(|file| file.path()) {
+                if let Some(file_name) = sample_library_file_chooser_widget.selected_file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -7509,7 +7460,7 @@ impl MainWindow {
             let scripting_script_text_view = self.ui.scripting_script_text_view.clone();
             let scripting_script_name_label = self.ui.scripting_script_name_label.clone();
             self.ui.scripting_file_chooser_widget.connect_selection_changed(move |file_chooser_widget| {
-                if let Some(file_name) = file_chooser_widget.file().and_then(|file| file.path()) {
+                if let Some(file_name) = file_chooser_widget.selected_file().and_then(|file| file.path()) {
                     if let Ok(file_meta_data) = std::fs::metadata(file_name.clone()) {
                         let file_meta_data: std::fs::Metadata = file_meta_data;
                         if file_meta_data.is_file() {
@@ -7677,15 +7628,10 @@ impl MainWindow {
     }
 
     pub fn update_sample_roll_sample_browser(&mut self, sample_uuid: String, sample_name: String) {
-        if let Some(sample_roll_available_samples_list_store) = self.ui.sample_roll_available_samples.model() {
-            if let Some(list_store) = sample_roll_available_samples_list_store.dynamic_cast_ref::<ListStore>() {
-                debug!("Updating the sample roll sample browser...");
-                list_store.insert_with_values(None, &[
-                    (0, &sample_name),
-                    (1, &sample_uuid),
-                ]);
-                self.ui.sample_roll_available_samples.set_visible(true);
-            }
+        if let Some(list_store) = crate::gtk4_compat::list_view_store(&self.ui.sample_roll_available_samples) {
+            debug!("Updating the sample roll sample browser...");
+            list_store.append(&ComboItemObject::new(Some(sample_uuid.as_str()), sample_name.as_str()));
+            self.ui.sample_roll_available_samples.set_visible(true);
         }
     }
 
@@ -7694,8 +7640,7 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>
     ) {
-        let sample_roll_available_samples_list_store = ListStore::new(&[String::static_type(), String::static_type()]);
-        self.ui.sample_roll_available_samples.set_model(Some(&sample_roll_available_samples_list_store));
+        crate::gtk4_compat::setup_text_list_view(&self.ui.sample_roll_available_samples);
 
         {
             let state = state;
@@ -7809,13 +7754,9 @@ impl MainWindow {
                     debug!("Sample roll mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
 
                     // get the selected sample
-                    let selection = sample_roll_available_samples.selection();
-                    if let Some((model, iter)) = selection.selected() {
-                        debug!("{}, {}",
-                                 model.value(&iter, 0).get::<String>().expect("Tree view selection, column 0"),
-                                 model.value(&iter, 1).get::<String>().expect("Tree view selection, column 1"),
-                        );
-                        if let Ok(sample_uuid) = model.value(&iter, 1).get::<String>() {
+                    if let Some(row) = crate::gtk4_compat::list_view_selected_row(&sample_roll_available_samples) {
+                        debug!("{:?}, {}", row.id(), row.text());
+                        if let Some(sample_uuid) = row.id() {
                             // call the mouse event handler
                             match sample_roll_grid.lock() {
                                 Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, &sample_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, sample_uuid),
@@ -8251,14 +8192,7 @@ impl MainWindow {
                     new_riff_set_name_entry.set_text("");
                 }
                 else {
-                    let dialogue = gtk4::MessageDialog::builder()
-                        .modal(true)
-                        .text("Need a riff set name.")
-                        .buttons(gtk4::ButtonsType::Close)
-                        .title("Problem")
-                        .build();
-                    dialogue.run();
-                    dialogue.set_visible(false);
+                    crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a riff set name.", &["Close"]);
                 }
             });
         }
@@ -8429,7 +8363,7 @@ impl MainWindow {
                                 child.clone()
                             };
                             if actual_child.widget_name().to_string() != riff_set_blade.widget_name().to_string() {
-                                actual_child.style_context().remove_provider(&selected_style_provider);
+                                actual_child.remove_css_class("riff-daw-selected");
                                 actual_child.set_data("selected", 0u32);
                             }
                         }
@@ -8437,7 +8371,7 @@ impl MainWindow {
                     else {
                         for child in riff_set_heads_box.children() {
                             if child.widget_name().to_string() != riff_set_blade.widget_name().to_string() {
-                                child.style_context().remove_provider(&selected_style_provider);
+                                child.remove_css_class("riff-daw-selected");
                                 child.set_data("selected", 0u32);
                             }
                         }
@@ -8447,12 +8381,12 @@ impl MainWindow {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_set_blade.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_set_blade.add_css_class("riff-daw-selected");
                             riff_set_blade.set_data("selected", 1u32);
                             selected_bool = true;
                         }
                         else {
-                            riff_set_blade.style_context().remove_provider(&selected_style_provider);
+                            riff_set_blade.remove_css_class("riff-daw-selected");
                             riff_set_blade.set_data("selected", 0u32);
                         }
 
@@ -8529,9 +8463,9 @@ impl MainWindow {
                 let uuid = blade_head.widget_name().to_string();
 
                 // for child in rs_box.children() {
-                //     child.style_context().remove_provider(&selected_track_style_provider);
+                //     child.remove_css_class("riff-daw-selected");
                 //     if child.widget_name() == uuid {
-                //         child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                //         child.add_css_class("riff-daw-selected");
                 //     }
                 // }
 
@@ -8551,9 +8485,9 @@ impl MainWindow {
                 let uuid = blade_head.widget_name().to_string();
 
                 for child in rs_box.children() {
-                    child.style_context().remove_provider(&selected_track_style_provider);
+                    child.remove_css_class("riff-daw-selected");
                     if child.widget_name() == uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                        child.add_css_class("riff-daw-selected");
                     }
                 }
 
@@ -8700,14 +8634,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    let dialogue = gtk4::MessageDialog::builder()
-                        .modal(true)
-                        .text("Need a sequence name.")
-                        .buttons(gtk4::ButtonsType::Close)
-                        .title("Problem")
-                        .build();
-                    dialogue.run();
-                    dialogue.set_visible(false);
+                    crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a sequence name.", &["Close"]);
                 }
             });
         }
@@ -8751,14 +8678,7 @@ impl MainWindow {
                     let _ = tx_from_ui.send(DAWEvents::RiffGridAdd(uuid.to_string(), name));
                 }
                 else {
-                    let dialogue = gtk4::MessageDialog::builder()
-                        .modal(true)
-                        .text("Need a grid name.")
-                        .buttons(gtk4::ButtonsType::Close)
-                        .title("Problem")
-                        .build();
-                    dialogue.run();
-                    dialogue.set_visible(false);
+                    crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a grid name.", &["Close"]);
                 }
             });
         }
@@ -8894,7 +8814,7 @@ impl MainWindow {
                             child
                         };
                         if actual_child.widget_name().to_string() != riff_sequence_blade_frame.widget_name().to_string() {
-                            actual_child.style_context().remove_provider(&selected_style_provider);
+                            actual_child.remove_css_class("riff-daw-selected");
                             actual_child.set_data("selected", 0u32);
                         }
                     }
@@ -8903,12 +8823,12 @@ impl MainWindow {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_sequence_blade_frame.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_sequence_blade_frame.add_css_class("riff-daw-selected");
                             riff_sequence_blade_frame.set_data("selected", 1u32);
                             selected_bool = true;
                         }
                         else {
-                            riff_sequence_blade_frame.style_context().remove_provider(&selected_style_provider);
+                            riff_sequence_blade_frame.remove_css_class("riff-daw-selected");
                             riff_sequence_blade_frame.set_data("selected", 0u32);
                         }
 
@@ -9045,9 +8965,9 @@ impl MainWindow {
                 let riff_sequence_uuid = blade.widget_name().to_string();
 
                 for child in riff_sequences_box.children() {
-                    child.style_context().remove_provider(&selected_track_style_provider);
+                    child.remove_css_class("riff-daw-selected");
                     if child.widget_name() == riff_sequence_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                        child.add_css_class("riff-daw-selected");
                     }
                 }
 
@@ -9155,7 +9075,7 @@ impl MainWindow {
                             child
                         };
                         if actual_child.widget_name().to_string() != riff_grid_blade_frame.widget_name().to_string() {
-                            actual_child.style_context().remove_provider(&selected_style_provider);
+                            actual_child.remove_css_class("riff-daw-selected");
                             actual_child.set_data("selected", 0u32);
                         }
                     }
@@ -9164,12 +9084,12 @@ impl MainWindow {
                         let selected = selected.cast::<u32>().as_ptr();
                         let mut selected_bool = false;
                         if *selected == 0 {
-                            riff_grid_blade_frame.style_context().add_provider(&selected_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                            riff_grid_blade_frame.add_css_class("riff-daw-selected");
                             riff_grid_blade_frame.set_data("selected", 1u32);
                             selected_bool = true;
                         }
                         else {
-                            riff_grid_blade_frame.style_context().remove_provider(&selected_style_provider);
+                            riff_grid_blade_frame.remove_css_class("riff-daw-selected");
                             riff_grid_blade_frame.set_data("selected", 0u32);
                         }
 
@@ -9235,9 +9155,9 @@ impl MainWindow {
                 let riff_grid_uuid = blade.widget_name().to_string();
 
                 for child in riff_grid_box.children() {
-                    child.style_context().remove_provider(&selected_track_style_provider);
+                    child.remove_css_class("riff-daw-selected");
                     if child.widget_name() == riff_grid_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                        child.add_css_class("riff-daw-selected");
                     }
                 }
 
@@ -9403,14 +9323,7 @@ impl MainWindow {
                     }
                 }
                 else {
-                    let dialogue = gtk4::MessageDialog::builder()
-                        .modal(true)
-                        .text("Need an arrangement name.")
-                        .buttons(gtk4::ButtonsType::Close)
-                        .title("Problem")
-                        .build();
-                    dialogue.run();
-                    dialogue.set_visible(false);
+                    crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need an arrangement name.", &["Close"]);
                 }
             });
         }
@@ -9786,9 +9699,9 @@ impl MainWindow {
                 let riff_arrangement_uuid = blade.widget_name().to_string();
 
                 // for child in riff_arrangements_box.children() {
-                //     child.style_context().remove_provider(&selected_track_style_provider);
+                //     child.remove_css_class("riff-daw-selected");
                 //     if child.widget_name() == riff_arrangement_uuid {
-                //         child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                //         child.add_css_class("riff-daw-selected");
                 //     }
                 // }
 
@@ -9808,9 +9721,9 @@ impl MainWindow {
                 let riff_arrangement_uuid = blade.widget_name().to_string();
 
                 for child in riff_arrangements_box.children() {
-                    child.style_context().remove_provider(&selected_track_style_provider);
+                    child.remove_css_class("riff-daw-selected");
                     if child.widget_name() == riff_arrangement_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                        child.add_css_class("riff-daw-selected");
                     }
                 }
 
@@ -9830,9 +9743,9 @@ impl MainWindow {
                 let riff_arrangement_uuid = blade.widget_name().to_string();
 
                 for child in riff_arrangements_box.children() {
-                    child.style_context().remove_provider(&selected_track_style_provider);
+                    child.remove_css_class("riff-daw-selected");
                     if child.widget_name() == riff_arrangement_uuid {
-                        child.style_context().add_provider(&selected_track_style_provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
+                        child.add_css_class("riff-daw-selected");
                     }
                 }
 
@@ -9853,7 +9766,7 @@ impl MainWindow {
     pub fn start(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>) {
         let css_provider = CssProvider::new();
         let freedom_daw_style = include_str!("daw_style.css");
-        css_provider.load_from_data(freedom_daw_style);
+        css_provider.load_from_string(freedom_daw_style);
         gtk4::style_context_add_provider_for_display(
             &gtk4::prelude::RootExt::display(&self.ui.wnd_main),
             &css_provider,
@@ -10644,16 +10557,11 @@ impl MainWindow {
         }
 
         // populate the sample roll available samples list
-        if let Some(model) = self.ui.sample_roll_available_samples.model() {
-            if let Some(available_samples_list_store) =  model.dynamic_cast_ref::<ListStore>() {
-                available_samples_list_store.clear();
-                for (sample_uuid, sample) in state.project().song().samples().iter() {
-                    available_samples_list_store.insert_with_values(None, &[
-                        (0, &sample.name().to_string()),
-                        (1, &sample_uuid),
-                    ]);
-                    self.ui.sample_roll_available_samples.set_visible(true);
-                }
+        if let Some(available_samples_list_store) = crate::gtk4_compat::list_view_store(&self.ui.sample_roll_available_samples) {
+            available_samples_list_store.remove_all();
+            for (sample_uuid, sample) in state.project().song().samples().iter() {
+                available_samples_list_store.append(&ComboItemObject::new(Some(sample_uuid.as_str()), sample.name().to_string().as_str()));
+                self.ui.sample_roll_available_samples.set_visible(true);
             }
         }
 
@@ -11028,19 +10936,10 @@ impl MainWindow {
 
         // clear and add the effects
         let track_effects_list = track_details_dialogue.track_effect_list.clone();
-        if let Some(track_effects_list_store) = track_effects_list.model() {
-            if let Some(model) = track_effects_list_store.dynamic_cast_ref::<ListStore>() {
-                model.clear();
-                for effect in track.effects().iter() {
-                    model.insert_with_values(None, &[
-                        (0, &effect.name().to_string()),
-                        (1, &effect.file().to_string()),
-                        (2, &effect.uuid().to_string()),
-                        (3, &(gdk4::RGBA::BLACK)),
-                        (4, &(gdk4::RGBA::WHITE)),
-                    ]);
-                }
-                track_effects_list.set_model(Some(model));
+        if let Some(store) = crate::gtk4_compat::list_view_store(&track_effects_list) {
+            store.remove_all();
+            for effect in track.effects().iter() {
+                store.append(&ComboItemObject::new(Some(effect.uuid().to_string().as_str()), effect.name().to_string().as_str()));
             }
         }
     }
@@ -12195,7 +12094,7 @@ impl MainWindow {
 
         riff_set_heads_box.connect_drag_motion(move |_, _ , x , _y, _| {
             {
-                let view_port_width = riff_sets_view_port.allocation().width();
+                let view_port_width = riff_sets_view_port.size(Orientation::Horizontal);
                 let horizontal_adjustment_position = riff_set_horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -12218,10 +12117,7 @@ impl MainWindow {
                     let riff_set_uuid = riff_set_uuid.to_string();
                     // get the child at x and y
                     for child in riff_set_heads_box.children().iter() {
-                        if child.allocation().x() <= x && 
-                            x <= (child.allocation().x() + child.allocation().width()) &&
-                            child.allocation().y() <= y && 
-                            y <= (child.allocation().y() + child.allocation().height()) {
+                        if Self::hit_test_in(child, riff_set_heads_box, x, y) {
                             let drop_zone_child_position = riff_set_heads_box.child_position(child);
                             
                             // move the dropped child to the found position
@@ -12277,7 +12173,7 @@ impl MainWindow {
 
         riff_items_box.connect_drag_motion(move |_, _, x, _y, _| {
             {
-                let view_port_width = riff_items_view_port.allocation().width();
+                let view_port_width = riff_items_view_port.size(Orientation::Horizontal);
                 let horizontal_adjustment_position = riff_items_horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -12300,10 +12196,7 @@ impl MainWindow {
                     let riff_item_uuid = riff_item_uuid.to_string();
                     // get the child at x and y
                     for drop_zone_child in riff_items_box.children().iter() {
-                        if drop_zone_child.allocation().x() <= x &&
-                            x <= (drop_zone_child.allocation().x() + drop_zone_child.allocation().width()) &&
-                            drop_zone_child.allocation().y() <= y &&
-                            y <= (drop_zone_child.allocation().y() + drop_zone_child.allocation().height()) {
+                        if Self::hit_test_in(drop_zone_child, riff_items_box, x, y) {
                             let drop_zone_child_position = riff_items_box.child_position(drop_zone_child);
 
                             // move the dropped child to the found position
@@ -12339,7 +12232,7 @@ impl MainWindow {
 
         item_box.connect_drag_motion(move |_, _ , x , _y, _| {
             {
-                let view_port_width = view_port.allocation().width();
+                let view_port_width = view_port.size(Orientation::Horizontal);
                 let horizontal_adjustment_position = horizontal_adjustment.value() as i32;
 
                 // debug!("Dragging a riff set: view_port_width={}, horizon_adjustment_position={}, x={}, y={}, horizontal_adjustment_position + view_port_width - x={}, x - horizontal_adjustment_position={}", view_port_width, riff_set_horizontal_adjustment.value(), x, y, horizontal_adjustment_position + view_port_width - x, x - horizontal_adjustment_position);
@@ -12360,10 +12253,7 @@ impl MainWindow {
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in item_box.children().iter() {
-                    if child.allocation().x() <= x && 
-                        x <= (child.allocation().x() + child.allocation().width()) &&
-                        child.allocation().y() <= y && 
-                        y <= (child.allocation().y() + child.allocation().height()) {
+                    if Self::hit_test_in(child, item_box, x, y) {
                         let drop_zone_child_position = item_box.child_position(child);
                         
                         // move the dropped child to the found position
@@ -12395,7 +12285,7 @@ impl MainWindow {
 
         vertical_box.connect_drag_motion(move |_, _ , x , y, _| {
             {
-                let view_port_width = view_port.allocation().width();
+                let view_port_width = view_port.size(Orientation::Horizontal);
                 let vertical_adjustment_position = vertical_adjustment.value() as i32;
 
                 debug!("Dragging a track: view_port_width={}, tracks_vertical_adjustment_position={}, x={}, y={}, tracks_vertical_adjustment_position + view_port_width - y={}, y - tracks_vertical_adjustment_position={}", view_port_width, vertical_adjustment.value(), x, y, vertical_adjustment_position + view_port_width - y, y - vertical_adjustment_position);
@@ -12417,10 +12307,7 @@ impl MainWindow {
             if let Some(track_uuid) = selection_data.text() {
                 // get the child at x and y
                 for child in vertical_box.children().iter() {
-                    if child.allocation().x() <= x && 
-                        x <= (child.allocation().x() + child.allocation().width()) &&
-                        child.allocation().y() <= y && 
-                        y <= (child.allocation().y() + child.allocation().height()) {
+                    if Self::hit_test_in(child, vertical_box, x, y) {
                         let drop_zone_child_position = vertical_box.child_position(child);
                         
                         // move the dropped child to the found position

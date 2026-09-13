@@ -26,3 +26,7 @@ window.popup {
     padding: 0;
     font-size: small;
 }
+
+.riff-daw-selected {
+    background-color: #3f3f3f;
+}

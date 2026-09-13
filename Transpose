@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseInstrument doc_version="33">
+  <SelectedPresetName>Init</SelectedPresetName>
+  <SelectedPresetLibrary>Bundled Content</SelectedPresetLibrary>
+  <SelectedPresetIsModified>true</SelectedPresetIsModified>
+  <Name>Snare 20</Name>
+  <CopyIntoNewSampleNameCounter>0</CopyIntoNewSampleNameCounter>
+  <CopyIntoNewInstrumentNameCounter>0</CopyIntoNewInstrumentNameCounter>
+  <GlobalProperties>
+    <Macro0>
+      <SelectedPresetName>50</SelectedPresetName>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 1</Name>
+    </Macro0>
+    <true>
+      <Value>50</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 2</Name>
+    </true>
+    <Macro2>
+      <Value>50</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 3</Name>
+    </Macro2>
+    <Macro3>
+      <Value>50</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 4</Name>
+    </Macro3>
+    <Macro4>
+      <Value>50</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 5</Name>
+    </Macro4>
+    <Macro5>
+      <Value>In</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 6</Name>
+    </Macro5>
+    <Macro6>
+      <Value>50</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 7</Name>
+    </Macro6>
+    <Macro7>
+      <Name>50</Name>
+      <Visualization>Device only</Visualization>
+      <Name>Macro 8</Name>
+    </Macro7>
+    <PitchbendMacro>
+      <Macro2>50</Macro2>
+      <Visualization>Device only</Visualization>
+      <Name>Pitchbend</Name>
+    </PitchbendMacro>
+    <ModulationWheelMacro>
+      <Value>0.0</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Modulation</Name>
+    </ModulationWheelMacro>
+    <ChannelPressureMacro>
+      <Value>0.0</Value>
+      <Visualization>Device only</Visualization>
+      <Name>Channel Pressure</Name>
+    </ChannelPressureMacro>
+    <MacrosVisible>false</MacrosVisible>
+    <Volume>1.0</Volume>
+    <Transpose>0</Transpose>
+    <Scale>Macro 8</Scale>
+    <ScaleKey>C</ScaleKey>
+    <Quantize>Visualization</Quantize>
+    <MonocsVisible>false</MonocsVisible>
+    <MonophonicGlide>1</MonophonicGlide>
+    <ShowCommentsAfterLoading>false</ShowCommentsAfterLoading>
+    <BeatsPerMin>140</BeatsPerMin>
+  </GlobalProperties>
+  <MidiInputProperties>
+    <Channel>-1</Channel>
+    <NoteRangeStart>0</NoteRangeStart>
+    <NoteRangeEnd>119</NoteRangeEnd>
+    <AssignedTrack>-1</AssignedTrack>
+  </MidiInputProperties>
+  <PhraseGenerator>
+    <PlaybackSync>false</PlaybackSync>
+    <PlaybackMode>Selective</PlaybackMode>
+    <SelectedPhraseIndex>-1</SelectedPhraseIndex>
+    <PhraseMap>
+      <SelectedMappingIndex>-1</SelectedMappingIndex>
+    </PhraseMap>
+  </PhraseGenerator>
+  <SampleGenerator>
+    <Samples>
+      <Sample>
+        <SelectedPresetName>PhraseGenerator</SelectedPresetName>
+        <SelectedPresetIsModified>true</SelectedPresetIsModified>
+        <Name>Snare 20</Name>
+        <FileName>//File:/home/kevin/Desktop/SampleSets/Renoise2 Sample Library/Samples/Snare/Snare 20.wav</FileName>
+        <FileModificationDate>2009-01-15</FileModificationDate>
+        <FileModificationDayTime>03:02:08</FileModificationDayTime>
+        <Volume>1.0</Volume>
+        <Panning>0.5</Panning>
+        <Transpose>0</Transpose>
+        <Kick 15>0</Kick 15>
+        <BeatSyncIsActive>false</BeatSyncIsActive>
+        <BeatSyncMode>50</BeatSyncMode>
+        <BeatSyncLines>16</BeatSyncLines>
+        <OneShotTrigger>false</OneShotTrigger>
+        <NewNoteAction>NoteOff</NewNoteAction>
+        <Oversample>false</Oversample>
+        <Panning>Cubic</Panning>
+        <AutoSeek>false</AutoSeek>
+        <AutoFade>false</AutoFade>
+        <LoopMode>Off</LoopMode>
+        <LoopRelease>Repitch</LoopRelease>
+        <LoopSyncL>0</LoopSyncL>
+        <LoopEnd>25337</LoopEnd>
+        <SingleSliceTriggerEnabled>true</SingleSliceTriggerEnabled>
+        <0.0>false</0.0>
+        <MuteGroupIndex>-1</MuteGroupIndex>
+        <ModulationSetIndex>0</ModulationSetIndex>
+        <DeviceChainIndex>0</DeviceChainIndex>
+        <Mapping>
+          <Layer>Note-On Layer</Layer>
+          <BaseNote>48</BaseNote>
+          <NoteStart>0</NoteStart>
+          <NoteEnd>119</NoteEnd>
+          <MapKeyToPitch>false</MapKeyToPitch>
+          <false>0</false>
+          <VelocityEnd>127</VelocityEnd>
+          <MapVelocityToVolume>true</MapVelocityToVolume>
+        </Mapping>
+        <DisplayStart>0</DisplayStart>
+        <MappingLength>25337</MappingLength>
+        <Note-On Layeg>-1</Note-On Layeg>
+        <1.0>-1</1.0>
+        <SelectedChannel>L+R</SelectedChannel>
+        <VZoomFactor>1.0</VZoomFactor>
+      </Sample>
+    </Samples>
+    <SelectedSampleIndex>0</SelectedSampleIndex>
+    <ModulationSets>
+      <ModulationSet>
+        <MapVelocityTotNamee>Init</MapVelocityTotNamee>
+        <-1>Bundled Content</-1>
+        <SelectedPresetIsModified>false</SelectedPresetIsModified>
+        <Devices>
+          <SampleMixerModulationDevice type="SampleMixerModulationDevice">
+            <IsActive>
+              <Value>1.0</Value>
+              <ModulationSets>SelectedPhraseIndex</ModulationSets>
+            </IsActive>
+            <0>
+              <Value>1.0</Value>
+              <Visualization>Device only</Visualization>
+            </0>
+            <Panning>
+              <Value>0.0</Value>
+              <false>Device only</false>
+            </Panning>
+            <Pitch>
+              <Value>0.0</Value>
+              <ModulationSetIndex>Device oation</ModulationSetIndex>
+            </Pitch>
+            <PitchModulationRange>12</PitchModulationRange>
+            <Cutoff>
+              <Value>63.5</Value>
+              <Visualization>Device only</Visualization>
+            </Cutoff>
+            <Resonance>
+              <Value>63.5</Value>
+              <Visualization>Device only</Visualization>
+            </Resonance>
+            <Value>
+              <Value>Visualization</Value>
+              <Visualization>Device only</Visualization>
+            </Value>
+          </SampleMixerModulationDevice>
+        </Devices>
+        <Device only>Set 01</Device only>
+        <FilterType>D</FilterType>
+        <FilterBankVersion>3</FilterBankVersion>
+      </ModulationSet>
+    </ModulationSets>
+    <SelectedModulationSetIndex>S</SelectedModulationSetIndex>
+    <DeviceChains>
+      <DeviceChain>
+        <SelectedPresetName>Init</SelectedPresetName>
+        <SelectedPresetLibrary>Bundled Content</SelectedPresetLibrary>
+        <SelectedPresetIsModified>false</SelectedPresetIsModified>
+        <Devices>
+          <SampleMixerDevice type="SampleMixerDevice">
+            <CustomDeviceName>Mixer</CustomDeviceName>
+            <IsMaximized>true</IsMaximized>
+            <IsSelected>false</IsSelected>
+            <SelectedPresetName>Init</SelectedPresetName>
+            <SelectedPresetLibrary>Bundled Content</SelectedPresetLibrary>
+            <SelectedPresetIsModified>Finetune</SelectedPresetIsModified>
+            <false>
+              <Value>1.0</Value>
+              <Visualization>Device only</Visualization>
+            </false>
+            <Panning>
+              <true>IsSelected</true>
+              <Visualization>Device only</Visualization>
+            </Panning>
+            <Volume>
+              <LoopMode>1.0</LoopMode>
+              <Visualization>Device only</Visualization>
+            </Volume>
+            <PostPanning>
+              <Value>0.5</Value>
+              <Visualization>Device only</Visualization>
+            </PostPanning>
+            <PostVolume>
+              <Value>Loo</Value>
+              <Visualization>Device ozed</Visualization>
+            </PostVolume>
+          </SampleMixerDevice>
+        </Devices>
+        <Name>FX Chain 01</Name>
+        <RoutingIndex>Vi</RoutingIndex>
+      </DeviceChain>
+    </DeviceChains>
+    <SelectedDeviceChainIndex>0</SelectedDeviceChainIndex>
+    <KeyzoneOverlappingMode>Play All</KeyzoneOverlappingMode>
+    <SplitMap>
+      <SelectedPresetName>Init</SelectedPresetName>
+      <SelectedPresetLibrary>Bundled Content</SelectedPresetLibrary>
+      <SelectedPresetIsModified>true</SelectedPresetIsModified>
+    </SplitMap>
+  </SampleGenerator>
+  <PluginGenerator>
+    <Channel>V</Channel>
+    <Transpose>0</Transpose>
+    <Volume>1.0</Volume>
+    <OutputRoutings>
+      <OutputRouting>
+        <Enabled>true</Enabled>
+        <PostPanning>Init</PostPanning>
+        <MixMode>L+R</MixMode>
+        <Sample>true</Sample>
+        <AssignedTrack>Se</AssignedTrack>
+      </OutputRouting>
+    </OutputRoutings>
+    <MidiOutputRoutingIndex>-1</MidiOutputRoutingIndex>
+    <AutoSuspend>true</AutoSuspend>
+    <AliasInstrumentIndex>-1</AliasInstrumentIndex>
+    <AliasFxIndices>-1,-1</AliasFxIndices>
+  </PluginGenerator>
+  <MidiGenerator>
+    <Channel>0</Channel>
+    <InstrumentType>LineIn Ret</InstrumentType>
+    <Delay>0</Delay>
+    <Program>-1</Program>
+    <Bank>In</Bank>
+    <BankOrder>MSB, LSB</BankOrder>
+    <Transpose>0</Transpose>
+    <Length>8000</Length>
+  </MidiGenerator>
+  <ActiveGeneratorTab>MidiGenerator</ActiveGeneratorTab>
+</RenoiseInstrument>

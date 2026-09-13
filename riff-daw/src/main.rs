@@ -7,7 +7,7 @@ use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, DAW_AUTO_SAVE_T
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use flexi_logger::Logger;
 use gdk4_x11::X11Surface;
-use gtk4::{glib, prelude::*, Adjustment, ButtonsType, DrawingArea, Frame, MessageDialog, MessageType, SpinButton, Viewport, Window};
+use gtk4::{glib, prelude::*, Adjustment, DrawingArea, Frame, SpinButton, Viewport, Window};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::MidiOut;
@@ -1017,24 +1017,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
             }
             DAWEvents::Notification(notification_type, message) => {
-                let message_type = match notification_type {
-                    NotificationType::Info => { MessageType::Info }
-                    NotificationType::Warning => { MessageType::Warning }
-                    NotificationType::Question => { MessageType::Question }
-                    NotificationType::Error => { MessageType::Error }
-                    NotificationType::Other => { MessageType::Other }
-                };
-                let message_dialogue = MessageDialog::builder()
-                    .modal(true)
-                    .title("Message")
-                    .message_type(message_type)
-                    .text(message.as_str())
-                    .buttons(ButtonsType::Close)
-                    .build();
-
-                message_dialogue.run();
-                message_dialogue.close();
-                message_dialogue.set_visible(false);
+                let _ = notification_type;
+                crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, message.as_str(), &["Close"]);
             }
             DAWEvents::AutomationViewShowTypeChange(show_type) => {
                 let type_to_show = match show_type {
@@ -1282,8 +1266,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::PianoRollWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
                 if let Some(widget) = gui.ui.piano_roll_scrolled_window.child() {
                     if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
-                        let width = view_port.allocated_width();
-                        let height = view_port.allocated_height();
+                        let width = view_port.size(gtk4::Orientation::Horizontal);
+                        let height = view_port.size(gtk4::Orientation::Vertical);
                         let window_width = x2 - x1;
                         let window_height = y2 - y1;
                         let horizontal_scale_up = width as f64 / window_width;
@@ -7924,7 +7908,7 @@ win.connect_close_request(|window| {
                 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.top_level_vbox.children().iter_mut() {
-                    debug!("Track grid - Track panel height: {}", track_panel.allocation().height());
+                    debug!("Track grid - Track panel height: {}", track_panel.size(gtk4::Orientation::Vertical));
                     track_panel.set_height_request(widget_height);
                 }
                 // gui.ui.track_panel_scrolled_window.queue_draw();
@@ -7935,7 +7919,7 @@ win.connect_close_request(|window| {
 
                 let widget_height = (TRACK_VIEW_TRACK_PANEL_HEIGHT as f64 * vertical_scale) as i32;
                 for track_panel in gui.ui.riff_grid_track_panel.children().iter_mut() {
-                    debug!("Riff grid - Track panel height: {}", track_panel.allocation().height());
+                    debug!("Riff grid - Track panel height: {}", track_panel.size(gtk4::Orientation::Vertical));
                     track_panel.set_height_request(widget_height);
                 }
                 // gui.ui.track_panel_scrolled_window.queue_draw();

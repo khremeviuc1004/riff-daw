@@ -88,6 +88,11 @@ impl ComboItemObject {
     pub fn text(&self) -> String {
         self.imp().text.borrow().clone()
     }
+
+    pub fn set_text(&self, text: &str) {
+        self.imp().text.replace(text.to_string());
+        self.notify("text");
+    }
 }
 
 fn list_store_for(drop_down: &gtk4::DropDown) -> gio::ListStore {
@@ -132,6 +137,9 @@ pub trait ComboBoxTextCompat {
     fn active(&self) -> Option<u32>;
     fn set_active(&self, index: Option<u32>);
     fn len(&self) -> u32;
+    /// Replaces the display text of the item with the given id (used by the
+    /// legacy "rename the selected item" call sites). Returns true if found.
+    fn update_text(&self, id: &str, new_text: &str) -> bool;
     fn connect_changed<F>(&self, f: F) -> glib::SignalHandlerId
     where
         F: Fn(&gtk4::DropDown) + 'static;
@@ -200,6 +208,21 @@ impl ComboBoxTextCompat for gtk4::DropDown {
     fn set_active(&self, index: Option<u32>) {
         if let Some(index) = index {
             self.set_selected(index);
+        }
+    }
+
+    fn update_text(&self, id: &str, new_text: &str) -> bool {
+        match store_for(self) {
+            Some(store) => {
+                for item in store.iter::<ComboItemObject>().flatten() {
+                    if item.id().as_deref() == Some(id) {
+                        item.set_text(new_text);
+                        return true;
+                    }
+                }
+                false
+            }
+            None => false,
         }
     }
 

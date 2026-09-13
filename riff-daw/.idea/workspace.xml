@@ -1,0 +1,1045 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/../Cargo.toml">
+      <package file="$PROJECT_DIR$/../clap_checker">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/../lib/simple-clap-host-helper-lib">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/../lib/vst-rs">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/../vst3_checker">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/../vst_checker">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="5560787f-aaa5-466e-9a5d-4485729016c9" name="Changes" comment="Added updating of the configuration bookmarks from the file_dialog bookmarks. Added saving of the configuration when the application closes.">
+      <change beforePath="$PROJECT_DIR$/src/domain.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/domain.rs" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$/.." value="track_event_processing_refactor" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
+    <option name="ROOT_SYNC" value="DONT_SYNC" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;khremeviuc1004&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:khremeviuc1004/riff-daw.git&quot;,
+    &quot;accountId&quot;: &quot;0914b8ef-4434-4c84-bbd6-9f8c4f777c30&quot;
+  }
+}</component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="smh1f4ei" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="ProjectErrors" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 7
+}</component>
+  <component name="ProjectId" id="2oSdit6flW5hEJEICoqNt2Kmz6L" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Cargo.Run riff-daw.executor": "Run",
+    "Cargo.Test domain::tests::test_riff_buffer_track_event_processor2_process_events.executor": "Run",
+    "Cargo.Test domain::tests::test_track_event_sort.executor": "Run",
+    "Cargo.Test riff-daw.executor": "Debug",
+    "Cargo.Test utils::tests::check_event_conversion_to_of_blocks.executor": "Debug",
+    "Cargo.Test utils::tests::check_sort_with_last_measure_and_event_in_same_position.executor": "Debug",
+    "Cargo.Test utils::tests::envelope_interpolation_negative_slope.executor": "Run",
+    "Cargo.Test utils::tests::envelope_interpolation_positive_slope.executor": "Run",
+    "Cargo.Test utils::tests::envelope_interpolation_positive_slope_y_offset.executor": "Run",
+    "Cargo.Test utils::tests::envelope_interpolation_test_1.executor": "Run",
+    "Cargo.Test utils::tests::envelope_interpolation_values_after_last_env_point.executor": "Debug",
+    "Cargo.clean.executor": "Run",
+    "Cargo.test.executor": "Debug",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.rust.reset.selective.auto.import": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "xilem__gui",
+    "last_opened_file_path": "/home/kevin/Desktop/Data/Personal/Development/Rust/riff-daw/vst_checker",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "org.rust.first.attach.projects": "true",
+    "run.code.analysis.last.selected.profile": "pProject Default",
+    "settings.editor.selected.configurable": "Settings.Markdown",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src" />
+      <recent name="$PROJECT_DIR$" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/views" />
+      <recent name="$PROJECT_DIR$/doc" />
+    </key>
+  </component>
+  <component name="RunAnythingCache">
+    <option name="myCommands">
+      <command value="cargo test" />
+      <command value="cargo clean" />
+    </option>
+  </component>
+  <component name="RunManager" selected="Cargo.Run riff-daw">
+    <configuration name="Run clap_checker" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="run --package clap_checker --bin clap_checker" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run riff-daw" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="run --package riff-daw --bin riff-daw" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs>
+        <env name="CLAP_PATH" value="$PROJECT_DIR$/../../../../../../Linux_VST/" />
+        <env name="GDK_BACKEND" value="x11" />
+        <env name="GDK_RENDERING" value="image " />
+        <env name="RUST_LOG" value="debug" />
+        <env name="VST3_PATH" value="$USER_HOME$/.vst3,$USER_HOME$/.vst3/u-he,$USER_HOME$/.vst3/TAL" />
+        <env name="VST_PATH" value="$PROJECT_DIR$/../../../../../../Linux_VST/" />
+        <env name="RUSTFLAGS" value="-C target-cpu=native" />
+      </envs>
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run vst_checker" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="run --package vst_checker --bin vst_checker" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test riff-daw" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="test --workspace" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test utils::tests::check_event_conversion_to_of_blocks" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="test --package riff-daw --bin riff-daw utils::tests::check_event_conversion_to_of_blocks -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test utils::tests::check_sort_with_last_measure_and_event_in_same_position" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="test --package riff-daw --bin riff-daw utils::tests::check_sort_with_last_measure_and_event_in_same_position -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test utils::tests::envelope_interpolation_positive_slope" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package riff-daw --bin riff-daw utils::tests::envelope_interpolation_positive_slope -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test utils::tests::envelope_interpolation_values_after_last_env_point" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="test --package riff-daw --bin riff-daw utils::tests::envelope_interpolation_values_after_last_env_point -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$/.." />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="clean" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="clean" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Run clap_checker" />
+      <item itemvalue="Cargo.Run riff-daw" />
+      <item itemvalue="Cargo.Run vst_checker" />
+      <item itemvalue="Cargo.Test riff-daw" />
+      <item itemvalue="Cargo.Test utils::tests::check_event_conversion_to_of_blocks" />
+      <item itemvalue="Cargo.Test utils::tests::check_sort_with_last_measure_and_event_in_same_position" />
+      <item itemvalue="Cargo.Test utils::tests::envelope_interpolation_positive_slope" />
+      <item itemvalue="Cargo.Test utils::tests::envelope_interpolation_values_after_last_env_point" />
+      <item itemvalue="Cargo.clean" />
+    </list>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Cargo.clean" />
+        <item itemvalue="Cargo.Test utils::tests::check_sort_with_last_measure_and_event_in_same_position" />
+        <item itemvalue="Cargo.Test utils::tests::check_event_conversion_to_of_blocks" />
+        <item itemvalue="Cargo.Test utils::tests::envelope_interpolation_positive_slope" />
+        <item itemvalue="Cargo.clean" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="5560787f-aaa5-466e-9a5d-4485729016c9" name="Changes" comment="" />
+      <created>1730867041301</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1730867041301</updated>
+      <workItem from="1730867042754" duration="4476000" />
+      <workItem from="1730924981952" duration="21942000" />
+      <workItem from="1731037112163" duration="7855000" />
+      <workItem from="1731113263003" duration="4333000" />
+      <workItem from="1731131329089" duration="2968000" />
+      <workItem from="1731212594568" duration="4718000" />
+      <workItem from="1731285489372" duration="20314000" />
+      <workItem from="1731366506825" duration="6230000" />
+      <workItem from="1731374199126" duration="1897000" />
+      <workItem from="1731454929159" duration="1616000" />
+      <workItem from="1731546281067" duration="13280000" />
+      <workItem from="1731626974672" duration="10985000" />
+      <workItem from="1731878775342" duration="12102000" />
+      <workItem from="1731907447144" duration="2460000" />
+      <workItem from="1731970628010" duration="14160000" />
+      <workItem from="1731989549142" duration="5187000" />
+      <workItem from="1732049546807" duration="17009000" />
+      <workItem from="1732135868926" duration="15307000" />
+      <workItem from="1732231041968" duration="9223000" />
+      <workItem from="1732245531512" duration="1711000" />
+      <workItem from="1732249389884" duration="523000" />
+      <workItem from="1732484550762" duration="21213000" />
+      <workItem from="1732576329590" duration="11980000" />
+      <workItem from="1732590594853" duration="1395000" />
+      <workItem from="1732592671461" duration="1465000" />
+      <workItem from="1732594157575" duration="53000" />
+      <workItem from="1732594224325" duration="196000" />
+      <workItem from="1732594431706" duration="6427000" />
+      <workItem from="1732655021435" duration="9874000" />
+      <workItem from="1732666371590" duration="13786000" />
+      <workItem from="1732741750998" duration="8069000" />
+      <workItem from="1732751992364" duration="10539000" />
+      <workItem from="1732765622408" duration="1959000" />
+      <workItem from="1732767647789" duration="6662000" />
+      <workItem from="1732836104942" duration="6490000" />
+      <workItem from="1733098659571" duration="10069000" />
+      <workItem from="1733185215792" duration="608000" />
+      <workItem from="1733185862388" duration="13376000" />
+      <workItem from="1733258978357" duration="15772000" />
+      <workItem from="1733288825769" duration="2256000" />
+      <workItem from="1733349650313" duration="1034000" />
+      <workItem from="1733350721424" duration="17152000" />
+      <workItem from="1733440303180" duration="15864000" />
+      <workItem from="1733613135066" duration="6116000" />
+      <workItem from="1733619534552" duration="433000" />
+      <workItem from="1733693323407" duration="15242000" />
+      <workItem from="1733715702942" duration="1151000" />
+      <workItem from="1733719108808" duration="282000" />
+      <workItem from="1733722590864" duration="1099000" />
+      <workItem from="1733789320079" duration="19902000" />
+      <workItem from="1733874217941" duration="19057000" />
+      <workItem from="1733956718531" duration="16439000" />
+      <workItem from="1734044589963" duration="16703000" />
+      <workItem from="1734225302817" duration="40000" />
+      <workItem from="1735972213225" duration="4459000" />
+      <workItem from="1735978306003" duration="658000" />
+      <workItem from="1736033581064" duration="8133000" />
+      <workItem from="1736110682213" duration="4392000" />
+      <workItem from="1736125633766" duration="7718000" />
+      <workItem from="1736136599282" duration="8414000" />
+      <workItem from="1736208002376" duration="12686000" />
+      <workItem from="1736282905408" duration="25368000" />
+      <workItem from="1736374524234" duration="24621000" />
+      <workItem from="1736462139477" duration="15375000" />
+      <workItem from="1736492062245" duration="875000" />
+      <workItem from="1736547536738" duration="7731000" />
+      <workItem from="1736563778687" duration="11001000" />
+      <workItem from="1736727952609" duration="22280000" />
+      <workItem from="1736811502544" duration="14525000" />
+      <workItem from="1736888151320" duration="23222000" />
+      <workItem from="1736918660005" duration="305000" />
+      <workItem from="1736922249118" duration="2856000" />
+      <workItem from="1736976744353" duration="28616000" />
+      <workItem from="1737067518285" duration="21038000" />
+      <workItem from="1737089648284" duration="751000" />
+      <workItem from="1737247700701" duration="11121000" />
+      <workItem from="1737266454121" duration="978000" />
+      <workItem from="1737267893521" duration="68000" />
+      <workItem from="1737320894418" duration="22145000" />
+      <workItem from="1737419590148" duration="7525000" />
+      <workItem from="1737428008065" duration="11729000" />
+      <workItem from="1737495320664" duration="12679000" />
+      <workItem from="1737510052939" duration="11128000" />
+      <workItem from="1737585525241" duration="19090000" />
+      <workItem from="1737675633446" duration="17025000" />
+      <workItem from="1737933034934" duration="19362000" />
+      <workItem from="1738017487223" duration="3996000" />
+      <workItem from="1738022414230" duration="18468000" />
+      <workItem from="1738101340549" duration="13495000" />
+      <workItem from="1738120271562" duration="11473000" />
+      <workItem from="1738184683579" duration="23808000" />
+      <workItem from="1738277532590" duration="11151000" />
+      <workItem from="1738295842727" duration="926000" />
+      <workItem from="1738296792137" duration="10530000" />
+      <workItem from="1738457713263" duration="15134000" />
+      <workItem from="1738529993784" duration="7948000" />
+      <workItem from="1738643915943" duration="2822000" />
+      <workItem from="1738726620777" duration="4248000" />
+      <workItem from="1738797737823" duration="15334000" />
+      <workItem from="1738817530991" duration="2964000" />
+      <workItem from="1738886470467" duration="2767000" />
+      <workItem from="1739233804428" duration="2372000" />
+      <workItem from="1739324232714" duration="6332000" />
+      <workItem from="1739400239117" duration="24933000" />
+      <workItem from="1739486215974" duration="13761000" />
+      <workItem from="1739739452195" duration="24278000" />
+      <workItem from="1739833307569" duration="2801000" />
+      <workItem from="1739836425203" duration="17980000" />
+      <workItem from="1739912333748" duration="19706000" />
+      <workItem from="1740003675980" duration="24024000" />
+      <workItem from="1740092475045" duration="16911000" />
+      <workItem from="1740193497433" duration="7270000" />
+      <workItem from="1740201451942" duration="219000" />
+      <workItem from="1740344337000" duration="15287000" />
+      <workItem from="1740377443074" duration="1304000" />
+      <workItem from="1740437373164" duration="18399000" />
+      <workItem from="1740518826337" duration="7469000" />
+      <workItem from="1740527307774" duration="9988000" />
+      <workItem from="1740717639279" duration="2000000" />
+      <workItem from="1741126661241" duration="18684000" />
+      <workItem from="1741154574415" duration="2290000" />
+      <workItem from="1741170431952" duration="556000" />
+      <workItem from="1741214478359" duration="18678000" />
+      <workItem from="1741297254299" duration="23912000" />
+      <workItem from="1741472065107" duration="28862000" />
+      <workItem from="1741651144617" duration="18351000" />
+      <workItem from="1741729254660" duration="29104000" />
+      <workItem from="1741823034359" duration="9929000" />
+      <workItem from="1741903107675" duration="22646000" />
+      <workItem from="1741930430050" duration="4645000" />
+      <workItem from="1741994004319" duration="1323000" />
+      <workItem from="1742075733206" duration="5693000" />
+      <workItem from="1742171751967" duration="12111000" />
+      <workItem from="1742257963288" duration="12001000" />
+      <workItem from="1742290499553" duration="223000" />
+      <workItem from="1742436725366" duration="5443000" />
+      <workItem from="1742526365982" duration="3433000" />
+      <workItem from="1742538714890" duration="5000000" />
+      <workItem from="1742603750361" duration="6838000" />
+      <workItem from="1742765412443" duration="4085000" />
+      <workItem from="1742791219794" duration="5469000" />
+      <workItem from="1742864270973" duration="14467000" />
+      <workItem from="1742937052244" duration="21930000" />
+      <workItem from="1743033586765" duration="20601000" />
+      <workItem from="1743117407296" duration="4615000" />
+      <workItem from="1743370413193" duration="3784000" />
+      <workItem from="1743380004924" duration="13396000" />
+      <workItem from="1743462084554" duration="2725000" />
+      <workItem from="1743541528053" duration="26364000" />
+      <workItem from="1743634393839" duration="15489000" />
+      <workItem from="1743722952268" duration="5966000" />
+      <workItem from="1743979130330" duration="8130000" />
+      <workItem from="1744070214378" duration="13258000" />
+      <workItem from="1744150327324" duration="18747000" />
+      <workItem from="1744243865489" duration="22110000" />
+      <workItem from="1744333710095" duration="3664000" />
+      <workItem from="1745027925284" duration="2700000" />
+      <workItem from="1745052469301" duration="331000" />
+      <workItem from="1745052935092" duration="33000" />
+      <workItem from="1745052982007" duration="74000" />
+      <workItem from="1752285843462" duration="1538000" />
+      <workItem from="1752971933879" duration="838000" />
+      <workItem from="1754788969596" duration="8690000" />
+      <workItem from="1754807487356" duration="2424000" />
+      <workItem from="1754863624103" duration="1018000" />
+      <workItem from="1754979157516" duration="2945000" />
+      <workItem from="1755065582567" duration="1195000" />
+      <workItem from="1755160244513" duration="893000" />
+      <workItem from="1755207911975" duration="1461000" />
+      <workItem from="1755324235229" duration="1420000" />
+      <workItem from="1755387156207" duration="804000" />
+      <workItem from="1756016357502" duration="3782000" />
+      <workItem from="1756191522302" duration="947000" />
+      <workItem from="1756764734402" duration="251000" />
+      <workItem from="1756885267675" duration="1123000" />
+      <workItem from="1758334355303" duration="728000" />
+      <workItem from="1758700479241" duration="70000" />
+      <workItem from="1758873491995" duration="1618000" />
+      <workItem from="1758936014751" duration="1372000" />
+      <workItem from="1759300162953" duration="692000" />
+      <workItem from="1759442050822" duration="766000" />
+      <workItem from="1759641756728" duration="850000" />
+      <workItem from="1760648845356" duration="230000" />
+      <workItem from="1761025933503" duration="1269000" />
+      <workItem from="1761252893632" duration="431000" />
+      <workItem from="1761253550532" duration="586000" />
+      <workItem from="1761634560157" duration="746000" />
+      <workItem from="1761722745800" duration="743000" />
+      <workItem from="1764991562263" duration="1420000" />
+      <workItem from="1765062196479" duration="1698000" />
+      <workItem from="1765138776094" duration="71000" />
+      <workItem from="1765139227220" duration="806000" />
+      <workItem from="1765259082802" duration="1834000" />
+      <workItem from="1765525287913" duration="1493000" />
+      <workItem from="1765584077593" duration="2461000" />
+      <workItem from="1765680633329" duration="696000" />
+      <workItem from="1765744158843" duration="1142000" />
+      <workItem from="1765780756844" duration="653000" />
+      <workItem from="1765865655398" duration="3908000" />
+      <workItem from="1765920442544" duration="751000" />
+      <workItem from="1766088657502" duration="602000" />
+      <workItem from="1766195824709" duration="4203000" />
+      <workItem from="1766536001511" duration="663000" />
+      <workItem from="1766789147023" duration="9859000" />
+      <workItem from="1766894996623" duration="1220000" />
+      <workItem from="1767225902658" duration="2023000" />
+      <workItem from="1767732299736" duration="697000" />
+      <workItem from="1767751207563" duration="1364000" />
+      <workItem from="1767905844845" duration="700000" />
+      <workItem from="1767941355129" duration="2838000" />
+      <workItem from="1767996698589" duration="1112000" />
+      <workItem from="1768002245545" duration="8485000" />
+      <workItem from="1768088642171" duration="8786000" />
+      <workItem from="1768200870457" duration="718000" />
+      <workItem from="1768705269451" duration="1939000" />
+      <workItem from="1768888759684" duration="1346000" />
+      <workItem from="1768973852049" duration="2741000" />
+      <workItem from="1769026769756" duration="2032000" />
+      <workItem from="1769065030464" duration="1906000" />
+      <workItem from="1769207010397" duration="4561000" />
+      <workItem from="1769220780648" duration="1685000" />
+      <workItem from="1769224603204" duration="629000" />
+      <workItem from="1769225603939" duration="81000" />
+      <workItem from="1769386010172" duration="3341000" />
+      <workItem from="1769492709581" duration="1066000" />
+      <workItem from="1769495104425" duration="694000" />
+      <workItem from="1769813975522" duration="1993000" />
+      <workItem from="1770017657172" duration="2003000" />
+      <workItem from="1770096696662" duration="1828000" />
+      <workItem from="1770182327608" duration="2178000" />
+      <workItem from="1770323611284" duration="175000" />
+      <workItem from="1770426635657" duration="2579000" />
+      <workItem from="1770509836418" duration="668000" />
+      <workItem from="1771111485677" duration="1297000" />
+      <workItem from="1771125674750" duration="1092000" />
+      <workItem from="1771186235614" duration="1307000" />
+      <workItem from="1771224977225" duration="1276000" />
+      <workItem from="1771292161731" duration="4614000" />
+      <workItem from="1771315891224" duration="1639000" />
+      <workItem from="1771629888955" duration="657000" />
+      <workItem from="1771897228061" duration="756000" />
+      <workItem from="1771913172446" duration="688000" />
+      <workItem from="1772136720853" duration="142000" />
+      <workItem from="1772519876884" duration="965000" />
+      <workItem from="1777964355591" duration="1099000" />
+      <workItem from="1778832198639" duration="1938000" />
+      <workItem from="1778885234521" duration="5561000" />
+      <workItem from="1778914790837" duration="1026000" />
+      <workItem from="1779053985082" duration="530000" />
+      <workItem from="1779173350395" duration="752000" />
+      <workItem from="1779258644981" duration="2206000" />
+      <workItem from="1779350292741" duration="1431000" />
+      <workItem from="1779436508650" duration="1531000" />
+      <workItem from="1779492245214" duration="3445000" />
+      <workItem from="1779499689156" duration="4874000" />
+      <workItem from="1779585873730" duration="8182000" />
+      <workItem from="1780096108209" duration="5066000" />
+      <workItem from="1780109569974" duration="2660000" />
+      <workItem from="1780392656123" duration="631000" />
+      <workItem from="1781324001212" duration="840000" />
+      <workItem from="1781856755531" duration="1834000" />
+      <workItem from="1781921298554" duration="7729000" />
+      <workItem from="1782007046095" duration="615000" />
+      <workItem from="1782199518881" duration="1310000" />
+      <workItem from="1788305476552" duration="28000" />
+      <workItem from="1788317562089" duration="3510000" />
+      <workItem from="1788326458698" duration="2905000" />
+      <workItem from="1788392820633" duration="3413000" />
+    </task>
+    <task id="LOCAL-00007" summary="Due to a problem with VST2 instrument crashing the DAW, backed off the frequency of calling VST2 editor idle and made sure to only call VST2 editor idle once the editor has been opened.">
+      <option name="closed" value="true" />
+      <created>1733719319352</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1733719319352</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Reduced latency when playing a note from an external midi keyboard by reducing the nuber of blocks in the instrument track background processor from 20 to 2.&#10;When recording events into a riff set riff, adjusted the note position by getting the modulus using the riff length - further work is needed to overwrite overlapping notes or introduce takes (for the distant future). &#10;Separated time critical jack event handling out from normal jack event handling.&#10;Moved scanning for audio plugins and starting the autosave thread from the main function to separate functions called by main.">
+      <option name="closed" value="true" />
+      <created>1733803812598</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1733803812598</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Tidied up closing the application, making sure to shut down all tracks and their plugins.&#10;When creating a new file or opening a file, making sure to shut down all tracks and their plugins for the project being replaced.">
+      <option name="closed" value="true" />
+      <created>1733809856991</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1733809856991</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Removed unused dependencies.">
+      <option name="closed" value="true" />
+      <created>1733811067856</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1733811067856</updated>
+    </task>
+    <task id="LOCAL-00011" summary="Fixed a number of bugs relating the playing and recording of audio plugin parameters.">
+      <option name="closed" value="true" />
+      <created>1733965690097</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1733965690097</updated>
+    </task>
+    <task id="LOCAL-00012" summary="Changed the beat grid automation custom painter to only draw the riff refs when in CurrentView::Track.">
+      <option name="closed" value="true" />
+      <created>1733974742798</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1733974742798</updated>
+    </task>
+    <task id="LOCAL-00013" summary="Fixed a pointer issue.">
+      <option name="closed" value="true" />
+      <created>1736922360250</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1736922360250</updated>
+    </task>
+    <task id="LOCAL-00014" summary="Added vst3_checker to parent Cargo.toml.">
+      <option name="closed" value="true" />
+      <created>1736922416029</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1736922416029</updated>
+    </task>
+    <task id="LOCAL-00015" summary="Added VST3 plugin usage.">
+      <option name="closed" value="true" />
+      <created>1736922683569</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1736922683569</updated>
+    </task>
+    <task id="LOCAL-00016" summary="Updated submodule version.">
+      <option name="closed" value="true" />
+      <created>1736923690294</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1736923690294</updated>
+    </task>
+    <task id="LOCAL-00017" summary="Fixed scanned instrument and effect plugin data read from configuration being emptied when resetting state.&#10;Fixed missing vst3 logic when setting the selected instrument plugin in the track details dialogue.&#10;Fixed failing to set the newly created riff as the selected riff in the track details dialogue.">
+      <option name="closed" value="true" />
+      <created>1736985395656</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1736985395656</updated>
+    </task>
+    <task id="LOCAL-00018" summary="Added pitch bend editing.&#10;Added Vst3 pitch bend and controller handling.">
+      <option name="closed" value="true" />
+      <created>1737004971383</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1737004971383</updated>
+    </task>
+    <task id="LOCAL-00019" summary="Completed second pass MPE implementation.&#10;Add use of a thread pool.&#10;Added delete vst3 plugin functionality with workarounds for crashes when removing the plugin from the thread local map (destructors probably not cleaning things up properly - have omitted plugin deletion from the map in the meantime).">
+      <option name="closed" value="true" />
+      <created>1737506178989</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1737506178989</updated>
+    </task>
+    <task id="LOCAL-00020" summary="Fixed an issue where note velocities could not be selected for editing.">
+      <option name="closed" value="true" />
+      <created>1737508548543</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1737508548543</updated>
+    </task>
+    <task id="LOCAL-00021" summary="Set up a midi file import dialogue instance for the life of the application with new directories added as shortcuts - allows easy navigation back to the same folder - gtk3 resets the directory on hide.">
+      <option name="closed" value="true" />
+      <created>1737588386571</created>
+      <option name="number" value="00021" />
+      <option name="presentableId" value="LOCAL-00021" />
+      <option name="project" value="LOCAL" />
+      <updated>1737588386571</updated>
+    </task>
+    <task id="LOCAL-00022" summary="Fixed piano roll unable to empty selection by dragging a select rectangle with no notes in it.">
+      <option name="closed" value="true" />
+      <created>1737589941086</created>
+      <option name="number" value="00022" />
+      <option name="presentableId" value="LOCAL-00022" />
+      <option name="project" value="LOCAL" />
+      <updated>1737589941086</updated>
+    </task>
+    <task id="LOCAL-00023" summary="Fixed deleting a track causes no audio - had not removed the audio consumer from the audio layer.">
+      <option name="closed" value="true" />
+      <created>1737592052598</created>
+      <option name="number" value="00023" />
+      <option name="presentableId" value="LOCAL-00023" />
+      <option name="project" value="LOCAL" />
+      <updated>1737592052598</updated>
+    </task>
+    <task id="LOCAL-00024" summary="Added automatic naming of riff sets based on the active riff references - first cut, manual naming still available but overwritten when incrementing through track riffs in a riff set.&#10;Fixed an issue with all the riff sets in the riff arrangement UI view having the very first riff set's name.">
+      <option name="closed" value="true" />
+      <created>1737610938841</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1737610938841</updated>
+    </task>
+    <task id="LOCAL-00025" summary="Added riff grid implementation - not complete.&#10;Refactored where appropriate to fit in with riff grid addition.">
+      <option name="closed" value="true" />
+      <created>1738120045685</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1738120045686</updated>
+    </task>
+    <task id="LOCAL-00026" summary="Fixed a bug in the EditItemHandler when dealing with RiffReferences where it was not distinguishing between any riff reference that pointed to the same riff on a given track.">
+      <option name="closed" value="true" />
+      <created>1738472133016</created>
+      <option name="number" value="00026" />
+      <option name="presentableId" value="LOCAL-00026" />
+      <option name="project" value="LOCAL" />
+      <updated>1738472133016</updated>
+    </task>
+    <task id="LOCAL-00027" summary="Added the Steinberg vst3sdk github repo as a submodule and adjusted the C++ build to suit.&#10;Added build-essential debian package dependency to the github build. &#10;Added riff grid riff reference change action implementations.&#10;Started adjusting riff arrangement view play cursor update code - needs more work, probably broken in a couple of places.">
+      <option name="closed" value="true" />
+      <created>1738816458656</created>
+      <option name="number" value="00027" />
+      <option name="presentableId" value="LOCAL-00027" />
+      <option name="project" value="LOCAL" />
+      <updated>1738816458656</updated>
+    </task>
+    <task id="LOCAL-00028" summary="Added vst3sdk submodule directory.">
+      <option name="closed" value="true" />
+      <created>1738817319749</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1738817319749</updated>
+    </task>
+    <task id="LOCAL-00029" summary="Fixed a broken unit test - from Midi MPE changes.">
+      <option name="closed" value="true" />
+      <created>1738818157324</created>
+      <option name="number" value="00029" />
+      <option name="presentableId" value="LOCAL-00029" />
+      <option name="project" value="LOCAL" />
+      <updated>1738818157324</updated>
+    </task>
+    <task id="LOCAL-00030" summary="Added vst3_checker build artifact upload.">
+      <option name="closed" value="true" />
+      <created>1738819637911</created>
+      <option name="number" value="00030" />
+      <option name="presentableId" value="LOCAL-00030" />
+      <option name="project" value="LOCAL" />
+      <updated>1738819637911</updated>
+    </task>
+    <task id="LOCAL-00031" summary="Fixed some automation editing.&#10;Implemented more automation editing.&#10;Added riff start note functionality and riff reference play mode functionality.">
+      <option name="closed" value="true" />
+      <created>1739836364004</created>
+      <option name="number" value="00031" />
+      <option name="presentableId" value="LOCAL-00031" />
+      <option name="project" value="LOCAL" />
+      <updated>1739836364004</updated>
+    </task>
+    <task id="LOCAL-00032" summary="Added use of selected items to EditItemHandler when the edited item is one of selected items - the move, charge start and change end operation is performed on all the selected items in the current view (context).&#10;Added copying of selected items when the control key is pressed to EditItemHandler.">
+      <option name="closed" value="true" />
+      <created>1739851986928</created>
+      <option name="number" value="00032" />
+      <option name="presentableId" value="LOCAL-00032" />
+      <option name="project" value="LOCAL" />
+      <updated>1739851986928</updated>
+    </task>
+    <task id="LOCAL-00033" summary="Refactored editing - moved old selection code to store the uuids of the selected and moved old editing code to use the selected uuids.&#10;Fixed bugs in the EditItemHandler.&#10;Added a drag copy mode.&#10;Made the riff grid drawing area focusable to allow key events to set the edit mode.&#10;Added a loop mode keyboard shortcut to the track grid and the riff grid.&#10;Added a riff grid riff reference mode keyboard shortcut to the riff grid.">
+      <option name="closed" value="true" />
+      <created>1740012957531</created>
+      <option name="number" value="00033" />
+      <option name="presentableId" value="LOCAL-00033" />
+      <option name="project" value="LOCAL" />
+      <updated>1740012957531</updated>
+    </task>
+    <task id="LOCAL-00034" summary="Added multi-track editing.">
+      <option name="closed" value="true" />
+      <created>1740112088741</created>
+      <option name="number" value="00034" />
+      <option name="presentableId" value="LOCAL-00034" />
+      <option name="project" value="LOCAL" />
+      <updated>1740112088741</updated>
+    </task>
+    <task id="LOCAL-00035" summary="Added more selection/deselection editing functionality.">
+      <option name="closed" value="true" />
+      <created>1740377660044</created>
+      <option name="number" value="00035" />
+      <option name="presentableId" value="LOCAL-00035" />
+      <option name="project" value="LOCAL" />
+      <updated>1740377660044</updated>
+    </task>
+    <task id="LOCAL-00036" summary="Added rough cut windowed zoom.&#10;Added automation envelopes.&#10;Added select and unselect all.&#10;Added automation change editing.&#10;Upgraded the quantise functionality.&#10;Added triplet functionality.&#10;Changed to separate selection state and copy buffers for the track and the riff grids.&#10;Added song time display.&#10;Removed the timeouts when requesting preset data.">
+      <option name="closed" value="true" />
+      <created>1741749715034</created>
+      <option name="number" value="00036" />
+      <option name="presentableId" value="LOCAL-00036" />
+      <option name="project" value="LOCAL" />
+      <updated>1741749715034</updated>
+    </task>
+    <task id="LOCAL-00037" summary="Fixed some code quality issues.&#10;Added drawing of riff sequence and riff grid riff references to the riff arrangement automation view.">
+      <option name="closed" value="true" />
+      <created>1741755270482</created>
+      <option name="number" value="00037" />
+      <option name="presentableId" value="LOCAL-00037" />
+      <option name="project" value="LOCAL" />
+      <updated>1741755270482</updated>
+    </task>
+    <task id="LOCAL-00038" summary="Fixed automation change editing to set a minimum value of 0.0.&#10;Added automation value label.&#10;Made export as wave file context sensitive - when viewing the track grid export the track grid sequence audio and when viewing a riff arrangement export it as audio.">
+      <option name="closed" value="true" />
+      <created>1741823918256</created>
+      <option name="number" value="00038" />
+      <option name="presentableId" value="LOCAL-00038" />
+      <option name="project" value="LOCAL" />
+      <updated>1741823918256</updated>
+    </task>
+    <task id="LOCAL-00039" summary="Fixed updating of available items in blades that have combo-boxes.&#10;Made combobox element names consistent.">
+      <option name="closed" value="true" />
+      <created>1741831137387</created>
+      <option name="number" value="00039" />
+      <option name="presentableId" value="LOCAL-00039" />
+      <option name="project" value="LOCAL" />
+      <updated>1741831137387</updated>
+    </task>
+    <task id="LOCAL-00040" summary="Added proper handling of tempo, sample rate, block size changes and time signature.&#10;Added a time signature numerator and denominator spinners to the UI.">
+      <option name="closed" value="true" />
+      <created>1742290694216</created>
+      <option name="number" value="00040" />
+      <option name="presentableId" value="LOCAL-00040" />
+      <option name="project" value="LOCAL" />
+      <updated>1742290694216</updated>
+    </task>
+    <task id="LOCAL-00041" summary="Added use of time signature numerator to change grid horizontal rendering.&#10;Added editing of riff length via a riff reference in the track grid view.">
+      <option name="closed" value="true" />
+      <created>1742543729550</created>
+      <option name="number" value="00041" />
+      <option name="presentableId" value="LOCAL-00041" />
+      <option name="project" value="LOCAL" />
+      <updated>1742543729550</updated>
+    </task>
+    <task id="LOCAL-00042" summary="Added cycling through the linked to riffs for a riff reference.">
+      <option name="closed" value="true" />
+      <created>1742876975772</created>
+      <option name="number" value="00042" />
+      <option name="presentableId" value="LOCAL-00042" />
+      <option name="project" value="LOCAL" />
+      <updated>1742876975772</updated>
+    </task>
+    <task id="LOCAL-00043" summary="Fixed a unit test.">
+      <option name="closed" value="true" />
+      <created>1742878249335</created>
+      <option name="number" value="00043" />
+      <option name="presentableId" value="LOCAL-00043" />
+      <option name="project" value="LOCAL" />
+      <updated>1742878249335</updated>
+    </task>
+    <task id="LOCAL-00044" summary="Made sure that everything is using the block size and sample rate from configuration.&#10;Set the buffer sizes to the maximum buffer size of 2048 (4096 causes a crash due to memory issues).&#10;Caught some more tempo value issues.&#10;Added use of time signature values instead of hard coded values.">
+      <option name="closed" value="true" />
+      <created>1743056547465</created>
+      <option name="number" value="00044" />
+      <option name="presentableId" value="LOCAL-00044" />
+      <option name="project" value="LOCAL" />
+      <updated>1743056547465</updated>
+    </task>
+    <task id="LOCAL-00045" summary="Updated the vst-rs git submodule to the latest version (use of custom number of samples to process from the buffer - buffer size is set to the max buffer value of 2048 frames and only block size frames need to be processed).">
+      <option name="closed" value="true" />
+      <created>1743056730444</created>
+      <option name="number" value="00045" />
+      <option name="presentableId" value="LOCAL-00045" />
+      <option name="project" value="LOCAL" />
+      <updated>1743056730444</updated>
+    </task>
+    <task id="LOCAL-00046" summary="Updated the vst-rs git submodule to the latest version (fixed a bug with a plugin not returning any preset data - caused a crash).&#10;Fixed the track event sorting algorithm.">
+      <option name="closed" value="true" />
+      <created>1743400490104</created>
+      <option name="number" value="00046" />
+      <option name="presentableId" value="LOCAL-00046" />
+      <option name="project" value="LOCAL" />
+      <updated>1743400490104</updated>
+    </task>
+    <task id="LOCAL-00047" summary="Add plugin path configuration to the configuration dialogue.&#10;Added a scan for plugins menu item under a new 'Utils' menu.&#10;Added UI feedback whilst plugins are being scanned.&#10;Added changing of selected notes MPE note id when changing the selected MPE note id to be used.">
+      <option name="closed" value="true" />
+      <created>1743655877878</created>
+      <option name="number" value="00047" />
+      <option name="presentableId" value="LOCAL-00047" />
+      <option name="project" value="LOCAL" />
+      <updated>1743655877879</updated>
+    </task>
+    <task id="LOCAL-00048" summary="Add plugin path configuration to the configuration dialogue.&#10;Added a scan for plugins menu item under a new 'Utils' menu.&#10;Added UI feedback whilst plugins are being scanned.&#10;Added changing of selected notes MPE note id when changing the selected MPE note id to be used.">
+      <option name="closed" value="true" />
+      <created>1743655943489</created>
+      <option name="number" value="00048" />
+      <option name="presentableId" value="LOCAL-00048" />
+      <option name="project" value="LOCAL" />
+      <updated>1743655943489</updated>
+    </task>
+    <task id="LOCAL-00049" summary="Fixed unit tests in riff-daw and vst-rs.">
+      <option name="closed" value="true" />
+      <created>1743657427604</created>
+      <option name="number" value="00049" />
+      <option name="presentableId" value="LOCAL-00049" />
+      <option name="project" value="LOCAL" />
+      <updated>1743657427604</updated>
+    </task>
+    <task id="LOCAL-00050" summary="Changed th release build optimisation level to 2 from 3 - seems to give better performance.">
+      <option name="closed" value="true" />
+      <created>1744336880106</created>
+      <option name="number" value="00050" />
+      <option name="presentableId" value="LOCAL-00050" />
+      <option name="project" value="LOCAL" />
+      <updated>1744336880106</updated>
+    </task>
+    <task id="LOCAL-00051" summary="Added a riff arrangement overview.&#10;Modified riff set combo boxes to have a completion entry - seems to fix the issue of oversized combo box when setting a max length on the completion.&#10;Changed the open file code to give more updates to the progress dialogue and to get a lock on the state multiple time rather that in one large block.&#10;Fixed some if statement duplicated conditions.&#10;Fixed export to wave file incorrectly set block size (was set to the sample rate).">
+      <option name="closed" value="true" />
+      <created>1744337355009</created>
+      <option name="number" value="00051" />
+      <option name="presentableId" value="LOCAL-00051" />
+      <option name="project" value="LOCAL" />
+      <updated>1744337355009</updated>
+    </task>
+    <task id="LOCAL-00052" summary="Added updating of the playing riff set.">
+      <option name="closed" value="true" />
+      <created>1745052533515</created>
+      <option name="number" value="00052" />
+      <option name="presentableId" value="LOCAL-00052" />
+      <option name="project" value="LOCAL" />
+      <updated>1745052533515</updated>
+    </task>
+    <task id="LOCAL-00053" summary="Experimental play with Xilem GUI library.">
+      <option name="closed" value="true" />
+      <created>1788319130654</created>
+      <option name="number" value="00053" />
+      <option name="presentableId" value="LOCAL-00053" />
+      <option name="project" value="LOCAL" />
+      <updated>1788319130655</updated>
+    </task>
+    <task id="LOCAL-00054" summary="Changed to 2024 edition.&#10;Fixed lockup when closing the main window.&#10;Fixed application panic when clicking any track panel button.">
+      <option name="closed" value="true" />
+      <created>1788333121174</created>
+      <option name="number" value="00054" />
+      <option name="presentableId" value="LOCAL-00054" />
+      <option name="project" value="LOCAL" />
+      <updated>1788333121175</updated>
+    </task>
+    <task id="LOCAL-00055" summary="Added updating of the configuration bookmarks from the file_dialog bookmarks. Added saving of the configuration when the application closes.">
+      <option name="closed" value="true" />
+      <created>1788394745245</created>
+      <option name="number" value="00055" />
+      <option name="presentableId" value="LOCAL-00055" />
+      <option name="project" value="LOCAL" />
+      <updated>1788394745246</updated>
+    </task>
+    <option name="localTasksCounter" value="56" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Fixed some automation editing.&#10;Implemented more automation editing.&#10;Added riff start note functionality and riff reference play mode functionality." />
+    <MESSAGE value="Added use of selected items to EditItemHandler when the edited item is one of selected items - the move, charge start and change end operation is performed on all the selected items in the current view (context).&#10;Added copying of selected items when the control key is pressed to EditItemHandler." />
+    <MESSAGE value="Refactored editing - moved old selection code to store the uuids of the selected and moved old editing code to use the selected uuids.&#10;Fixed bugs in the EditItemHandler.&#10;Added a drag copy mode.&#10;Made the riff grid drawing area focusable to allow key events to set the edit mode.&#10;Added a loop mode keyboard shortcut to the track grid and the riff grid.&#10;Added a riff grid riff reference mode keyboard shortcut to the riff grid." />
+    <MESSAGE value="Added multi-track editing." />
+    <MESSAGE value="Added more selection/deselection editing functionality." />
+    <MESSAGE value="Added rough cut windowed zoom.&#10;Added automation envelopes.&#10;Added select and unselect all.&#10;Added automation change editing.&#10;Upgraded the quantise functionality.&#10;Added triplet functionality.&#10;Changed to separate selection state and copy buffers for the track and the riff grids.&#10;Added song time display.&#10;Removed the timeouts when requesting preset data." />
+    <MESSAGE value="Fixed some code quality issues.&#10;Added drawing of riff sequence and riff grid riff references to the riff arrangement automation view." />
+    <MESSAGE value="Fixed automation change editing to set a minimum value of 0.0.&#10;Added automation value label.&#10;Made export as wave file context sensitive - when viewing the track grid export the track grid sequence audio and when viewing a riff arrangement export it as audio." />
+    <MESSAGE value="Fixed updating of available items in blades that have combo-boxes.&#10;Made combobox element names consistent." />
+    <MESSAGE value="Added proper handling of tempo, sample rate, block size changes and time signature.&#10;Added a time signature numerator and denominator spinners to the UI." />
+    <MESSAGE value="Added use of time signature numerator to change grid horizontal rendering.&#10;Added editing of riff length via a riff reference in either the track or riff grid views." />
+    <MESSAGE value="Added use of time signature numerator to change grid horizontal rendering.&#10;Added editing of riff length via a riff reference in the track grid view." />
+    <MESSAGE value="Added cycling through the linked to riffs for a riff reference." />
+    <MESSAGE value="Fixed a unit test." />
+    <MESSAGE value="Made sure that everything is using the block size and sample rate from configuration.&#10;Set the buffer sizes to the maximum buffer size of 2048 (4096 causes a crash due to memory issues).&#10;Caught some more tempo value issues.&#10;Added use of time signature values instead of hard coded values." />
+    <MESSAGE value="Updated the vst-rs git submodule to the latest version (use of custom number of samples to process from the buffer - buffer size is set to the max buffer value of 2048 frames and only block size frames need to be processed)." />
+    <MESSAGE value="Updated the vst-rs git submodule to the latest version (fixed a bug with a plugin not returning any preset data - caused a crash).&#10;Fixed the track event sorting algorithm." />
+    <MESSAGE value="Add plugin path configuration to the configuration dialogue.&#10;Added a scan for plugins menu item under a new 'Utils' menu.&#10;Added UI feedback whilst plugins are being scanned.&#10;Added changing of selected notes MPE note id when changing the selected MPE note id to be used." />
+    <MESSAGE value="Fixed unit tests in riff-daw and vst-rs." />
+    <MESSAGE value="Changed th release build optimisation level to 2 from 3 - seems to give better performance." />
+    <MESSAGE value="Added a riff arrangement overview.&#10;Modified riff set combo boxes to have a completion entry - seems to fix the issue of oversized combo box when setting a max length on the completion.&#10;Changed the open file code to give more updates to the progress dialogue and to get a lock on the state multiple time rather that in one large block.&#10;Fixed some if statement duplicated conditions.&#10;Fixed export to wave file incorrectly set block size (was set to the sample rate)." />
+    <MESSAGE value="Added updating of the playing riff set." />
+    <MESSAGE value="Experimental play with Xilem GUI library." />
+    <MESSAGE value="Changed to 2024 edition.&#10;Fixed lockup when closing the main window.&#10;Fixed application panic when clicking any track panel button." />
+    <MESSAGE value="Added updating of the configuration bookmarks from the file_dialog bookmarks. Added saving of the configuration when the application closes." />
+    <option name="LAST_COMMIT_MESSAGE" value="Added updating of the configuration bookmarks from the file_dialog bookmarks. Added saving of the configuration when the application closes." />
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+</project>

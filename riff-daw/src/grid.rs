@@ -1610,8 +1610,8 @@ impl Grid for BeatGrid {
         context.rectangle(clip_x1, clip_y1, clip_x2 - clip_x1, clip_y2 - clip_y1);
         let _ = context.fill();
 
-        let height = drawing_area.allocated_height() as f64;
-        let width = drawing_area.allocated_width() as f64;
+        let height = drawing_area.size(gtk4::Orientation::Vertical) as f64;
+        let width = drawing_area.size(gtk4::Orientation::Horizontal) as f64;
 
         if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
             window.set_cursor(gdk4::Cursor::from_name("crosshair", None).as_ref());
@@ -6057,21 +6057,19 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
                                     if let Some(riff_arrangement_scrolled_window) = widget.dynamic_cast_ref::<ScrolledWindow>() {
                                         if let Some(widget) = riff_arrangement_scrolled_window.child() {
                                             if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
-                                                let mut view_port_clip = view_port.allocation();
-                                                // debug!("view_port: clip={:?}", view_port.allocation());
+                                                let mut view_port_clip = (0.0_f64, 0.0_f64, view_port.size(gtk4::Orientation::Horizontal) as f64, view_port.size(gtk4::Orientation::Vertical) as f64);
 
                                                 if let Some(widget) = view_port.child() {
                                                     if let Some(riff_set_box) = widget.dynamic_cast_ref::<gtk4::Box>() {
-                                                        if let Some(coord) = view_port.translate_coordinates(riff_set_box, 0.0, 0.0) {
-                                                            // debug!("Translate: {:?}", coord);
-                                                            view_port_clip.set_x(coord.0 as i32);
-                                                            view_port_clip.set_y(coord.1 as i32);
+                                                        if let Some(bounds) = view_port.compute_bounds(riff_set_box) {
+                                                            view_port_clip.0 = bounds.x() as f64;
+                                                            view_port_clip.1 = bounds.y() as f64;
                                                         }
 
                                                         let mut process_riff_set_box_child = true;
                                                         for widget in riff_set_box.children().iter() {
-                                                            let widget_clip = widget.allocation();
-                                                            if let Some(_) = widget_clip.intersect(&view_port_clip) {
+                                                            let widget_clip = widget.compute_bounds(riff_set_box).map(|r| (r.x() as f64, r.y() as f64, r.width() as f64, r.height() as f64)).unwrap_or((0., 0., 0., 0.));
+                                                            if rects_intersect(widget_clip, view_port_clip) {
                                                                 view_window_riff_item_uuids.push(widget.widget_name().to_string());
                                                                 // debug!("view_port: child widget_details={} - {:?}", widget.widget_name(), widget.allocation());
 
@@ -6088,8 +6086,9 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
                                                                                                         for (track_index, widget) in riff_set_drawing_areas_box.children().iter().enumerate() {
                                                                                                             if let Some(_drawing_area) = widget.dynamic_cast_ref::<DrawingArea>() {
                                                                                                                 // debug!("riff set - drawing area: track_index={}, clip={:?}", track_index, widget.allocation());
-                                                                                                                if let Some(_) = widget.allocation().intersect(&view_port_clip) {
-                                                                                                                    debug!("riff set - drawing area: riff set name={}, track_index={}, viewport clip={:?}, widget clip={:?}", widget.widget_name(), track_index, &view_port_clip, widget.allocation());
+                                                                                                                let da_clip = widget.compute_bounds(riff_set_box).map(|r| (r.x() as f64, r.y() as f64, r.width() as f64, r.height() as f64)).unwrap_or((0., 0., 0., 0.));
+                                                                                                                if rects_intersect(da_clip, view_port_clip) {
+                                                                                                                    debug!("riff set - drawing area: riff set name={}, track_index={}, viewport clip={:?}, widget clip={:?}", widget.widget_name(), track_index, view_port_clip, da_clip);
                                                                                                                     // debug!("riff set - drawing area intersects view port clip: track_index={}", track_index);
                                                                                                                     view_window_track_indexes.push(track_index as f64);
                                                                                                                     process_riff_set_box_child = false;
@@ -6266,4 +6265,8 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn rects_intersect(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
 }

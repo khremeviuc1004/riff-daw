@@ -25,7 +25,6 @@
     <property name="step-increment">1</property>
     <property name="page-increment">10</property>
   </object>
-  <object class="GtkEntryCompletion" id="riff_seqeunce_riff_set_entry_completion" />
   <object class="GtkImage" id="save_image">
     <property name="visible">True</property>
   </object>
@@ -3208,6 +3207,5 @@
   </object>
   <object class="GtkEntry">
     <property name="max-length">20</property>
-    <property name="completion">riff_seqeunce_riff_set_entry_completion</property>
   </object>
 </interface>

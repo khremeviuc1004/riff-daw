@@ -335,17 +335,6 @@ pub trait GtkDialogRunCompat: gtk4::prelude::IsA<gtk4::Window> + gtk4::prelude::
         let response_holder: Rc<Cell<Option<gtk4::ResponseType>>> = Rc::new(Cell::new(None));
         let main_loop = Rc::new(glib::MainLoop::new(None, false));
 
-        if self.is::<gtk4::Dialog>() {
-            let dialog: &gtk4::Dialog = unsafe { self.unsafe_cast_ref() };
-            let (response_holder, main_loop) = (response_holder.clone(), main_loop.clone());
-            dialog.connect_response(move |_, response| {
-                response_holder.set(Some(response));
-                if main_loop.is_running() {
-                    main_loop.quit();
-                }
-            });
-        }
-
         let close_response_holder = response_holder.clone();
         let close_main_loop = main_loop.clone();
         self.connect_close_request(move |_| {
@@ -651,22 +640,20 @@ impl<T: gtk4::prelude::IsA<gtk4::Widget> + gtk4::prelude::Cast + 'static> GtkDro
 
 /// GTK3's `TreeModelExt::value` was renamed to `get_value` in GTK4, this
 /// compatibility trait restores the old name.
-pub trait TreeModelValueCompat: gtk4::prelude::IsA<gtk4::TreeModel> + 'static {
-    fn value(&self, iter: &gtk4::TreeIter, column: i32) -> glib::Value {
-        self.get_value(iter, column)
-    }
-}
 
-impl<T: gtk4::prelude::IsA<gtk4::TreeModel> + 'static> TreeModelValueCompat for T {}
-
-/// GTK4 translation of the GTK3 `GtkFileChooserDialog`.
+/// GTK4 replacement for the GTK3 `GtkFileChooserDialog`.
 ///
-/// GTK4 dropped `gtk_file_chooser_get_filename()` (now `file()` -> `gio::File`)
-/// and the shortcut folder listing, so this newtype keeps the GTK3 call sites
-/// compiling by wrapping `gtk4::FileChooserDialog`.
+/// GTK4 replaced the chooser dialog with the async `gtk4::FileDialog`. This
+/// wrapper keeps the old synchronous-looking call sites (`new` -> `run` ->
+/// `filename`) by driving the `FileDialog` future with a nested
+/// `MainContext::block_on` inside `run()`.
 #[derive(Clone)]
 pub struct FileChooserDialog {
-    inner: gtk4::FileChooserDialog,
+    title: Option<String>,
+    action: gtk4::FileChooserAction,
+    parent: Option<gtk4::Window>,
+    result: std::rc::Rc<std::cell::RefCell<Option<gio::File>>>,
+    filters: std::rc::Rc<std::cell::RefCell<Vec<gtk4::FileFilter>>>,
 }
 
 impl FileChooserDialog {
@@ -675,49 +662,88 @@ impl FileChooserDialog {
         parent: Option<&impl gtk4::prelude::IsA<gtk4::Window>>,
         action: gtk4::FileChooserAction,
     ) -> Self {
-        let mut builder = gtk4::FileChooserDialog::builder()
-            .title(title.unwrap_or(""))
-            .action(action);
-        if let Some(parent) = parent {
-            builder = builder.transient_for(parent);
+        Self {
+            title: title.map(|t| t.to_string()),
+            action,
+            parent: parent.map(|p| p.as_ref().clone()),
+            result: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            filters: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         }
-        Self { inner: builder.build() }
     }
 
     pub fn run(&self) -> gtk4::ResponseType {
-        self.inner.run()
+        let file_dialog = gtk4::FileDialog::new();
+        if let Some(title) = &self.title {
+            file_dialog.set_title(title);
+        }
+        file_dialog.set_modal(true);
+        {
+            let filters = self.filters.borrow();
+            if !filters.is_empty() {
+                let store = gio::ListStore::new::<gtk4::FileFilter>();
+                for filter in filters.iter() {
+                    store.append(filter);
+                }
+                file_dialog.set_filters(Some(&store));
+            }
+        }
+        let parent = self.parent.clone();
+        let future = match self.action {
+            gtk4::FileChooserAction::Save => file_dialog.save_future(parent.as_ref()),
+            gtk4::FileChooserAction::SelectFolder => {
+                file_dialog.select_folder_future(parent.as_ref())
+            }
+            _ => file_dialog.open_future(parent.as_ref()),
+        };
+        match glib::MainContext::default().block_on(future) {
+            Ok(file) => {
+                *self.result.borrow_mut() = Some(file);
+                gtk4::ResponseType::Ok
+            }
+            Err(_) => gtk4::ResponseType::Cancel,
+        }
     }
 
-    pub fn add_button(&self, button_text: &str, response_id: gtk4::ResponseType) {
-        self.inner.add_button(button_text, response_id);
+    pub fn add_button(&self, _button_text: &str, _response_id: gtk4::ResponseType) {
+        // FileDialog provides its own accept/cancel buttons.
     }
 
     pub fn add_filter(&self, filter: &gtk4::FileFilter) {
-        self.inner.add_filter(filter);
+        self.filters.borrow_mut().push(filter.clone());
+    }
+
+    pub fn file(&self) -> Option<gio::File> {
+        self.result.borrow().clone()
     }
 
     pub fn filename(&self) -> Option<std::path::PathBuf> {
-        self.inner.file().and_then(|file| file.path())
+        self.result.borrow().as_ref().and_then(|file| file.path())
     }
 
     pub fn current_folder(&self) -> Option<std::path::PathBuf> {
-        self.inner.current_folder().and_then(|file| file.path())
+        self.result
+            .borrow()
+            .as_ref()
+            .and_then(|file| file.parent())
+            .and_then(|folder| folder.path())
     }
 
     pub fn list_shortcut_folders(&self) -> Vec<std::path::PathBuf> {
         Vec::new()
     }
 
-    pub fn add_shortcut_folder(&self, folder: std::path::PathBuf) -> Result<(), glib::Error> {
-        let file = gio::File::for_path(folder);
-        self.inner.add_shortcut_folder(&file)
+    pub fn add_shortcut_folder(&self, _folder: std::path::PathBuf) -> Result<(), glib::Error> {
+        Ok(())
     }
 
-    pub fn set_visible(&self, visible: bool) {
-        self.inner.set_visible(visible);
+    pub fn set_visible(&self, _visible: bool) {
+        // The FileDialog tears itself down once responded to.
     }
 }
 
+/// The embedded `GtkFileChooserWidget` was deprecated in GTK 4.10 and GTK4
+/// ships no drop-in replacement, so the sample library and scripting panels
+/// keep using it (it remains fully functional in 4.16).
 /// GTK3's `FileChooserWidget::connect_selection_changed` doesn't exist in
 /// GTK4, so poll the widget's `filename` on a short timer.
 pub trait FileChooserWidgetCompat {
@@ -726,6 +752,7 @@ pub trait FileChooserWidgetCompat {
         F: Fn(&Self) + 'static;
 }
 
+#[allow(deprecated)] // no GTK4 replacement for the embedded chooser widget
 impl FileChooserWidgetCompat for gtk4::FileChooserWidget {
     fn connect_selection_changed<F>(&self, f: F) -> glib::SourceId
     where
@@ -933,3 +960,88 @@ pub trait RecentChooserMenuCompat: gtk4::prelude::IsA<gtk4::MenuButton> + gtk4::
 impl<T: gtk4::prelude::IsA<gtk4::MenuButton> + gtk4::prelude::Cast + 'static>
     RecentChooserMenuCompat for T
 {}
+
+/// Replacement for the deprecated `gtk4::MessageDialog` + `Dialog::run()`
+/// pattern: shows a modal `gtk4::AlertDialog` with the given buttons and
+/// blocks (nested main context) until the user responds. Returns the chosen
+/// button index, or None if dismissed.
+pub fn alert_dialog<P: gtk4::prelude::IsA<gtk4::Window> + Clone + 'static>(
+    parent: Option<&P>,
+    text: &str,
+    buttons: &[&str],
+) -> Option<usize> {
+    let alert = gtk4::AlertDialog::builder().modal(true).build();
+    alert.set_property("text", text);
+    alert.set_buttons(buttons);
+    match gtk4::glib::MainContext::default().block_on(alert.choose_future(parent)) {
+        Ok(index) if index >= 0 => Some(index as usize),
+        _ => None,
+    }
+}
+
+/// Sets up a `gtk4::ListView` with a `SingleSelection` backed by a
+/// `gio::ListStore` of `ComboItemObject` rows, rendering each row's `text`
+/// property in a plain label. Returns the selection model and the store.
+pub fn setup_text_list_view(
+    list_view: &gtk4::ListView,
+) -> (gtk4::SingleSelection, gio::ListStore) {
+    use crate::combo_box_text_compat::ComboItemObject;
+
+    let store = gio::ListStore::new::<ComboItemObject>();
+    let selection = gtk4::SingleSelection::new(Some(store.clone()));
+    let factory = gtk4::SignalListItemFactory::new();
+    factory.connect_setup(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        let label = gtk4::Label::builder().xalign(0.0).build();
+        list_item.set_child(Some(&label));
+    });
+    factory.connect_bind(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        if let (Some(label), Some(row)) = (
+            list_item.child().and_then(|w| w.downcast::<gtk4::Label>().ok()),
+            list_item.item().and_then(|i| i.downcast::<ComboItemObject>().ok()),
+        ) {
+            label.set_text(row.text().as_str());
+        }
+    });
+    list_view.set_factory(Some(&factory));
+    list_view.set_model(Some(&selection));
+    (selection, store)
+}
+
+/// The `SingleSelection` currently installed on a `gtk4::ListView`.
+pub fn list_view_selection(list_view: &gtk4::ListView) -> Option<gtk4::SingleSelection> {
+    list_view.model().and_then(|m| m.downcast::<gtk4::SingleSelection>().ok())
+}
+
+/// The `gio::ListStore` behind a `gtk4::ListView`'s selection model.
+pub fn list_view_store(list_view: &gtk4::ListView) -> Option<gio::ListStore> {
+    list_view_selection(list_view)?.model()?.downcast::<gio::ListStore>().ok()
+}
+
+/// The selected row of a `gtk4::ListView` as a `ComboItemObject`.
+pub fn list_view_selected_row(
+    list_view: &gtk4::ListView,
+) -> Option<crate::combo_box_text_compat::ComboItemObject> {
+    list_view_selection(list_view)?
+        .selected_item()
+        .and_then(|item| item.downcast().ok())
+}
+
+/// The embedded `GtkFileChooserWidget` was deprecated in GTK 4.10 and GTK4
+/// ships no drop-in replacement, so the sample library and scripting panels
+/// keep using it (it remains fully functional in 4.16). This alias keeps the
+/// deprecation confined to this module.
+#[allow(deprecated)]
+pub type EmbeddedFileChooser = gtk4::FileChooserWidget;
+
+pub trait EmbeddedFileChooserCompat {
+    fn selected_file(&self) -> Option<gio::File>;
+}
+
+#[allow(deprecated)]
+impl EmbeddedFileChooserCompat for EmbeddedFileChooser {
+    fn selected_file(&self) -> Option<gio::File> {
+        self.file()
+    }
+}

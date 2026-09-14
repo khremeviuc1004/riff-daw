@@ -58,27 +58,47 @@
                         <property name="halign">start</property>
                         <property name="valign">center</property>
                         <property name="width-chars">15</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">0</property>
+                          <property name="column-span">3</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_play">
+                        <property name="icon-name">media-playback-start</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">4</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_copy">
+                        <property name="icon-name">edit-copy</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">5</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_delete">
+                        <property name="icon-name">edit-delete</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">6</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -87,13 +107,22 @@
                         <property name="halign">start</property>
                         <property name="valign">center</property>
                         <property name="label" translatable="yes">Riff Set</property>
+                        <layout>
+                          <property name="column">8</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_set_btn">
+                        <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">10</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -102,6 +131,10 @@
                         <property name="halign">start</property>
                         <property name="valign">center</property>
                         <property name="label" translatable="yes">Sequence</property>
+                        <layout>
+                          <property name="column">11</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -111,20 +144,34 @@
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">12</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_sequence_btn">
+                        <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">13</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_copy_to_track_view_btn">
+                        <property name="icon-name">format-justify-left</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">7</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -133,6 +180,10 @@
                         <property name="halign">start</property>
                         <property name="valign">center</property>
                         <property name="label" translatable="yes">Grid</property>
+                        <layout>
+                          <property name="column">14</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -142,21 +193,35 @@
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">15</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_grid_btn">
+                        <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">16</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_save_name_btn">
+                        <property name="icon-name">document-save</property>
                         <property name="visible">True</property>
                         <property name="tooltip-text" translatable="yes">Save the updated riff name</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">3</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
@@ -166,6 +231,10 @@
                         <property name="visible">True</property>
                         <property name="halign">start</property>
                         <property name="valign">center</property>
+                        <layout>
+                          <property name="column">9</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                   </object>
@@ -176,6 +245,7 @@
         </child>
         <child>
           <object class="GtkScrolledWindow" id="riff_arrangement_scrolled_window">
+            <property name="vexpand">True</property>
             <property name="name">riff_arrangement_riff_items_scrolled_window</property>
             <property name="visible">True</property>
             <property name="hadjustment">riff_arr_horizontal_adjustment</property>

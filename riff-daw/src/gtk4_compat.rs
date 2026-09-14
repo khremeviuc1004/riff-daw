@@ -4,6 +4,7 @@ use std::time::Duration;
 use glib::prelude::*;
 use gtk4::prelude::*;
 use gtk4::Widget;
+use log::debug;
 
 /// GTK4 porting shim for the GTK3-style event handler API.
 ///
@@ -644,9 +645,13 @@ impl<T: gtk4::prelude::IsA<gtk4::Widget> + gtk4::prelude::Cast + 'static> GtkDro
 /// GTK4 replacement for the GTK3 `GtkFileChooserDialog`.
 ///
 /// GTK4 replaced the chooser dialog with the async `gtk4::FileDialog`. This
-/// wrapper keeps the old synchronous-looking call sites (`new` -> `run` ->
-/// `filename`) by driving the `FileDialog` future with a nested
-/// `MainContext::block_on` inside `run()`.
+/// wrapper keeps the old call sites' shape (`new` -> `run_with` ->
+/// `filename`) but the completion arrives through a callback: the chooser's
+/// D-Bus reply is dispatched by the normal main loop. (A blocking
+/// `MainContext::block_on` here never resolves - these dialogs are opened
+/// from inside GTK event-controller callbacks, where re-entrant main context
+/// iteration is refused, so the future would park forever and the chosen
+/// file would never be delivered.)
 #[derive(Clone)]
 pub struct FileChooserDialog {
     title: Option<String>,
@@ -671,7 +676,7 @@ impl FileChooserDialog {
         }
     }
 
-    pub fn run(&self) -> gtk4::ResponseType {
+    fn build_file_dialog(&self) -> gtk4::FileDialog {
         let file_dialog = gtk4::FileDialog::new();
         if let Some(title) = &self.title {
             file_dialog.set_title(title);
@@ -687,21 +692,39 @@ impl FileChooserDialog {
                 file_dialog.set_filters(Some(&store));
             }
         }
+        file_dialog
+    }
+
+    /// Show the chooser and invoke `done` with the response once the user
+    /// accepts (result stored on the dialog copy handed to `done`) or
+    /// cancels. The dialog is presented without blocking the calling signal
+    /// handler.
+    pub fn run_with<F: FnOnce(gtk4::ResponseType, FileChooserDialog) + 'static>(&self, done: F) {
+        let file_dialog = self.build_file_dialog();
         let parent = self.parent.clone();
-        let future = match self.action {
+        let result = self.result.clone();
+        let action = self.action;
+        let done_dialog = self.clone();
+        let future = match action {
             gtk4::FileChooserAction::Save => file_dialog.save_future(parent.as_ref()),
             gtk4::FileChooserAction::SelectFolder => {
                 file_dialog.select_folder_future(parent.as_ref())
             }
             _ => file_dialog.open_future(parent.as_ref()),
         };
-        match glib::MainContext::default().block_on(future) {
-            Ok(file) => {
-                *self.result.borrow_mut() = Some(file);
-                gtk4::ResponseType::Ok
+        glib::MainContext::default().spawn_local(async move {
+            match future.await {
+                Ok(file) => {
+                    debug!("FileChooserDialog::run_with - file chosen: {:?}", file.uri());
+                    *result.borrow_mut() = Some(file);
+                    done(gtk4::ResponseType::Ok, done_dialog);
+                }
+                Err(err) => {
+                    debug!("FileChooserDialog::run_with - dialog cancelled/failed: {:?}", err);
+                    done(gtk4::ResponseType::Cancel, done_dialog);
+                }
             }
-            Err(_) => gtk4::ResponseType::Cancel,
-        }
+        });
     }
 
     pub fn add_button(&self, _button_text: &str, _response_id: gtk4::ResponseType) {

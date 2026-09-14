@@ -1587,8 +1587,40 @@ impl MouseHandler for BeatGrid {
     }
 }
 
+/// GTK4 snapshots a `DrawingArea` inside a `GtkViewport` with the clip set to
+/// the widget's full allocation (GTK3 restricted the draw region to the
+/// exposed part of the viewport). Painting loops in this codebase are bounded
+/// by `clip_extents`, so without this the huge 60000px grid areas repaint in
+/// their entirety every frame and rendering never completes (the window stays
+/// blank). This narrows the cairo clip to the currently visible viewport area
+/// so `clip_extents` returns the on-screen region. The caller must pair this
+/// with `context.restore()` when it returns true.
+fn push_visible_viewport_clip(context: &Context, drawing_area: &DrawingArea) -> bool {
+    let Some(ancestor) = drawing_area.ancestor(gtk4::Viewport::static_type()) else { return false };
+    let Ok(viewport) = ancestor.downcast::<gtk4::Viewport>() else { return false };
+    let Some(bounds) = drawing_area.compute_bounds(&viewport) else { return false };
+    let visible_x1 = -(bounds.x() as f64);
+    let visible_y1 = -(bounds.y() as f64);
+    let visible_x2 = visible_x1 + viewport.width() as f64;
+    let visible_y2 = visible_y1 + viewport.height() as f64;
+    let Ok((cx1, cy1, cx2, cy2)) = context.clip_extents() else { return false };
+    let x1 = cx1.max(visible_x1);
+    let y1 = cy1.max(visible_y1);
+    let x2 = cx2.min(visible_x2);
+    let y2 = cy2.min(visible_y2);
+    if (x2 - x1) * (y2 - y1) >= (cx2 - cx1) * (cy2 - cy1) {
+        return false;
+    }
+    context.save();
+    context.reset_clip();
+    context.rectangle(x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0));
+    context.clip();
+    true
+}
+
 impl Grid for BeatGrid {
     fn paint(&mut self, context: &Context, drawing_area: &DrawingArea) {
+        let viewport_clipped = push_visible_viewport_clip(context, drawing_area);
         let (clip_x1, clip_y1, clip_x2, clip_y2) = context.clip_extents().unwrap();
         
         // debug!("painting beatgrid - {} is visible={}, x={}, y={}, width={}, height={} - clip_x1={}, clip_y1={}, clip_x2={}, clip_y2={}",
@@ -1631,6 +1663,9 @@ impl Grid for BeatGrid {
             self.paint_play_cursor(context, height, width);
         }
         self.paint_edit_cursor(context, height, width);
+        if viewport_clipped {
+            let _ = context.restore();
+        }
     }
 
     fn paint_vertical_scale(&mut self, context: &Context, height: f64, width: f64, drawing_area: &DrawingArea) {
@@ -2134,6 +2169,7 @@ impl MouseHandler for BeatGridRuler {
 
 impl Grid for BeatGridRuler {
     fn paint(&mut self, context: &Context, drawing_area: &DrawingArea) {
+        let viewport_clipped = push_visible_viewport_clip(context, drawing_area);
         // drawing_area.set_width_request((self.beat_width_in_pixels * self.zoom) as i32 * 400 * 4);
         context.set_source_rgb(1.0, 1.0, 1.0);
         context.rectangle(0.0, 0.0, drawing_area.width_request() as f64, drawing_area.height_request() as f64);
@@ -2143,6 +2179,9 @@ impl Grid for BeatGridRuler {
         let width = drawing_area.width_request() as f64;
 
         self.paint_horizontal_scale(context, height, width, drawing_area);
+        if viewport_clipped {
+            let _ = context.restore();
+        }
     }
 
     fn paint_vertical_scale(&mut self, _context: &Context, _height: f64, _width: f64, _drawing_area: &DrawingArea) {

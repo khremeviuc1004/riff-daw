@@ -36,30 +36,46 @@
         <property name="orientation">vertical</property>
         <child>
           <object class="GtkGrid" id="riff_set_blade_head_grid">
+            <property name="vexpand">True</property>
             <property name="visible">True</property>
             <property name="halign">start</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkButton" id="riff_set_blade_record">
+                <property name="icon-name">media-record</property>
                 <property name="visible">True</property>
                 <property name="tooltip-text" translatable="yes">Record</property>
                 <property name="halign">start</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">1</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_blade_copy">
+                <property name="icon-name">edit-copy</property>
                 <property name="visible">True</property>
                 <property name="tooltip-text" translatable="yes">Duplicate</property>
                 <property name="halign">start</property>
                 <property name="valign">start</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">2</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_blade_delete">
+                <property name="icon-name">edit-delete</property>
                 <property name="visible">True</property>
                 <property name="tooltip-text" translatable="yes">Delete</property>
                 <property name="halign">start</property>
                 <property name="valign">start</property>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">2</property>
+                </layout>
               </object>
             </child>
             <child>
@@ -68,33 +84,58 @@
                 <property name="visible">True</property>
                 <property name="valign">start</property>
                 <property name="width-chars">9</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                  <property name="column-span">4</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_blade_play">
+                <property name="icon-name">media-playback-start</property>
                 <property name="visible">True</property>
                 <property name="tooltip-text" translatable="yes">Play</property>
                 <property name="halign">start</property>
                 <property name="valign">start</property>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">1</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_copy_to_track_view_btn">
+                <property name="icon-name">format-justify-left</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">start</property>
+                <layout>
+                  <property name="column">2</property>
+                  <property name="row">1</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_drag_btn">
+                <property name="icon-name">go-jump</property>
                 <property name="visible">True</property>
+                <layout>
+                  <property name="column">2</property>
+                  <property name="row">2</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_set_select_btn">
+                <property name="icon-name">edit-select-all</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">start</property>
+                <layout>
+                  <property name="column">3</property>
+                  <property name="row">1</property>
+                </layout>
               </object>
             </child>
             <child>

@@ -26,6 +26,7 @@
     <property name="visible">True</property>
   </object>
   <object class="GtkWindow" id="track_details_dialogue">
+    <property name="vexpand">True</property>
     <property name="width-request">470</property>
     <property name="height-request">600</property>
     <property name="title" translatable="yes">Track Details</property>
@@ -33,6 +34,7 @@
     <property name="deletable">False</property>
     <child>
       <object class="GtkBox" id="track_details_panel">
+        <property name="vexpand">True</property>
         <property name="orientation">vertical</property>
         <property name="spacing">2</property>
         <child>
@@ -42,14 +44,16 @@
             </child>
             <child>
               <object class="GtkButton" id="track_detail_close_button">
-                <property name="label">gtk-close</property>
+                <property name="label" translatable="yes">_Close</property>
                 <property name="visible">True</property>
+                <property name="use-underline">True</property>
               </object>
             </child>
           </object>
         </child>
         <child>
           <object class="GtkScrolledWindow">
+            <property name="vexpand">True</property>
             <property name="visible">True</property>
             <child>
               <object class="GtkViewport">
@@ -60,318 +64,453 @@
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkStack">
+                        <property name="vexpand">True</property>
                         <property name="visible">True</property>
                         <child>
-                          <object class="GtkBox">
-                            <property name="visible">True</property>
-                            <property name="orientation">vertical</property>
-                            <child>
-                              <object class="GtkGrid">
+                          <object class="GtkStackPage">
+                            <property name="name">page0</property>
+                            <property name="title" translatable="yes">page0</property>
+                            <property name="child">
+                              <object class="GtkBox">
                                 <property name="visible">True</property>
-                                <property name="row-spacing">2</property>
-                                <property name="column-spacing">2</property>
+                                <property name="orientation">vertical</property>
                                 <child>
-                                  <object class="GtkButton" id="track_delete_riff_btn">
+                                  <object class="GtkGrid">
+                                    <property name="vexpand">True</property>
                                     <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Delete the selected riff</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Riff</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="track_instrument_label">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Instrument</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_instrument_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                    <property name="hexpand">True</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_instrument_window_visibility_toggle_btn">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Toggle the visibility of the instrument plugin window</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Riff Length</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_riff_length_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                    <property name="hexpand">True</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_details_riff_save_length">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Save the updated riff length</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="track_midi_device_label">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Midi Device</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="track_midi_channel_label">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Midi Channel</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_midi_device_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_midi_channel_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Track</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkColorDialogButton" id="track_detail_track_colour_button">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Select the track colour</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Riff</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkColorDialogButton" id="track_detail_riff_colour_button">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Selct the riff colour (overrides the track colour for the selected riff)</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_copy_riff_btn">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Copy the seleted riff</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_riff_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                    <property name="hexpand">True</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_details_riff_save_name_btn">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Save the updated riff name</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Send midi to</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_send_midi_to_track_open_dialogue_button">
-                                    <property name="visible">True</property>
-                                    <property name="halign">start</property>
+                                    <property name="row-spacing">2</property>
+                                    <property name="column-spacing">2</property>
                                     <child>
-                                      <object class="GtkImage">
+                                      <object class="GtkButton" id="track_delete_riff_btn">
+                                        <property name="icon-name">edit-delete</property>
                                         <property name="visible">True</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="track_effects_btns_label">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Effects</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="visible">True</property>
-                                    <child>
-                                      <object class="GtkButton" id="track_effect_window_visibility_toggle_btn">
-                                        <property name="visible">True</property>
-                                        <property name="tooltip-text" translatable="yes">Toggle the visibility of the selcted effect plugin window</property>
+                                        <property name="tooltip-text" translatable="yes">Delete the selected riff</property>
                                         <property name="halign">start</property>
                                         <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">0</property>
+                                        </layout>
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkButton" id="track_effect_delete_btn">
+                                      <object class="GtkLabel">
                                         <property name="visible">True</property>
-                                        <property name="tooltip-text" translatable="yes">Delete of the selcted effect plugin</property>
+                                        <property name="label" translatable="yes">Riff</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">0</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_instrument_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Instrument</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">2</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_instrument_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <property name="hexpand">True</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">2</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_instrument_window_visibility_toggle_btn">
+                                        <property name="icon-name">document-open</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Toggle the visibility of the instrument plugin window</property>
                                         <property name="halign">start</property>
                                         <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">2</property>
+                                        </layout>
                                       </object>
                                     </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="track_effects_choice_label">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Add Effect</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkDropDown" id="track_effects_choice">
-                                    <property name="visible">True</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_add_effect_button">
-                                    <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Add an effect plugin</property>
-                                    <property name="halign">start</property>
-                                    <property name="valign">center</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkSeparator">
-                                    <property name="visible">True</property>
-                                    <property name="margin-top">5</property>
-                                    <property name="margin-bottom">5</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="visible">True</property>
-                                    <property name="label" translatable="yes">Send audio to</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="track_send_audio_to_track_open_dialogue_button">
-                                    <property name="visible">True</property>
-                                    <property name="halign">start</property>
                                     <child>
-                                      <object class="GtkImage">
+                                      <object class="GtkLabel">
                                         <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Riff Length</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">1</property>
+                                        </layout>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_riff_length_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <property name="hexpand">True</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_details_riff_save_length">
+                                        <property name="icon-name">document-save</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Save the updated riff length</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_midi_device_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Midi Device</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">3</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_midi_channel_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Midi Channel</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">4</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_midi_device_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">3</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_midi_channel_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">4</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Track</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">5</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkColorDialogButton" id="track_detail_track_colour_button">
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Select the track colour</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">5</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Riff</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">6</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkColorDialogButton" id="track_detail_riff_colour_button">
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Selct the riff colour (overrides the track colour for the selected riff)</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">6</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_copy_riff_btn">
+                                        <property name="icon-name">edit-copy</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Copy the seleted riff</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">3</property>
+                                          <property name="row">0</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_riff_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <property name="hexpand">True</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">0</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_details_riff_save_name_btn">
+                                        <property name="icon-name">document-save</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Save the updated riff name</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">4</property>
+                                          <property name="row">0</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Send midi to</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">7</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_send_midi_to_track_open_dialogue_button">
+                                        <property name="visible">True</property>
+                                        <property name="halign">start</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">document-open</property>
+                                            <property name="visible">True</property>
+                                          </object>
+                                        </child>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">7</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_effects_btns_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Effects</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">11</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="visible">True</property>
+                                        <child>
+                                          <object class="GtkButton" id="track_effect_window_visibility_toggle_btn">
+                                            <property name="icon-name">document-open</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Toggle the visibility of the selcted effect plugin window</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="track_effect_delete_btn">
+                                            <property name="icon-name">edit-delete</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Delete of the selcted effect plugin</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">11</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_effects_choice_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Add Effect</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">10</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_effects_choice">
+                                        <property name="visible">True</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">10</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_add_effect_button">
+                                        <property name="icon-name">list-add</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Add an effect plugin</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">10</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSeparator">
+                                        <property name="visible">True</property>
+                                        <property name="margin-top">5</property>
+                                        <property name="margin-bottom">5</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">9</property>
+                                          <property name="column-span">5</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Send audio to</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">8</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_send_audio_to_track_open_dialogue_button">
+                                        <property name="visible">True</property>
+                                        <property name="halign">start</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">document-open</property>
+                                            <property name="visible">True</property>
+                                          </object>
+                                        </child>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">8</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
                                   </object>
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
-                                </child>
-                                <child>
-                                  <placeholder />
                                 </child>
                               </object>
-                            </child>
+                            </property>
                           </object>
                         </child>
                       </object>

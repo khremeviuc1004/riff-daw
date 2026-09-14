@@ -27,12 +27,12 @@ CLASS_MAP = {
 }
 
 REMOVE_PROPERTIES = {
-    'GtkImage': {'stock', 'icon-size', 'pixel-size'},
+    'GtkImage': {'icon-size'},
     'GtkFrame': {'shadow-type', 'label-yalign', 'border-width'},
     'GtkScrolledWindow': {'shadow-type', 'border-width', 'window-placement', 'window-placement-set', 'events'},
-    'GtkButton': {'use-stock', 'image', 'relief', 'always-show-image'},
-    'GtkToggleButton': {'always-show-image', 'relief', 'image'},
-    'GtkToolButton': {'image'},
+    'GtkButton': {'use-stock', 'relief', 'always-show-image'},
+    'GtkToggleButton': {'always-show-image', 'relief'},
+    'GtkToolButton': set(),
     'GtkWindow': {'type-hint', 'skip-taskbar-hint', 'destroy-with-parent',
                   'border-width', 'position', 'window-position'},
     'GtkDialog': {'type-hint', 'skip-taskbar-hint', 'use-header-bar',
@@ -47,9 +47,9 @@ REMOVE_PROPERTIES = {
     'GtkToolbar': {'toolbar-style', 'show-arrow', 'icon-size', 'icon_size'},
     'GtkToolItem': {'expand', 'homogeneous', 'visible-horizontal', 'visible-vertical'},
     'GtkSeparatorToolItem': {'draw', 'expand'},
-    'GtkMenuItem': {'label', 'use-underline', 'mnemonic-widget', 'submenu',
-                    'name', 'action-name', 'accel-path', 'use-stock', 'image'},
-    'GtkImageMenuItem': {'label', 'use-underline', 'submenu', 'always-show-image', 'use-stock', 'image'},
+    'GtkMenuItem': {'mnemonic-widget', 'submenu',
+                    'name', 'action-name', 'accel-path', 'use-stock'},
+    'GtkImageMenuItem': {'submenu', 'always-show-image', 'use-stock'},
     'GtkCheckMenuItem': {'draw-as-radio'},
     'GtkSeparatorMenuItem': {'set-expanded'},
     'GtkComboBoxText': {'has-entry'},
@@ -84,6 +84,104 @@ PROP_RENAME = {
     'label-selectable': 'selectable',
     'wrap-mode': 'wrap-mode',
 }
+
+# GTK3 stock icon names -> GTK4 (freedesktop) icon names. Non-symbolic
+# names are used: this app renders under full-colour icon themes (breeze,
+# mate) where several *-symbolic names do not exist.
+STOCK_ICON_MAP = {
+    'gtk-add': 'list-add',
+    'gtk-remove': 'list-remove',
+    'gtk-delete': 'edit-delete',
+    'gtk-copy': 'edit-copy',
+    'gtk-paste': 'edit-paste',
+    'gtk-cut': 'edit-cut',
+    'gtk-save': 'document-save',
+    'gtk-save-as': 'document-save-as',
+    'gtk-open': 'document-open',
+    'gtk-close': 'window-close',
+    'gtk-edit': 'accessories-text-editor',
+    'gtk-about': 'help-about',
+    'gtk-index': 'help-about',
+    'gtk-preferences': 'preferences-system',
+    'gtk-media-play': 'media-playback-start',
+    'gtk-media-pause': 'media-playback-pause',
+    'gtk-media-stop': 'media-playback-stop',
+    'gtk-media-record': 'media-record',
+    'gtk-media-next': 'media-skip-forward',
+    'gtk-media-previous': 'media-skip-backward',
+    'gtk-zoom-in': 'zoom-in',
+    'gtk-zoom-out': 'zoom-out',
+    'gtk-zoom-fit': 'zoom-fit-best',
+    'gtk-convert': 'media-playlist-repeat',
+    'gtk-refresh': 'view-refresh',
+    'gtk-justify-left': 'format-justify-left',
+    'gtk-jump-to': 'go-jump',
+    'gtk-goto-first': 'go-first',
+    'gtk-select-all': 'edit-select-all',
+    'gtk-orientation-landscape': 'video-display',
+    'gtk-orientation-portrait': 'phone',
+    'gtk-ok': 'emblem-ok',
+    'gtk-apply': 'emblem-ok',
+    'gtk-cancel': 'process-cancel-symbolic',
+    'gtk-clear': 'edit-clear-all',
+    'gtk-find': 'edit-find',
+    'gtk-connect': 'network-connect',
+    'gtk-disconnect': 'network-offline',
+    'gtk-execute': 'system-run',
+    'gtk-info': 'dialog-information',
+    'gtk-dialog-warning': 'dialog-warning',
+    'gtk-dialog-error': 'dialog-error',
+    'gtk-dialog-question': 'dialog-question',
+    'gtk-leave-fullscreen': 'view-restore',
+}
+
+# GTK3 stock ids used as labels -> the display text GTK3 rendered
+STOCK_LABEL_MAP = {
+    'gtk-new': '_New',
+    'gtk-open': '_Open',
+    'gtk-save': '_Save',
+    'gtk-save-as': 'Save _As',
+    'gtk-quit': '_Quit',
+    'gtk-close': '_Close',
+    'gtk-cancel': '_Cancel',
+    'gtk-ok': '_OK',
+    'gtk-yes': '_Yes',
+    'gtk-no': '_No',
+    'gtk-cut': 'Cu_t',
+    'gtk-copy': '_Copy',
+    'gtk-paste': '_Paste',
+    'gtk-delete': '_Delete',
+    'gtk-select-all': 'Select _All',
+    'gtk-edit': '_Edit',
+    'gtk-find': '_Find',
+    'gtk-about': '_About',
+    'gtk-preferences': '_Preferences',
+    'gtk-index': '_Contents',
+    'gtk-apply': '_Apply',
+    'gtk-revert-to-saved': '_Revert',
+}
+
+# top-level <object class="GtkImage" id="..."> elements of the file being
+# converted, so buttons referencing them through the GTK3 `image` property
+# can resolve their icon (reset by convert_file for every input file).
+NAMED_IMAGES = {}
+
+
+def stock_icon(image_el):
+    """The GTK4 icon name a GTK3 GtkImage element should carry."""
+    stock = (image_el.findtext('property[@name="stock"]') or '').strip()
+    if stock:
+        return STOCK_ICON_MAP.get(stock, stock.replace('gtk-', ''))
+    return (image_el.findtext('property[@name="icon-name"]') or '').strip() or None
+
+
+def button_image_icon(image_ref):
+    """Icon for the top-level GtkImage a GTK3 button referenced through its
+    now-removed `image` property. (Buttons with an *inline* GtkImage keep
+    that child, whose own stock property is converted separately.)"""
+    if image_ref and image_ref in NAMED_IMAGES:
+        return stock_icon(NAMED_IMAGES[image_ref])
+    return None
 
 
 def fix_object(obj, hoist_target=None):
@@ -125,6 +223,43 @@ def fix_object(obj, hoist_target=None):
         if pname in REMOVE_PROPERTIES.get(cls, set()) or pname in GLOBAL_REMOVE_PROPERTIES:
             remove_props.append(prop)
             continue
+        # In GTK3 a GtkButton/GtkToggleButton takes its icon from an
+        # `<child internal-child="image">` GtkImage (or from a stock id);
+        # GTK4 dropped both, replacing them with a single `icon-name`
+        # property. Keep the icon instead of discarding it.
+        if pname == 'image' and cls in ('GtkButton', 'GtkToggleButton', 'GtkRadioButton'):
+            if not obj.findall('property[@name="icon-name"]'):
+                icon = button_image_icon((prop.text or '').strip())
+                if icon:
+                    prop.set('name', 'icon-name')
+                    prop.text = icon
+                    continue
+            remove_props.append(prop)
+            continue
+        # Gtk(MenuItem|ImageMenuItem) -> GtkButton: a stock label id
+        # ('gtk-new' + use-stock) becomes real display text; a plain label
+        # is valid GtkButton text and stays. The `image` property is gone
+        # in GTK4 and menu rows are text-only by convention.
+        if pname == 'label' and cls in ('GtkButton', 'GtkToggleButton', 'GtkRadioButton') \
+                and (prop.text or '').strip().startswith('gtk-'):
+            # raw stock id used as a button label -> real display text
+            # (mnemonic underscores dropped: these glade buttons do not set
+            # use-underline)
+            label = STOCK_LABEL_MAP.get(prop.text.strip())
+            if label:
+                prop.text = label.replace('_', '')
+                prop.set('translatable', 'yes')
+                continue
+        if cls in ('GtkMenuItem', 'GtkImageMenuItem'):
+            if pname == 'image':
+                remove_props.append(prop)
+                continue
+            if pname == 'label' and (prop.text or '').strip().startswith('gtk-'):
+                stock = prop.text.strip()
+                label = STOCK_LABEL_MAP.get(stock)
+                if label:
+                    prop.text = label
+                    prop.set('translatable', 'yes')
         if pname in PROP_RENAME:
             new_name = PROP_RENAME[pname]
             if new_name:
@@ -139,28 +274,9 @@ def fix_object(obj, hoist_target=None):
     if cls == 'GtkImage':
         for prop in obj.findall('property'):
             if prop.get('name') == 'stock':
+                stock = (prop.text or '').strip()
                 prop.set('name', 'icon-name')
-
-    # GTK3 stock icon names -> GTK4 icon names
-    STOCK_ICON_MAP = {
-        'gtk-save': 'document-save',
-        'gtk-dialog-warning': 'dialog-warning',
-        'gtk-edit': 'document-edit-symbolic',
-        'gtk-goto-first': 'go-first-symbolic',
-        'gtk-find': 'edit-find-symbolic',
-        'gtk-select-all': 'edit-select-all',
-        'gtk-leave-fullscreen': 'view-restore',
-        'gtk-jump-to': 'go-jump',
-        'gtk-disconnect': 'network-offline',
-        'gtk-zoom-out': 'zoom-out-symbolic',
-        'gtk-zoom-in': 'zoom-in-symbolic',
-        'gtk-media-record': 'media-record-symbolic',
-        'gtk-add': 'list-add-symbolic',
-        'gtk-ok': 'ok-symbolic',
-        'gtk-close': 'window-close-symbolic',
-        'gtk-cancel': 'dialog-cancel-symbolic',
-        'gtk-delete': 'edit-delete-symbolic',
-    }
+                prop.text = STOCK_ICON_MAP.get(stock, stock.replace('gtk-', ''))
     if cls in ('GtkToolButton', 'GtkToggleToolButton', 'GtkRadioToolButton',
                'GtkMenuItem', 'GtkImageMenuItem', 'GtkButton',
                'GtkToggleButton', 'GtkCheckMenuItem'):
@@ -228,14 +344,13 @@ def fix_child(child, parent_cls=None, hoist_target=None):
                 hoist_target.append(entry_obj)
         return 'remove'
 
-    # Remove packing properties in GTK4
+    # GTK4 GtkBuilder cannot parse <packing> at all (`Unhandled tag`), so
+    # drop it unconditionally. The placement it carried (GtkStack page
+    # names, GtkGrid cell attaches, GtkPaned resize/shrink hints) is
+    # re-injected from the .glade source by restore_packing_gtk4.py.
     packing = child.find('packing')
     if packing is not None:
-        for prop in list(packing):
-            if prop.get('name', '') in GLOBAL_REMOVE_PROPERTIES:
-                packing.remove(prop)
-        if len(packing) == 0 or all(not list(p) for p in packing):
-            child.remove(packing)
+        child.remove(packing)
     for obj in list(child):
         if obj.tag == 'object':
             fixed = fix_object(obj, hoist_target)
@@ -257,6 +372,13 @@ def convert_file(input_path, output_path):
 
     tree = ET.parse(input_path)
     root = tree.getroot()
+
+    # Index top-level GtkImage objects first: GTK3 buttons reference them by
+    # builder id through the `image` property, which has no GTK4 equivalent.
+    NAMED_IMAGES.clear()
+    for child in root:
+        if child.tag == 'object' and child.get('class') == 'GtkImage' and child.get('id'):
+            NAMED_IMAGES[child.get('id')] = child
 
     # Fix requires tag
     for req in root.findall('requires'):

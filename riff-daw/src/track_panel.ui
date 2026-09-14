@@ -17,6 +17,7 @@
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">edit-delete</property>
                 <property name="visible">True</property>
               </object>
             </child>
@@ -47,6 +48,7 @@ Click and drag to drag the track to a diferent position.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">help-about</property>
                 <property name="visible">True</property>
                 <property name="tooltip-text" translatable="yes">Solo</property>
               </object>
@@ -60,6 +62,7 @@ Click and drag to drag the track to a diferent position.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">window-close</property>
                 <property name="visible">True</property>
               </object>
             </child>
@@ -73,6 +76,7 @@ Click and drag to drag the track to a diferent position.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">media-record</property>
                 <property name="visible">True</property>
                 <property name="halign">center</property>
                 <property name="valign">end</property>
@@ -87,6 +91,7 @@ Click and drag to drag the track to a diferent position.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">document-open</property>
                 <property name="visible">True</property>
               </object>
             </child>
@@ -94,6 +99,7 @@ Click and drag to drag the track to a diferent position.</property>
         </child>
         <child>
           <object class="GtkButton" id="track_panel_copy_track_button">
+            <property name="icon-name">edit-copy</property>
             <property name="visible">True</property>
             <property name="tooltip-text" translatable="yes">Copy this entire track.</property>
             <property name="valign">start</property>
@@ -106,6 +112,7 @@ Click and drag to drag the track to a diferent position.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">accessories-text-editor</property>
                 <property name="visible">True</property>
               </object>
             </child>

@@ -12,8 +12,9 @@
           <object class="GtkBox">
             <child>
               <object class="GtkButton" id="track_midi_routing_close_button">
-                <property name="label">gtk-close</property>
+                <property name="label" translatable="yes">_Close</property>
                 <property name="visible">True</property>
+                <property name="use-underline">True</property>
               </object>
             </child>
           </object>
@@ -37,6 +38,7 @@
                 <property name="visible">True</property>
                 <child>
                   <object class="GtkImage">
+                    <property name="icon-name">list-add</property>
                     <property name="visible">True</property>
                   </object>
                 </child>
@@ -46,6 +48,7 @@
         </child>
         <child>
           <object class="GtkScrolledWindow">
+            <property name="vexpand">True</property>
             <property name="visible">True</property>
             <child>
               <object class="GtkViewport">

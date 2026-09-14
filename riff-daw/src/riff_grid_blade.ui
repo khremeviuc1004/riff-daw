@@ -52,48 +52,83 @@
                 <property name="halign">start</property>
                 <property name="valign">center</property>
                 <property name="width-chars">15</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                  <property name="column-span">3</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_play">
+                <property name="icon-name">media-playback-start</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">3</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_copy">
+                <property name="icon-name">edit-copy</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">4</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_delete">
+                <property name="icon-name">edit-delete</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">5</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_copy_to_track_view_btn">
+                <property name="icon-name">format-justify-left</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">6</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_drag_btn">
+                <property name="icon-name">go-jump</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">7</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_select_btn">
+                <property name="icon-name">edit-select-all</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
                 <property name="valign">center</property>
+                <layout>
+                  <property name="column">8</property>
+                  <property name="row">0</property>
+                </layout>
               </object>
             </child>
             <child>

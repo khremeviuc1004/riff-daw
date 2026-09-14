@@ -12,11 +12,20 @@
             <property name="visible">True</property>
             <property name="halign">start</property>
             <property name="label" translatable="yes">Track</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
           </object>
         </child>
         <child>
           <object class="GtkLabel" id="track_audio_routing_send_to_track_label">
             <property name="visible">True</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+              <property name="column-span">3</property>
+            </layout>
           </object>
         </child>
         <child>
@@ -24,9 +33,14 @@
             <property name="visible">True</property>
             <child>
               <object class="GtkImage">
+                <property name="icon-name">edit-delete</property>
                 <property name="visible">True</property>
               </object>
             </child>
+            <layout>
+              <property name="column">4</property>
+              <property name="row">0</property>
+            </layout>
           </object>
         </child>
         <child>
@@ -34,22 +48,38 @@
             <property name="visible">True</property>
             <property name="halign">start</property>
             <property name="label" translatable="yes">Input# - Left</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">1</property>
+            </layout>
           </object>
         </child>
         <child>
           <object class="GtkDropDown" id="track_audio_routing_left_channel_input_index_combobox_text">
             <property name="visible">True</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">1</property>
+            </layout>
           </object>
         </child>
         <child>
           <object class="GtkLabel">
             <property name="visible">True</property>
             <property name="label" translatable="yes">Right</property>
+            <layout>
+              <property name="column">2</property>
+              <property name="row">1</property>
+            </layout>
           </object>
         </child>
         <child>
           <object class="GtkDropDown" id="track_audio_routing_right_channel_input_index_combobox_text">
             <property name="visible">True</property>
+            <layout>
+              <property name="column">3</property>
+              <property name="row">1</property>
+            </layout>
           </object>
         </child>
         <child>

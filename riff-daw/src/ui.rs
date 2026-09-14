@@ -3956,16 +3956,18 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    if let Some(filename) = dialog.filename() {
-                        if let Some(filename_display) = filename.to_str() {
-                            window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
+                let window = window.clone();
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            if let Some(filename_display) = filename.to_str() {
+                                window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
+                            }
+                            let _ = tx_from_ui.send(DAWEvents::OpenFile(filename));
                         }
-                        let _ = tx_from_ui.send(DAWEvents::OpenFile(filename));
                     }
-                }
-                dialog.set_visible(false);
+                });
 
                 true
             });
@@ -3993,16 +3995,18 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    if let Some(filename) = dialog.filename() {
-                        if let Some(filename_display) = filename.to_str() {
-                            window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
+                let window = window.clone();
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            if let Some(filename_display) = filename.to_str() {
+                                window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
+                            }
+                            let _ = tx_from_ui.send(DAWEvents::SaveAs(filename));
                         }
-                        let _ = tx_from_ui.send(DAWEvents::SaveAs(filename));
                     }
-                }
-                dialog.set_visible(false);
+                });
 
                 true
             });
@@ -4012,18 +4016,22 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let dialog = self.midi_file_import_file_chooser.clone();
             self.ui.menu_item_import_midi.connect_button_press_event(move |_menu_item, _btn|{
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    let filename = dialog.filename();
-                    let current_folder = dialog.current_folder();
-                    if let Some(current_folder) = current_folder {
-                        if !dialog.list_shortcut_folders().iter().any(|folder| folder.as_os_str().eq(current_folder.as_os_str())) {
-                            let _ = dialog.add_shortcut_folder(current_folder);
+                let tx_from_ui = tx_from_ui.clone();
+                
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        let filename = dialog.filename();
+                        let current_folder = dialog.current_folder();
+                        if let Some(current_folder) = current_folder {
+                            if !dialog.list_shortcut_folders().iter().any(|folder| folder.as_os_str().eq(current_folder.as_os_str())) {
+                                let _ = dialog.add_shortcut_folder(current_folder);
+                            }
+                        }
+                        if let Some(filename) = filename {
+                            let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename));
                         }
                     }
-                    let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename.unwrap()));
-                }
-                dialog.set_visible(false);
+                });
 
                 true
             });
@@ -4041,12 +4049,14 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    let filename = dialog.filename();
-                    let _ = tx_from_ui.send(DAWEvents::ExportMidiFile(filename.unwrap()));
-                }
-                dialog.set_visible(false);
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            let _ = tx_from_ui.send(DAWEvents::ExportMidiFile(filename));
+                        }
+                    }
+                });
 
                 true
             });
@@ -4064,12 +4074,14 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    let filename = dialog.filename();
-                    let _ = tx_from_ui.send(DAWEvents::ExportRiffsToMidiFile(filename.unwrap()));
-                }
-                dialog.set_visible(false);
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            let _ = tx_from_ui.send(DAWEvents::ExportRiffsToMidiFile(filename));
+                        }
+                    }
+                });
 
                 true
             });
@@ -4082,12 +4094,14 @@ impl MainWindow {
                 let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."),     Some(&window), FileChooserAction::SelectFolder);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    let directory = dialog.current_folder();
-                    let _ = tx_from_ui.send(DAWEvents::ExportRiffsToSeparateMidiFiles(directory.unwrap()));
-                }
-                dialog.set_visible(false);
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(directory) = dialog.current_folder() {
+                            let _ = tx_from_ui.send(DAWEvents::ExportRiffsToSeparateMidiFiles(directory));
+                        }
+                    }
+                });
 
                 true
             });
@@ -4105,12 +4119,14 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    let filename = dialog.filename();
-                    let _ = tx_from_ui.send(DAWEvents::ExportWaveFile(filename.unwrap()));
-                }
-                dialog.set_visible(false);
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            let _ = tx_from_ui.send(DAWEvents::ExportWaveFile(filename));
+                        }
+                    }
+                });
 
                 true
             });
@@ -4201,20 +4217,23 @@ impl MainWindow {
             add_vst24_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
             add_vst24_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_vst24_path_button.connect_clicked(move |_| {
-                if add_vst24_path_chooser.run() == ResponseType::Ok {
-                    if let Some(directory) = add_vst24_path_chooser.current_folder() {
-                        let mut current_paths = vst24_plugin_paths_entry.text().to_string();
-                        if let Some(directory) = directory.to_str() {
-                            if directory.chars().count() > 0 {
-                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                            }
-                            current_paths.push_str(directory);
+                let chooser = add_vst24_path_chooser.clone();
+                let entry = vst24_plugin_paths_entry.clone();
+                chooser.run_with(move |result, chooser| {
+                    if result == ResponseType::Ok {
+                        if let Some(directory) = chooser.current_folder() {
+                            let mut current_paths = entry.text().to_string();
+                            if let Some(directory) = directory.to_str() {
+                                if directory.chars().count() > 0 {
+                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                                }
+                                current_paths.push_str(directory);
 
-                            vst24_plugin_paths_entry.set_text(current_paths.as_str());
+                                entry.set_text(current_paths.as_str());
+                            }
                         }
                     }
-                }
-                add_vst24_path_chooser.set_visible(false);
+                });
             });
         }
 
@@ -4225,20 +4244,23 @@ impl MainWindow {
             add_clap_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
             add_clap_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_clap_path_button.connect_clicked(move |_| {
-                if add_clap_path_chooser.run() == ResponseType::Ok {
-                    if let Some(directory) = add_clap_path_chooser.current_folder() {
-                        let mut current_paths = clap_plugin_paths_entry.text().to_string();
-                        if let Some(directory) = directory.to_str() {
-                            if directory.chars().count() > 0 {
-                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                            }
-                            current_paths.push_str(directory);
+                let chooser = add_clap_path_chooser.clone();
+                let entry = clap_plugin_paths_entry.clone();
+                chooser.run_with(move |result, chooser| {
+                    if result == ResponseType::Ok {
+                        if let Some(directory) = chooser.current_folder() {
+                            let mut current_paths = entry.text().to_string();
+                            if let Some(directory) = directory.to_str() {
+                                if directory.chars().count() > 0 {
+                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                                }
+                                current_paths.push_str(directory);
 
-                            clap_plugin_paths_entry.set_text(current_paths.as_str());
+                                entry.set_text(current_paths.as_str());
+                            }
                         }
                     }
-                }
-                add_clap_path_chooser.set_visible(false);
+                });
             });
         }
 
@@ -4249,20 +4271,23 @@ impl MainWindow {
             add_vst3_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
             add_vst3_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
             self.ui.add_vst3_path_button.connect_clicked(move |_| {
-                if add_vst3_path_chooser.run() == ResponseType::Ok {
-                    if let Some(directory) = add_vst3_path_chooser.current_folder() {
-                        let mut current_paths = vst3_plugin_paths_entry.text().to_string();
-                        if let Some(directory) = directory.to_str() {
-                            if directory.chars().count() > 0 {
-                                current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                            }
-                            current_paths.push_str(directory);
+                let chooser = add_vst3_path_chooser.clone();
+                let entry = vst3_plugin_paths_entry.clone();
+                chooser.run_with(move |result, chooser| {
+                    if result == ResponseType::Ok {
+                        if let Some(directory) = chooser.current_folder() {
+                            let mut current_paths = entry.text().to_string();
+                            if let Some(directory) = directory.to_str() {
+                                if directory.chars().count() > 0 {
+                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
+                                }
+                                current_paths.push_str(directory);
 
-                            vst3_plugin_paths_entry.set_text(current_paths.as_str());
+                                entry.set_text(current_paths.as_str());
+                            }
                         }
                     }
-                }
-                add_vst3_path_chooser.set_visible(false);
+                });
             });
         }
 
@@ -7571,11 +7596,13 @@ impl MainWindow {
                 dialog.add_filter(&filter);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
-                let result = dialog.run();
-                if result == gtk4::ResponseType::Ok {
-                    if let Some(path) = dialog.filename() {
-                        if let Some(file_name) = path.to_str() {
-                            let text_buffer = scripting_script_text_view.buffer();
+                let scripting_script_text_view = scripting_script_text_view.clone();
+                let scripting_script_name_label = scripting_script_name_label.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(path) = dialog.filename() {
+                            if let Some(file_name) = path.to_str() {
+                                let text_buffer = scripting_script_text_view.buffer();
                                 let script_text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), true);
 
                                 if script_text.len() > 0 {
@@ -7590,10 +7617,10 @@ impl MainWindow {
                                         }
                                     }
                                 }
+                            }
+                        }
                     }
-                }
-                }
-                dialog.set_visible(false);
+                });
             });
         }
 

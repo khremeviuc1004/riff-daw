@@ -20291,103 +20291,95 @@
                   </object>
                 </child>
                 <child>
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">automatic</property>
-                    <property name="vscrollbar-policy">never</property>
-                    <property name="propagate-natural-height">True</property>
-                    <property name="can-focus">False</property>
+                  <object class="GtkBox">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="margin-start">10</property>
+                    <property name="margin-end">10</property>
                     <child>
-                      <object class="GtkBox">
+                      <object class="GtkToggleButton" id="transport_goto_start_button">
                         <property name="visible">True</property>
-                        <property name="halign">start</property>
-                        <property name="margin-start">10</property>
-                        <property name="margin-end">10</property>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_goto_start_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_124</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-skip-backward</property>
-                            <property name="active">True</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_move_back_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_125</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-seek-backward</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_stop_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_126</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-playback-stop</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_play_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_127</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-playback-start</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_record_button">
-                            <property name="visible">True</property>
-                            <property name="tooltip-text" translatable="yes">Record</property>
-                            <property name="label" translatable="yes">__glade_unnamed_227</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-record-symbolic</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_loop_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_128</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-playlist-repeat</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_pause_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_129</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-playback-pause</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_move_forward_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_130</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-seek-forward</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkToggleButton" id="transport_goto_end_button">
-                            <property name="visible">True</property>
-                            <property name="label" translatable="yes">__glade_unnamed_131</property>
-                            <property name="use-underline">True</property>
-                            <property name="icon-name">media-skip-forward</property>
-                            <property name="group">transport_goto_start_button</property>
-                          </object>
-                        </child>
-                        <layout>
-                          <property name="column">12</property>
-                          <property name="row">0</property>
-                        </layout>
+                        <property name="label" translatable="yes">__glade_unnamed_124</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-skip-backward</property>
+                        <property name="active">True</property>
                       </object>
                     </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_move_back_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_125</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-seek-backward</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_stop_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_126</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-playback-stop</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_play_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_127</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-playback-start</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_record_button">
+                        <property name="visible">True</property>
+                        <property name="tooltip-text" translatable="yes">Record</property>
+                        <property name="label" translatable="yes">__glade_unnamed_227</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-record-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_loop_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_128</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-playlist-repeat</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_pause_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_129</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-playback-pause</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_move_forward_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_130</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-seek-forward</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="transport_goto_end_button">
+                        <property name="visible">True</property>
+                        <property name="label" translatable="yes">__glade_unnamed_131</property>
+                        <property name="use-underline">True</property>
+                        <property name="icon-name">media-skip-forward</property>
+                        <property name="group">transport_goto_start_button</property>
+                      </object>
+                    </child>
+                    <layout>
+                      <property name="column">12</property>
+                      <property name="row">0</property>
+                    </layout>
                   </object>
                 </child>
                 <child>

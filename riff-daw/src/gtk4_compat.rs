@@ -14,15 +14,27 @@ use log::debug;
 /// GTK3 `bool` closure return value to `glib::Propagation`.
 
 pub trait GdkEventCompat {
-    fn coords(&self) -> Option<(f64, f64)>;
+    /// Event position converted to `widget`-relative coordinates.
+    ///
+    /// GTK4 reports raw event positions in surface coordinates (origin at the
+    /// top-left of the to-level `GdkSurface`), whereas GTK3's
+    /// `gdk_event_get_coords()` returned widget-relative positions. This shim
+    /// performs the GTK3-style translation: subtract the native surface
+    /// transform and the widget's bounds (which already fold in ancestor
+    /// offsets, viewport scrolling and clips) relative to the native.
+    fn coords(&self, widget: &impl gtk4::prelude::IsA<gtk4::Widget>) -> Option<(f64, f64)>;
     fn state(&self) -> gdk4::ModifierType;
     fn keyval(&self) -> gdk4::Key;
     fn scroll_direction(&self) -> Option<gdk4::ScrollDirection>;
 }
 
 impl GdkEventCompat for gdk4::Event {
-    fn coords(&self) -> Option<(f64, f64)> {
-        self.position()
+    fn coords(&self, widget: &impl gtk4::prelude::IsA<gtk4::Widget>) -> Option<(f64, f64)> {
+        let (sx, sy) = self.position()?;
+        let native = widget.native()?;
+        let (tx, ty) = native.surface_transform();
+        let bounds = widget.compute_bounds(&native)?;
+        Some((sx - tx - bounds.x() as f64, sy - ty - bounds.y() as f64))
     }
 
     fn state(&self) -> gdk4::ModifierType {

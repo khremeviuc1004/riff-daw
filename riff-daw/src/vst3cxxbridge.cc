@@ -1087,7 +1087,7 @@ void vst3_plugin_get_window_refresh(rust::String riff_daw_plugin_uuid)
     }
     catch(const std::out_of_range& ex)
     {
-        std::cout << "vst3_plugin_get_window_refresh: Can't find plugin." << std::endl;
+//        std::cout << "vst3_plugin_get_window_refresh: Can't find plugin." << std::endl;
     }
 }
 
@@ -1107,7 +1107,7 @@ bool vst3_plugin_process(
     }
     catch(const std::out_of_range& ex)
     {
-        std::cout << "vst3_plugin_process: Can't find plugin." << std::endl;
+//        std::cout << "vst3_plugin_process: Can't find plugin." << std::endl;
     }
 
     return false;

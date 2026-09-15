@@ -1,5 +1,6 @@
 use std::{collections::HashMap, default::Default, sync::{Arc, Mutex}, time::Duration};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use apres::MIDI;
@@ -53,6 +54,13 @@ mod vst3_cxx_bridge;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+/// Set to false when the `GtkApplication` emits `shutdown` (i.e. once the last
+/// application window has been closed). An `idle_add_local` pump that always
+/// returns `ControlFlow::Continue` keeps the GMainContext permanently busy and
+/// prevents `g_application_run()` from returning, so every idle pump must check
+/// this flag and return `ControlFlow::Break` once the UI is shutting down.
+static UI_RUNNING: AtomicBool = AtomicBool::new(true);
 
 thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
     rayon::ThreadPoolBuilder::new()
@@ -140,6 +148,9 @@ fn main() {
     {
         let application = gui.application.clone();
         application.connect_startup(build_ui);
+        application.connect_shutdown(|_| {
+            UI_RUNNING.store(false, Ordering::Relaxed);
+        });
     }
 
     {
@@ -178,6 +189,9 @@ fn main() {
 
 
         glib::idle_add_local(move || {
+            if !UI_RUNNING.load(Ordering::Relaxed) {
+                return glib::ControlFlow::Break;
+            }
             process_jack_events(
                 &tx_from_ui,
                 &jack_midi_receiver,
@@ -1277,14 +1291,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             if let Ok(mut grid) = grid_arc.lock() {
                                 let zoom_horizontal = grid.zoom_horizontal();
                                 let zoom_vertical = grid.zoom_vertical();
-                                let _adjusted_horizontal_zoom = zoom_horizontal * horizontal_scale_up;
-                                let _adjusted_vertical_zoom = zoom_vertical * vertical_scale_up;
 
                                 grid.set_horizontal_zoom(zoom_horizontal * horizontal_scale_up);
                                 grid.set_vertical_zoom(zoom_vertical * vertical_scale_up);
 
 
                                 // need to adjust the gtk scale widget adjustments (ranges) - probably should do this rather than setting the zoom directly
+                                // keep the zoom scales (and, via their handlers, the ruler zooms) in sync with the grid
+                                gui.ui.piano_roll_zoom_adjustment.set_value(zoom_horizontal * horizontal_scale_up);
+                                gui.ui.piano_roll_vertical_zoom_adjustment.set_value(zoom_vertical * vertical_scale_up);
 
 
                                 // need to scroll the zoom window into view
@@ -1641,12 +1656,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
 
                                             let window = win.clone();
                                             {
-                                                glib::idle_add_local(move || {
-                                                    if window.is_visible() {
-                                                        window.queue_draw();
-                                                    }
-                                                    glib::ControlFlow::Continue
-                                                });
+                                                    glib::idle_add_local(move || {
+                                                        if !UI_RUNNING.load(Ordering::Relaxed) {
+                                                            return glib::ControlFlow::Break;
+                                                        }
+                                                        if window.is_visible() {
+                                                            window.queue_draw();
+                                                        }
+                                                        glib::ControlFlow::Continue
+                                                    });
                                             }
 
                                             unsafe {
@@ -4507,6 +4525,9 @@ win.connect_close_request(|window| {
                                                                 let window = win.clone();
                                                                 {
                                                                     glib::idle_add_local(move || {
+                                                                        if !UI_RUNNING.load(Ordering::Relaxed) {
+                                                                            return glib::ControlFlow::Break;
+                                                                        }
                                                                         if window.is_visible() {
                                                                             window.queue_draw();
                                                                         }

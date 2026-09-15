@@ -244,10 +244,8 @@ impl ComboBoxTextCompat for gtk4::DropDown {
 mod tests {
     use super::*;
 
-    #[test]
+    #[gtk4::test]
     fn combo_box_text_compat_behaviour() {
-        gtk4::init().expect("failed to init gtk4");
-
         let dd = gtk4::DropDown::builder().build();
 
         dd.append(Some("a"), "Alpha");

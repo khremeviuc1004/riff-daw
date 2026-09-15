@@ -1260,6 +1260,58 @@ impl MainWindow {
         }
     }
 
+    /// Repaint a beat grid and its ruler whenever the shared scroll adjustments
+    /// change. GTK4 scrolls a huge drawing area by translating the previously
+    /// recorded snapshot instead of re-running the draw func, while
+    /// `push_visible_viewport_clip` bounds the painting loops to the visible
+    /// band; without this the stale band scrolls away with the content and the
+    /// ruler (which has no motion handlers of its own to trigger redraws)
+    /// visibly runs out before the right edge of its grid.
+    fn connect_scroll_repaint(&self) {
+        fn repaint_on_scroll(scrolled_window: &ScrolledWindow, areas: &[DrawingArea]) {
+            let horizontal_areas: Vec<DrawingArea> = areas.to_vec();
+            scrolled_window.hadjustment().connect_value_changed(move |_| {
+                for area in &horizontal_areas {
+                    area.queue_draw();
+                }
+            });
+            let vertical_areas: Vec<DrawingArea> = areas.to_vec();
+            scrolled_window.vadjustment().connect_value_changed(move |_| {
+                for area in &vertical_areas {
+                    area.queue_draw();
+                }
+            });
+        }
+
+        repaint_on_scroll(
+            &self.ui.track_grid_scrolled_window,
+            &[self.ui.track_drawing_area.clone(), self.ui.track_ruler_drawing_area.clone()],
+        );
+        repaint_on_scroll(
+            &self.ui.riff_grid_scrolled_window,
+            &[self.ui.riff_grid_drawing_area.clone(), self.ui.riff_grid_ruler_drawing_area.clone()],
+        );
+        repaint_on_scroll(
+            &self.ui.piano_roll_scrolled_window,
+            &[
+                self.ui.piano_roll_drawing_area.clone(),
+                self.ui.piano_roll_ruler_drawing_area.clone(),
+                self.ui.piano_roll_piano_keyboard_drawing_area.clone(),
+                // the sample roll shares the piano roll's scroll adjustments
+                self.ui.sample_roll_drawing_area.clone(),
+                self.ui.sample_roll_ruler_drawing_area.clone(),
+            ],
+        );
+        if let Some(scrolled_window) = self.ui.automation_drawing_area.ancestor(ScrolledWindow::static_type()) {
+            if let Some(scrolled_window) = scrolled_window.downcast_ref::<ScrolledWindow>() {
+                repaint_on_scroll(
+                    scrolled_window,
+                    &[self.ui.automation_drawing_area.clone(), self.ui.automation_ruler_drawing_area.clone()],
+                );
+            }
+        }
+    }
+
     fn populate_static_combos(&self) {
         {
             let items = [
@@ -1639,6 +1691,7 @@ impl MainWindow {
         main_window.setup_riff_grids_view(tx_from_ui.clone(), state.clone());
         main_window.setup_riff_arrangements_view(tx_from_ui.clone(), state.clone());
         main_window.setup_loops(tx_from_ui.clone(), state.clone());
+        main_window.connect_scroll_repaint();
         main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new());
         MainWindow::setup_riff_set_drag_and_drop(ui.riff_set_heads_box.clone(), ui.riff_sets_box.clone(), ui.riff_set_horizontal_adjustment.clone(), ui.riff_sets_view_port.clone(), RiffSetType::RiffSet, tx_from_ui.clone());
 
@@ -3174,6 +3227,35 @@ impl MainWindow {
 
         let track_details_dialogue: TrackDetailsDialogue = TrackDetailsDialogue::from_string(track_details_dialogue_glade_src).unwrap();
         Self::populate_track_details_combos(&track_details_dialogue);
+
+        {
+            // GTK4's GtkDropDown has no embedded entry, so the riff chooser
+            // replaces the old `has-entry` GtkComboBoxText with the editable
+            // entry paired to an arrow-only drop down that lists the riffs.
+            let display_factory = gtk4::SignalListItemFactory::new();
+            display_factory.connect_setup(|_factory, list_item| {
+                if let Some(list_item) = list_item.downcast_ref::<gtk4::ListItem>() {
+                    list_item.set_child(Some(&gtk4::Label::new(None)));
+                }
+            });
+            let list_factory = gtk4::SignalListItemFactory::new();
+            list_factory.connect_setup(|_factory, list_item| {
+                if let Some(list_item) = list_item.downcast_ref::<gtk4::ListItem>() {
+                    list_item.set_child(Some(&gtk4::Label::new(None)));
+                }
+            });
+            list_factory.connect_bind(|_factory, list_item| {
+                if let Some(list_item) = list_item.downcast_ref::<gtk4::ListItem>() {
+                    if let Some(label) = list_item.child().and_downcast::<gtk4::Label>() {
+                        if let Some(item) = list_item.item().and_downcast::<ComboItemObject>() {
+                            label.set_text(item.text().as_str());
+                        }
+                    }
+                }
+            });
+            track_details_dialogue.track_riff_choice.set_factory(Some(&display_factory));
+            track_details_dialogue.track_riff_choice.set_list_factory(Some(&list_factory));
+        }
         track_details_dialogue.track_details_panel.set_widget_name(track_uuid.to_string().as_str());
         let (_, track_effects_list_store) = crate::gtk4_compat::setup_text_list_view(&track_details_dialogue.track_effect_list);
 
@@ -3219,11 +3301,16 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
+            let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
             track_details_dialogue.track_riff_choice.connect_changed(move |track_riff_choice| {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
                         debug!("Selected riff: id={:?}, text={:?}",
                         active_id.to_value(), track_riff_choice.active_text().unwrap().to_value());
+                        let active_text = track_riff_choice.active_text().unwrap_or_default();
+                        if active_text.as_str() != track_details_riff_choice_entry.text().as_str() {
+                            track_details_riff_choice_entry.set_text(active_text.as_str());
+                        }
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffSelect(active_id.to_string()), Some(track_uuid.to_string()))) {
                             Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been selected."),
                             _ => (),
@@ -4576,7 +4663,7 @@ impl MainWindow {
         {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_motion_notify_event(move |track_grid_drawing_area, motion_event| {
-                let coords = motion_event.coords().unwrap();
+                let coords = motion_event.coords(track_grid_drawing_area).unwrap();
                 let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -4606,7 +4693,7 @@ impl MainWindow {
         {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_button_press_event(move |track_grid_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(track_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -4633,7 +4720,7 @@ impl MainWindow {
         {
             let track_grid = track_grid_arc.clone();
             self.ui.track_drawing_area.connect_button_release_event(move |track_grid_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(track_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -5176,7 +5263,7 @@ impl MainWindow {
         {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_motion_notify_event(move |riff_grid_drawing_area, motion_event| {
-                let coords = motion_event.coords().unwrap();
+                let coords = motion_event.coords(riff_grid_drawing_area).unwrap();
                 let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -5206,7 +5293,7 @@ impl MainWindow {
         {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_button_press_event(move |riff_grid_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(riff_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -5233,7 +5320,7 @@ impl MainWindow {
         {
             let track_grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.connect_button_release_event(move |riff_grid_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(riff_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -5999,7 +6086,7 @@ impl MainWindow {
         {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_motion_notify_event(move |automation_drawing_area, motion_event| {
-                let coords = motion_event.coords().unwrap();
+                let coords = motion_event.coords(automation_drawing_area).unwrap();
                 let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6029,7 +6116,7 @@ impl MainWindow {
         {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_button_press_event(move |automation_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(automation_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6058,7 +6145,7 @@ impl MainWindow {
         {
             let automation_grid = automation_grid_arc.clone();
             self.ui.automation_drawing_area.connect_button_release_event(move |automation_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(automation_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6598,7 +6685,7 @@ impl MainWindow {
             self.ui.piano_roll_piano_keyboard_drawing_area.connect_button_press_event(move |drawing_area, event_btn| {
                 match piano_ref.lock() {
                     Ok(mut piano_ref) => {
-                        let coords = event_btn.coords().unwrap();
+                        let coords = event_btn.coords(drawing_area).unwrap();
                         let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                         let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                         let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6625,7 +6712,7 @@ impl MainWindow {
             self.ui.piano_roll_piano_keyboard_drawing_area.connect_button_release_event(move |drawing_area, event_btn| {
                 match piano_ref.lock() {
                     Ok(mut piano_ref) => {
-                        let coords = event_btn.coords().unwrap();
+                        let coords = event_btn.coords(drawing_area).unwrap();
                         let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                         let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                         let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6713,7 +6800,7 @@ impl MainWindow {
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_motion_notify_event(move |piano_roll_drawing_area, motion_event| {
-                    let coords = motion_event.coords().unwrap();
+                    let coords = motion_event.coords(piano_roll_drawing_area).unwrap();
                     let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6743,7 +6830,7 @@ impl MainWindow {
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_button_press_event(move |piano_roll_drawing_area, event_btn| {
-                    let coords = event_btn.coords().unwrap();
+                    let coords = event_btn.coords(piano_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -6772,7 +6859,7 @@ impl MainWindow {
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
-                    let coords = event_btn.coords().unwrap();
+                    let coords = event_btn.coords(piano_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -7707,7 +7794,7 @@ impl MainWindow {
                 let sample_roll_grid = sample_roll_grid_arc.clone();
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 self.ui.sample_roll_drawing_area.connect_motion_notify_event(move |_, motion_event| {
-                    let coords = motion_event.coords().unwrap();
+                    let coords = motion_event.coords(&sample_roll_drawing_area).unwrap();
                     let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -7734,7 +7821,7 @@ impl MainWindow {
                 let sample_roll_grid = sample_roll_grid_arc.clone();
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 self.ui.sample_roll_drawing_area.connect_button_press_event(move |_, event_btn| {
-                    let coords = event_btn.coords().unwrap();
+                    let coords = event_btn.coords(&sample_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -7765,7 +7852,7 @@ impl MainWindow {
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 let sample_roll_available_samples = self.ui.sample_roll_available_samples.clone();
                 self.ui.sample_roll_drawing_area.connect_button_release_event(move |_, event_btn| {
-                    let coords = event_btn.coords().unwrap();
+                    let coords = event_btn.coords(&sample_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                     let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                     let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -8122,7 +8209,7 @@ impl MainWindow {
             let grid = beat_grid_arc.clone();
             let drawing_area = drawing_area.clone();
             drawing_area.clone().connect_button_release_event(move |_, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(&drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -9419,7 +9506,7 @@ impl MainWindow {
         {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_motion_notify_event(move |piano_roll_drawing_area, motion_event| {
-                let coords = motion_event.coords().unwrap();
+                let coords = motion_event.coords(piano_roll_drawing_area).unwrap();
                 let control_key_pressed = motion_event.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = motion_event.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = motion_event.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -9449,7 +9536,7 @@ impl MainWindow {
         {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_button_press_event(move |piano_roll_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(piano_roll_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -9476,7 +9563,7 @@ impl MainWindow {
         {
             let riff_arrangement_overview_grid = riff_arrangement_overview_grid_arc.clone();
             self.ui.riff_arrangement_overview_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
-                let coords = event_btn.coords().unwrap();
+                let coords = event_btn.coords(piano_roll_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
                 let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
                 let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
@@ -9805,10 +9892,10 @@ impl MainWindow {
                 match tx_from_ui.send(DAWEvents::Shutdown) {
                     Ok(_) => {}
                     Err(_) => {}
-                }
-                glib::Propagation::Proceed
-            });
-        }
+                 }
+                 glib::Propagation::Proceed
+             });
+         }
         self.ui.wnd_main.set_visible(true);
     }
 
@@ -10878,6 +10965,10 @@ impl MainWindow {
                     }
                 }
 
+                if let Some(active_text) = track_riff_choice.active_text() {
+                    track_details_riff_choice_entry.set_text(active_text.as_str());
+                }
+
                 match track {
                     TrackType::InstrumentTrack(track) => {
                         // select the instrument
@@ -10892,6 +10983,7 @@ impl MainWindow {
 
                         // re-populate the track instrument choice
                         track_instrument_choice.remove_all();
+                        track_instrument_choice.append(None, "");
                         let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
                         for key in instrument_keys.iter() {
                             if let Some(value) = instrument_plugins.get(*key) {
@@ -10975,6 +11067,7 @@ impl MainWindow {
         self.track_details_dialogues.iter().for_each(|(track_uuid, panel)| {
             let active_instrument_id = panel.track_instrument_choice.active_id();
             panel.track_instrument_choice.remove_all();
+            panel.track_instrument_choice.append(None, "");
 
             let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
             for key in instrument_keys.iter() {
@@ -12350,5 +12443,36 @@ impl MainWindow {
                 }
             }
         });
+    }
+}
+#[cfg(test)]
+mod track_details_dialogue_tests {
+    use super::*;
+
+    #[gtk4::test]
+    fn riff_choice_entry_is_part_of_the_widget_tree() {
+        let dialogue: TrackDetailsDialogue =
+            TrackDetailsDialogue::from_string(include_str!("track_details_dialogue.ui"))
+                .expect("failed to build track details dialogue");
+
+        let entry = dialogue.track_details_riff_choice_entry.clone();
+        assert!(
+            entry.ancestor(gtk4::Window::static_type()).is_some(),
+            "riff choice entry must be inside the dialog widget tree"
+        );
+
+        dialogue.track_details_riff_choice_entry.set_text("new riff");
+        assert_eq!(
+            dialogue.track_details_riff_choice_entry.text().as_str(),
+            "new riff"
+        );
+
+        dialogue
+            .track_riff_choice
+            .append(Some("uuid-1"), "new riff");
+        assert_eq!(
+            dialogue.track_riff_choice.active_text().as_deref(),
+            Some("new riff")
+        );
     }
 }

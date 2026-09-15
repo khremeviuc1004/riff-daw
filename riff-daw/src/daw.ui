@@ -3137,6 +3137,7 @@
                                             <child>
                                               <object class="GtkScrollbar">
                                                 <property name="visible">True</property>
+                                                <property name="hexpand">True</property>
                                                 <property name="valign">center</property>
                                                 <property name="adjustment">track_grid_horizontal_adjustment</property>
                                               </object>
@@ -3198,6 +3199,7 @@
                                     <child>
                                       <object class="GtkScrollbar">
                                         <property name="visible">True</property>
+                                        <property name="vexpand">True</property>
                                         <property name="orientation">vertical</property>
                                         <property name="adjustment">track_grid_vertical_adjustment</property>
                                       </object>
@@ -3218,6 +3220,8 @@
                                     <child>
                                       <object class="GtkScale" id="track_grid_vertical_zoom_scale">
                                         <property name="visible">True</property>
+                                        <property name="vexpand">True</property>
+                                        <property name="halign">center</property>
                                         <property name="orientation">vertical</property>
                                         <property name="adjustment">track_grid_vertical_zoom_adjustment</property>
                                         <property name="inverted">True</property>
@@ -13295,6 +13299,7 @@
                                                         <child>
                                                           <object class="GtkScrollbar">
                                                             <property name="visible">True</property>
+                                                            <property name="hexpand">True</property>
                                                             <property name="valign">center</property>
                                                             <property name="adjustment">riff_grid_horizontal_adjustment</property>
                                                           </object>
@@ -13356,6 +13361,7 @@
                                                 <child>
                                                   <object class="GtkScrollbar">
                                                     <property name="visible">True</property>
+                                                    <property name="vexpand">True</property>
                                                     <property name="orientation">vertical</property>
                                                     <property name="adjustment">track_grid_vertical_adjustment</property>
                                                   </object>
@@ -13376,6 +13382,8 @@
                                                 <child>
                                                   <object class="GtkScale" id="riff_grid_vertical_zoom_scale">
                                                     <property name="visible">True</property>
+                                                    <property name="vexpand">True</property>
+                                                    <property name="halign">center</property>
                                                     <property name="orientation">vertical</property>
                                                     <property name="adjustment">riff_grid_vertical_zoom_adjustment</property>
                                                     <property name="inverted">True</property>
@@ -17172,6 +17180,7 @@
                                             <child>
                                               <object class="GtkScrollbar">
                                                 <property name="visible">True</property>
+                                                <property name="hexpand">True</property>
                                                 <property name="valign">center</property>
                                                 <property name="adjustment">piano_roll_horizontal_adjustment</property>
                                               </object>
@@ -17238,6 +17247,7 @@
                             <child>
                               <object class="GtkScrollbar">
                                 <property name="visible">True</property>
+                                <property name="vexpand">True</property>
                                 <property name="orientation">vertical</property>
                                 <property name="adjustment">piano_roll_vertical_adjustment</property>
                               </object>
@@ -17258,6 +17268,8 @@
                             <child>
                               <object class="GtkScale" id="piano_roll_vertical_zoom_scale">
                                 <property name="visible">True</property>
+                                <property name="vexpand">True</property>
+                                <property name="halign">center</property>
                                 <property name="orientation">vertical</property>
                                 <property name="adjustment">piano_roll_vertical_zoom_adjustment</property>
                                 <property name="inverted">True</property>

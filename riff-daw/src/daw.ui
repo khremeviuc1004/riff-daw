@@ -898,7 +898,6 @@
             <property name="hscrollbar-policy">automatic</property>
             <property name="vscrollbar-policy">never</property>
             <property name="propagate-natural-height">True</property>
-            <property name="can-focus">False</property>
             <child>
               <object class="GtkBox">
                 <property name="visible">True</property>
@@ -1294,7 +1293,6 @@
                             <property name="hscrollbar-policy">automatic</property>
                             <property name="vscrollbar-policy">never</property>
                             <property name="propagate-natural-height">True</property>
-                            <property name="can-focus">False</property>
                             <child>
                               <object class="GtkBox">
                                 <property name="height-request">30</property>
@@ -3130,7 +3128,6 @@
                                         <property name="hscrollbar-policy">automatic</property>
                                         <property name="vscrollbar-policy">never</property>
                                         <property name="propagate-natural-height">True</property>
-                                        <property name="can-focus">False</property>
                                         <child>
                                           <object class="GtkBox">
                                             <property name="visible">True</property>
@@ -3328,7 +3325,6 @@
                                             <property name="hscrollbar-policy">automatic</property>
                                             <property name="vscrollbar-policy">never</property>
                                             <property name="propagate-natural-height">True</property>
-                                            <property name="can-focus">False</property>
                                             <child>
                                               <object class="GtkGrid">
                                                 <property name="width-request">300</property>
@@ -12857,7 +12853,6 @@
                                             <property name="hscrollbar-policy">automatic</property>
                                             <property name="vscrollbar-policy">never</property>
                                             <property name="propagate-natural-height">True</property>
-                                            <property name="can-focus">False</property>
                                             <child>
                                               <object class="GtkBox">
                                                 <property name="height-request">30</property>
@@ -13024,7 +13019,6 @@
                                                     <property name="hscrollbar-policy">automatic</property>
                                                     <property name="vscrollbar-policy">never</property>
                                                     <property name="propagate-natural-height">True</property>
-                                                    <property name="can-focus">False</property>
                                                     <child>
                                                       <object class="GtkBox">
                                                         <property name="visible">True</property>
@@ -13115,7 +13109,6 @@
                                             <property name="hscrollbar-policy">automatic</property>
                                             <property name="vscrollbar-policy">never</property>
                                             <property name="propagate-natural-height">True</property>
-                                            <property name="can-focus">False</property>
                                             <child>
                                               <object class="GtkBox">
                                                 <property name="height-request">27</property>
@@ -13292,7 +13285,6 @@
                                                     <property name="hscrollbar-policy">automatic</property>
                                                     <property name="vscrollbar-policy">never</property>
                                                     <property name="propagate-natural-height">True</property>
-                                                    <property name="can-focus">False</property>
                                                     <child>
                                                       <object class="GtkBox">
                                                         <property name="visible">True</property>
@@ -16601,7 +16593,6 @@
                                 <property name="hscrollbar-policy">automatic</property>
                                 <property name="vscrollbar-policy">never</property>
                                 <property name="propagate-natural-height">True</property>
-                                <property name="can-focus">False</property>
                                 <child>
                                   <object class="GtkBox">
                                     <property name="height-request">30</property>
@@ -17173,7 +17164,6 @@
                                         <property name="hscrollbar-policy">automatic</property>
                                         <property name="vscrollbar-policy">never</property>
                                         <property name="propagate-natural-height">True</property>
-                                        <property name="can-focus">False</property>
                                         <child>
                                           <object class="GtkBox">
                                             <property name="visible">True</property>
@@ -17309,7 +17299,6 @@
                             <property name="hscrollbar-policy">automatic</property>
                             <property name="vscrollbar-policy">never</property>
                             <property name="propagate-natural-height">True</property>
-                            <property name="can-focus">False</property>
                             <child>
                               <object class="GtkBox">
                                 <property name="height-request">30</property>
@@ -17509,7 +17498,6 @@
                             <property name="hscrollbar-policy">automatic</property>
                             <property name="vscrollbar-policy">never</property>
                             <property name="propagate-natural-height">True</property>
-                            <property name="can-focus">False</property>
                             <child>
                               <object class="GtkBox">
                                 <property name="visible">True</property>
@@ -18001,7 +17989,6 @@
                             <property name="hscrollbar-policy">automatic</property>
                             <property name="vscrollbar-policy">never</property>
                             <property name="propagate-natural-height">True</property>
-                            <property name="can-focus">False</property>
                             <child>
                               <object class="GtkBox">
                                 <property name="height-request">30</property>
@@ -20111,7 +20098,6 @@
                             <property name="hscrollbar-policy">automatic</property>
                             <property name="vscrollbar-policy">never</property>
                             <property name="propagate-natural-height">True</property>
-                            <property name="can-focus">False</property>
                             <child>
                               <object class="GtkBox">
                                 <property name="visible">True</property>
@@ -20187,7 +20173,6 @@
             <property name="hscrollbar-policy">automatic</property>
             <property name="vscrollbar-policy">never</property>
             <property name="propagate-natural-height">True</property>
-            <property name="can-focus">False</property>
             <child>
               <object class="GtkGrid">
                 <property name="visible">True</property>

@@ -506,7 +506,7 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                         let _num_inputs = (*effect).num_inputs;
                         let num_outputs = (*effect).num_outputs;
 
-                        println!("Got effect: magic={}, num_programs={}, num_params={}, num_inputs={}, num_outputs={}, flags={}, initial_delay={}. unique_id={}, version={}",
+                        println!("Got effect: magic={}, num_programs={}, num_params={}, num_inputs={}, num_outputs={}, flags={}, initial_delay={}, unique_id={}, version={}",
                             (*effect).magic        ,
                             (*effect).num_programs ,
                             (*effect).num_params   ,
@@ -542,7 +542,7 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                                     println!("shell_plugin_id={}", plug_id);
                                     println!("shell_plugin_name={}", std::str::from_utf8(&buffer).expect("msg").trim_matches(char::from(0)));
                                     println!("shell_plugin_category={}", plugin_category);
-                                    println!("##########{}:{}:{}:{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, plug_id, plugin_category);
+                                    println!("##########{}:{}:{}:{}:{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, (*effect).unique_id, plug_id, plugin_category);
 
                                     if num_outputs > 0 {
                                         check_plugin_process_replacing(&shell_plug_effect, dispatcher, process);
@@ -554,7 +554,7 @@ fn check_vst_plugin(vst_plugin_path: &str) {
                             let buffer: [u8; 40] = [0; 40];
                             println!("plugin_category={}", plugin_category);
                             dispatcher(effect, effect_opcodes::GET_EFFECT_NAME, 0 , 0, std::mem::transmute(&buffer), 0.0);
-                            println!("##########{}:{}::{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, plugin_category);
+                            println!("##########{}:{}:{}::{}:VST24", std::str::from_utf8(&buffer).expect("Could not unpack plugin name").trim_matches(char::from(0)), vst_plugin_path, (*effect).unique_id, plugin_category);
 
                             if num_outputs > 0 {
                                 check_plugin_process_replacing(&effect, dispatcher, process);

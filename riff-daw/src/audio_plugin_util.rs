@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::{Arc, mpsc::Sender, Mutex}};
 use std::{path::Path};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use log::*;
 
 use pathsearch::find_executable_in_path;
@@ -12,6 +13,7 @@ use vst::api::TimeInfo;
 
 use crate::{domain::{VstHost}, event::AudioPluginHostOutwardEvent, constants::{VST24_CHECKER_EXECUTABLE_NAME, CLAP_CHECKER_EXECUTABLE_NAME}};
 use crate::constants::VST3_CHECKER_EXECUTABLE_NAME;
+use crate::domain::{AudioPluginType, ScannedPlugin};
 use crate::event::DAWEvents;
 use crate::vst3_cxx_bridge::{ffi, Vst3Host};
 
@@ -348,9 +350,9 @@ pub fn create_vst3_audio_plugin(
     }
 }
 
-pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>, vst3_paths: &Vec<String>, tx_from_ui:  crossbeam_channel::Sender<DAWEvents>) -> (HashMap<String, String>, HashMap<String, String>) {
-    let mut instrument_audio_plugins: HashMap<String, String> = HashMap::new();
-    let mut effect_audio_plugins: HashMap<String, String> = HashMap::new();
+pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>, vst3_paths: &Vec<String>, tx_from_ui:  crossbeam_channel::Sender<DAWEvents>) -> (HashMap<String, ScannedPlugin>, HashMap<String, ScannedPlugin>) {
+    let mut instrument_audio_plugins: HashMap<String, ScannedPlugin> = HashMap::new();
+    let mut effect_audio_plugins: HashMap<String, ScannedPlugin> = HashMap::new();
 
     if let Some(vst24_checker) = find_executable_in_path(VST24_CHECKER_EXECUTABLE_NAME) {
         if let Some(vst24_checker) = vst24_checker.to_str() {
@@ -382,8 +384,8 @@ pub fn scan_for_audio_plugins(vst_paths: &Vec<String>, clap_paths: &Vec<String>,
 pub fn scan_for_audio_plugins_of_type(
     audio_plugin_checker: &str, 
     shared_library_path: &str, 
-    instrument_audio_plugins: &mut HashMap<String, String>, 
-    effect_audio_plugins: &mut HashMap<String, String>,
+    instrument_audio_plugins: &mut HashMap<String, ScannedPlugin>,
+    effect_audio_plugins: &mut HashMap<String, ScannedPlugin>,
     tx_from_ui:  &crossbeam_channel::Sender<DAWEvents>
 ) {
     if let Ok(read_dir) = std::fs::read_dir(shared_library_path) {
@@ -408,8 +410,8 @@ pub fn scan_for_audio_plugins_of_type(
 
 fn do_plugin_check(
     audio_plugin_checker: &str,
-    instrument_audio_plugins: &mut HashMap<String, String>,
-    effect_audio_plugins: &mut HashMap<String, String>,
+    instrument_audio_plugins: &mut HashMap<String, ScannedPlugin>,
+    effect_audio_plugins: &mut HashMap<String, ScannedPlugin>,
     plugin_path: String,
     tx_from_ui:  &crossbeam_channel::Sender<DAWEvents>
 ) {
@@ -443,11 +445,15 @@ fn do_plugin_check(
                                 Some(id) => *id,
                                 None => "",
                             };
-                            let plugin_category = match elements.get(3) {
+                            let sub_plugin_id = match elements.get(3) {
+                                Some(id) if !id.is_empty() => Some((*id).to_string()),
+                                _ => None,
+                            };
+                            let plugin_category = match elements.get(4) {
                                 Some(category) => (*category).parse::<isize>().unwrap_or(0),
                                 None => 0,
                             };
-                            let plugin_type = match elements.get(4) {
+                            let plugin_type = match elements.get(5) {
                                 Some(plugin_type) => *plugin_type,
                                 None => "unknown",
                             };
@@ -455,25 +461,38 @@ fn do_plugin_check(
 
                             if !plugin_name.is_empty() &&
                                 !library_path.is_empty() {
-                                let id = format!("{}:{}:{}", library_path, plugin_id, plugin_type);
                                 let plugin_name = format!("{} ({})", plugin_name, plugin_type);
+                                let audio_plugin_stack = match AudioPluginType::from_str(plugin_type) {
+                                    Ok(audio_plugin_stack) => audio_plugin_stack,
+                                    Err(_) => {
+                                        warn!("Unknown plugin type '{}' for plugin '{}', skipping.", plugin_type, plugin_name);
+                                        continue;
+                                    }
+                                };
+                                let scanned_plugin = ScannedPlugin {
+                                    name: plugin_name.clone(),
+                                    path: library_path.to_string(),
+                                    id: plugin_id.to_string(),
+                                    sub_id: sub_plugin_id,
+                                    audio_plugin_stack,
+                                };
 
                                 match plugin_category {
                                     // unknown
                                     0 => {
-                                        effect_audio_plugins.insert(id, plugin_name);
+                                        effect_audio_plugins.insert(plugin_name, scanned_plugin);
                                     }
                                     // effect
                                     1 => {
-                                        effect_audio_plugins.insert(id, plugin_name);
+                                        effect_audio_plugins.insert(plugin_name, scanned_plugin);
                                     }
                                     // instrument
                                     2 => {
-                                        instrument_audio_plugins.insert(id, plugin_name);
+                                        instrument_audio_plugins.insert(plugin_name, scanned_plugin);
                                     }
                                     // generator
                                     11 => {
-                                        instrument_audio_plugins.insert(id, plugin_name);
+                                        instrument_audio_plugins.insert(plugin_name, scanned_plugin);
                                     }
                                     _ => {}
                                 }

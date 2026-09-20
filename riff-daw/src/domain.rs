@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use simple_clap_host_helper_lib::{host::DAWCallback, plugin::{ext::{posix_fd_support::PosixFDSupport, timer_support::TimerSupport}, ext::params::Params, instance::process::ProcessData, library::PluginLibrary}};
 use sndfile::*;
 use state::InitCell;
-use strum_macros::EnumString;
+use strum_macros::{Display, EnumString};
 use thread_priority::*;
 use uuid::Uuid;
 use widestring::U16String;
@@ -24,7 +24,7 @@ use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
 use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGestureBegin, ParamGestureEnd, ParamValue};
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
-use crate::{audio_plugin_util::*, constants::{CLAP, VST24, CONFIGURATION_FILE_NAME}, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
+use crate::{audio_plugin_util::*, constants::CONFIGURATION_FILE_NAME, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
 use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::EventProcessorType;
 use crate::state::MidiPolyphonicExpressionNoteId;
@@ -2151,36 +2151,6 @@ impl Host for VstHost {
     }
 }
 
-pub fn get_plugin_details(instrument_details: String) -> (Option<String>, String, String) {
-    if instrument_details.contains(':') {
-        let elements = instrument_details.split(':').collect::<Vec<&str>>();
-        let library_path = match elements.first() {
-            Some(path) => *path,
-            None => todo!(),
-        };
-        let sub_plugin_id = match elements.get(1) {
-            Some(id) => {
-                if (*id).len() == 0 {
-                    None
-                }
-                else {
-                    Some((*id).to_string())
-                }
-            }
-            None => None,
-        };
-        let plugin_type = match elements.get(2) {
-            Some(plugin_type) => (*plugin_type).to_string(),
-            None => "".to_string(),
-        };
-        (sub_plugin_id, String::from(library_path), plugin_type)
-    }
-    else {
-        (None, instrument_details, "".to_string())
-    }
-}
-
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginParameterDetail {
     pub index: i32,
@@ -3403,7 +3373,7 @@ impl BackgroundProcessorVst3AudioPlugin {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, EnumString, Display)]
 pub enum AudioPluginType {
     VST24,
     VST3,
@@ -3552,6 +3522,14 @@ impl AudioPlugin {
 
     pub fn set_plugin_type(&mut self, plugin_type: String) {
         self.plugin_type = plugin_type;
+    }
+
+    pub fn uid(&self) -> &str {
+        &self.uid
+    }
+
+    pub fn set_uid(&mut self, uid: String) {
+        self.uid = uid;
     }
 }
 
@@ -3785,16 +3763,14 @@ impl TrackBackgroundProcessorHelper {
                     }
                     self.keep_alive = false;
                 },
-                TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders, clap_plugin_loaders, uuid, effect_details) => {
-                    let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(effect_details);
-
-                    let plugin_instance: BackgroundProcessorAudioPluginType = if plugin_type == VST24 {
+                TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin) => {
+                    let plugin_instance: BackgroundProcessorAudioPluginType = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
                         let vst_plugin_instance = BackgroundProcessorVst24AudioPlugin::new_with_uuid(
                             vst24_plugin_loaders,
                             self.track_uuid.clone(),
                             uuid,
-                            sub_plugin_id,
-                            library_path,
+                            scanned_plugin.sub_id.clone(),
+                            scanned_plugin.path.clone(),
                             self.vst_host_time_info.clone(),
                             self.sample_rate,
                             self.block_size as i64,
@@ -3805,13 +3781,13 @@ impl TrackBackgroundProcessorHelper {
 
                         BackgroundProcessorAudioPluginType::Vst24(vst_plugin_instance)
                     }
-                    else if plugin_type == CLAP {
+                    else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
                         let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
                             clap_plugin_loaders, 
                             self.track_uuid.clone(), 
                             uuid, 
-                            sub_plugin_id, 
-                            library_path,
+                            scanned_plugin.sub_id.clone(), 
+                            scanned_plugin.path.clone(),
                             self.sample_rate,
                             self.block_size as i64,
                             self.tempo,
@@ -3821,17 +3797,11 @@ impl TrackBackgroundProcessorHelper {
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
                     else {
-                        let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
-                            vst_plugin_uid
-                        }
-                        else {
-                            "0".to_string()
-                        };
                         let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
                             self.track_uuid.clone(),
                             uuid,
-                            vst_plugin_uid,
-                            library_path,
+                            scanned_plugin.id.clone(),
+                            scanned_plugin.path.clone(),
                             false,
                             self.sample_rate,
                             self.block_size as i64,
@@ -3859,9 +3829,7 @@ impl TrackBackgroundProcessorHelper {
                         effect.uuid().to_string() != uuid
                     });
                 }
-                TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, uuid, plugin_details) => {
-                    let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(plugin_details);
-
+                TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin) => {
                     if let Some(plugin_instance_to_delete) = self.instrument_plugin_instances.pop() {
                         match plugin_instance_to_delete {
                             BackgroundProcessorAudioPluginType::Vst24(mut vst24_plugin) => {
@@ -3878,13 +3846,13 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
 
-                    let plugin_instance_to_add: BackgroundProcessorAudioPluginType = if plugin_type == VST24 {
+                    let plugin_instance_to_add: BackgroundProcessorAudioPluginType = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
                         let vst_plugin_instance = BackgroundProcessorVst24AudioPlugin::new_with_uuid(
                             vst24_plugin_loaders,
                             self.track_uuid.clone(),
                             uuid,
-                            sub_plugin_id,
-                            library_path,
+                            scanned_plugin.sub_id.clone(),
+                            scanned_plugin.path.clone(),
                             self.vst_host_time_info.clone(),
                             self.sample_rate,
                             self.block_size as i64,
@@ -3900,13 +3868,13 @@ impl TrackBackgroundProcessorHelper {
 
                         BackgroundProcessorAudioPluginType::Vst24(vst_plugin_instance)
                     }
-                    else if plugin_type == CLAP {
+                    else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
                         let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
                             clap_plugin_loaders, 
                             self.track_uuid.clone(), 
                             uuid, 
-                            sub_plugin_id, 
-                            library_path,
+                            scanned_plugin.sub_id.clone(),
+                            scanned_plugin.path.clone(),
                             self.sample_rate,
                             self.block_size as i64,
                             self.tempo,
@@ -3916,17 +3884,11 @@ impl TrackBackgroundProcessorHelper {
                         BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
                     }
                     else {
-                        let vst_plugin_uid = if let Some(vst_plugin_uid) = sub_plugin_id {
-                            vst_plugin_uid
-                        }
-                        else {
-                            "0".to_string()
-                        };
                         let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
                             self.track_uuid.clone(),
                             uuid,
-                            vst_plugin_uid,
-                            library_path,
+                            scanned_plugin.id.clone(),
+                            scanned_plugin.path.clone(),
                             true,
                             self.sample_rate,
                             self.block_size as i64,
@@ -7077,6 +7039,15 @@ impl<T> MidiConsumerDetails<T> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ScannedPlugin {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) id: String,
+    pub(crate) sub_id: Option<String>,
+    pub(crate) audio_plugin_stack: AudioPluginType
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DAWConfiguration {
     pub audio: AudioConfiguration,
     pub scanned_instrument_plugins: ScannedPlugins,
@@ -7162,7 +7133,7 @@ impl AudioConfiguration {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ScannedPlugins {
-    pub successfully_scanned: HashMap<String, String>, // key=id (path:shell id:bool), value=name
+    pub successfully_scanned: HashMap<String, ScannedPlugin>, // name, ScannedPlugin struct
 }
 
 impl ScannedPlugins {

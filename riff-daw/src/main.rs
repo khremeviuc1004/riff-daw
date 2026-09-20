@@ -1722,13 +1722,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             match track_uuid {
                                 Some(track_uuid) => {
                                     let track_uuid2 = track_uuid.clone();
-                                    state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders, clap_plugin_loaders, uuid, effect_details.clone()));
+                                    let scanned_plugin = state.configuration.scanned_effect_plugins.successfully_scanned.get(&effect_details).cloned();
+                                    if let Some(scanned_plugin) = scanned_plugin.clone() {
+                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin.clone()));
+                                    }
                                     match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid2) {
                                         Some(track_type) => match track_type {
                                             TrackType::InstrumentTrack(track) => {
-                                                let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(effect_details.clone());
-                                                let effect = AudioPlugin::new_with_uuid(uuid, name, library_path, sub_plugin_id, plugin_type);
-                                                track.effects_mut().push(effect);
+                                                if let Some(scanned_plugin) = scanned_plugin {
+                                                    let mut effect = AudioPlugin::new_with_uuid(uuid, name, scanned_plugin.path.clone(), scanned_plugin.sub_id.clone(), scanned_plugin.audio_plugin_stack.to_string());
+                                                    effect.set_uid(scanned_plugin.id.clone());
+                                                    track.effects_mut().push(effect);
+                                                }
                                             },
                                             TrackType::AudioTrack(_) => (),
                                             TrackType::MidiTrack(_) => (),
@@ -5066,22 +5071,18 @@ win.connect_close_request(|window| {
                                 let midi_input_devices: Vec<String> = state.midi_devices();
 
                                 let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
-                                let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+                                let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.name.cmp(&value2.name)).map(|(key, _value)| key).collect_vec();
                                 for key in instrument_keys.iter() {
-                                    if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
-                                        let adjusted_key = key.replace(char::from(0), "");
-                                        let adjusted_value = value.replace(char::from(0), "");
-                                        instrument_plugins.insert(adjusted_key, adjusted_value);
+                                    if state.configuration.scanned_instrument_plugins.successfully_scanned.contains_key(*key) {
+                                        instrument_plugins.insert(key.to_string(), key.to_string());
                                     }
                                 }
 
                                 let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
-                                let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+                                let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.name.cmp(&value2.name)).map(|(key, _value)| key).collect_vec();
                                 for key in effect_keys.iter() {
-                                    if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
-                                        let adjusted_key = key.replace(char::from(0), "");
-                                        let adjusted_value = value.replace(char::from(0), "");
-                                        effect_plugins.insert(adjusted_key, adjusted_value);
+                                    if state.configuration.scanned_effect_plugins.successfully_scanned.contains_key(*key) {
+                                        effect_plugins.insert(key.to_string(), key.to_string());
                                     }
                                 }
 

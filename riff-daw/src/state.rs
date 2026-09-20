@@ -3,6 +3,7 @@ extern crate factor;
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread;
 
 use apres::MIDI;
@@ -353,60 +354,63 @@ impl DAWState {
                     let mut effect_presets = vec![];
                     for effect in track.effects_mut() {
                         effect_presets.push(String::from(effect.preset_data()));
-                        let mut effect_details = String::from(effect.file());
+                        match AudioPluginType::from_str(effect.plugin_type()) {
+                            Ok(audio_plugin_stack) => {
+                                let effect_plugin = ScannedPlugin {
+                                    name: effect.name().to_string(),
+                                    path: effect.file().to_string(),
+                                    id: effect.uid().to_string(),
+                                    sub_id: effect.sub_plugin_id().clone(),
+                                    audio_plugin_stack,
+                                };
 
-                        effect_details.push(':');
-                        match effect.sub_plugin_id() {
-                            Some(sub_plugin_id) => {
-                                effect_details.push_str(sub_plugin_id.to_string().as_str());
+                                match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effect.uuid(), effect_plugin)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem sending add effect: {}", error),
+                                }
                             },
-                            None => (),
-                        }
-
-                        effect_details.push(':');
-                        effect_details.push_str(effect.plugin_type());
-    
-                        match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effect.uuid(), effect_details)) {
-                            Ok(_) => (),
-                            Err(error) => debug!("Problem sending add effect: {}", error),
+                            Err(error) => debug!("Couldn't parse plugin type for effect '{}': {}", effect.name(), error),
                         }
                     }
                     effect_presets
                 };
                 let preset = {
                     let instrument = track.instrument_mut();
-                    let mut instrument_details = String::from(instrument.file());
                     let instrument_uuid = instrument.uuid();
+                    let instrument_plugin = match AudioPluginType::from_str(instrument.plugin_type()) {
+                        Ok(audio_plugin_stack) => Some(ScannedPlugin {
+                            name: instrument.name().to_string(),
+                            path: instrument.file().to_string(),
+                            id: instrument.uid().to_string(),
+                            sub_id: instrument.sub_plugin_id().clone(),
+                            audio_plugin_stack,
+                        }),
+                        Err(_) => None,
+                    };
 
-                    instrument_details.push(':');
-                    match instrument.sub_plugin_id() {
-                        Some(sub_plugin_id) => {
-                            instrument_details.push_str(sub_plugin_id.to_string().as_str());
-                        },
-                        None => (),
-                    }
-
-                    instrument_details.push(':');
-                    instrument_details.push_str(instrument.plugin_type());
-
-                    if instrument_details.contains(".so") || instrument_details.contains(".clap") || instrument_details.contains(".vst3") {
-                        match track_uuid {
-                            Some(_) => {
-                                match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
-                                    vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, instrument_details)) {
-                                    Ok(_) => {}
-                                    Err(error) => debug!("Couldn't send instrument change event: {:?}", error)
-                                }
-                                let preset_data = instrument.preset_data();
-                                if !preset_data.is_empty() {
-                                    Some(preset_data)
-                                } else {
-                                    None
-                                }
-                            },
-                            None => None,
+                    if let Some(instrument_plugin) = instrument_plugin {
+                        if instrument_plugin.path.contains(".so") || instrument_plugin.path.contains(".clap") || instrument_plugin.path.contains(".vst3") {
+                            match track_uuid {
+                                Some(_) => {
+                                    match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
+                                        vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, instrument_plugin)) {
+                                        Ok(_) => {}
+                                        Err(error) => debug!("Couldn't send instrument change event: {:?}", error)
+                                    }
+                                    let preset_data = instrument.preset_data();
+                                    if !preset_data.is_empty() {
+                                        Some(preset_data)
+                                    } else {
+                                        None
+                                    }
+                                },
+                                None => None,
+                            }
+                        } else {
+                            None
                         }
-                    } else {
+                    }
+                    else {
                         None
                     }
                 };
@@ -533,30 +537,38 @@ impl DAWState {
                             track_uuid: String,
     ) {
         let mut index = 0;
+        let scanned_plugin = if let Some(scanned_plugin) = self.configuration.scanned_instrument_plugins.successfully_scanned.get(&instrument_details) {
+            Some(scanned_plugin.clone())
+        }
+        else {
+            None
+        };
         for track_type in self.get_project().song_mut().tracks_mut() {
             match track_type {
                 TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
-                    let (sub_plugin_id, library_path, plugin_type) = get_plugin_details(instrument_details.clone());
-                    let instrument = track.instrument_mut();
-                    let instrument_uuid = Uuid::new_v4();
-                    instrument.set_uuid(instrument_uuid.clone());
+                    if let Some(scanned_plugin) = scanned_plugin {
+                        let instrument = track.instrument_mut();
+                        let instrument_uuid = Uuid::new_v4();
+                        instrument.set_uuid(instrument_uuid.clone());
 
-                    instrument.set_file(library_path);
-                    instrument.set_sub_plugin_id(sub_plugin_id);
-                    instrument.set_plugin_type(plugin_type);
+                        instrument.set_file(scanned_plugin.path.clone());
+                        instrument.set_uid(scanned_plugin.id.clone());
+                        instrument.set_sub_plugin_id(scanned_plugin.sub_id.clone());
+                        instrument.set_plugin_type(scanned_plugin.audio_plugin_stack.to_string());
 
-                    if instrument_details.contains(".so") || instrument_details.contains(".clap") || instrument_details.contains(".vst3") {
-                        // instrument.load(vst_plugin_loaders, track_uuid.clone(), instrument_details, tx_audio.clone(), rx_vst, tx_from_vst, track_audio_coast);
-                        match self.instrument_track_senders_mut().get_mut(&track_uuid) {
-                            Some(sender) => {
-                                match sender.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
-                                    vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, instrument_details)) {
-                                    Ok(_) => (),
-                                    Err(error) => debug!("{:?}", error),
-                                }
-                            },
-                            None => debug!("Couldn't send message to track!"),
-                        };
+                        if scanned_plugin.path.contains(".so") || scanned_plugin.path.contains(".clap") || scanned_plugin.path.contains(".vst3") {
+                            // instrument.load(vst_plugin_loaders, track_uuid.clone(), instrument_details, tx_audio.clone(), rx_vst, tx_from_vst, track_audio_coast);
+                            match self.instrument_track_senders_mut().get_mut(&track_uuid) {
+                                Some(sender) => {
+                                    match sender.send(TrackBackgroundProcessorInwardEvent::ChangeInstrument(
+                                        vst24_plugin_loaders, clap_plugin_loaders, instrument_uuid, scanned_plugin)) {
+                                        Ok(_) => (),
+                                        Err(error) => debug!("{:?}", error),
+                                    }
+                                },
+                                None => debug!("Couldn't send message to track!"),
+                            };
+                        }
                     }
                     break;
                 },

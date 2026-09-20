@@ -11,7 +11,7 @@ use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, ScannedPlugin, TrackEvent, TrackEventRouting, VstHost};
 use crate::state::{MidiPolyphonicExpressionNoteId};
 
 #[derive(Clone)]
@@ -465,7 +465,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
         Arc<Mutex<HashMap<String, PluginLibrary>>>,
         Uuid,
-        String,
+        ScannedPlugin,
     ), // vst24 plugin loaders map, clap plugin loaders map, window id, effect uuid, absolute path to shared library (details - includes shell plugin id if exists)
     DeleteEffect(String),           // effect uuid,
     SetEffectWindowId(String, u32), // effect uuid, window id
@@ -474,7 +474,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
         Arc<Mutex<HashMap<String, PluginLibrary>>>,
         Uuid,
-        String,
+        ScannedPlugin,
     ), // vst24 plugin loaders map, clap plugin loaders map, window id, instrument uuid, absolute path to shared library (details - includes shell plugin id if exists)
     SetInstrumentWindowId(u32),
     SetInstrumentParameter(i32, f32), // parameter index, value

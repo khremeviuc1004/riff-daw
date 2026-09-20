@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID, PLUGIN_PATHS_SEPARATOR};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem};
+use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, ScannedPlugin};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
@@ -10465,22 +10465,18 @@ impl MainWindow {
         let midi_input_devices: Vec<String> = state.midi_devices();
 
         let mut instrument_plugins: IndexMap<String, String> = IndexMap::new();
-        let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+        let instrument_keys = state.configuration.scanned_instrument_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.name.cmp(&value2.name)).map(|(key, _value)| key).collect_vec();
         for key in instrument_keys.iter() {
-            if let Some(value) = state.configuration.scanned_instrument_plugins.successfully_scanned.get(*key) {
-                let adjusted_key = key.replace(char::from(0), "");
-                let adjusted_value = value.replace(char::from(0), "");
-                instrument_plugins.insert(adjusted_key, adjusted_value);
+            if state.configuration.scanned_instrument_plugins.successfully_scanned.contains_key(*key) {
+                instrument_plugins.insert(key.to_string(), key.to_string());
             }
         }
 
         let mut effect_plugins: IndexMap<String, String> = IndexMap::new();
-        let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+        let effect_keys = state.configuration.scanned_effect_plugins.successfully_scanned.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.name.cmp(&value2.name)).map(|(key, _value)| key).collect_vec();
         for key in effect_keys.iter() {
-            if let Some(value) = state.configuration.scanned_effect_plugins.successfully_scanned.get(*key) {
-                let adjusted_key = key.replace(char::from(0), "");
-                let adjusted_value = value.replace(char::from(0), "");
-                effect_plugins.insert(adjusted_key, adjusted_value);
+            if state.configuration.scanned_effect_plugins.successfully_scanned.contains_key(*key) {
+                effect_plugins.insert(key.to_string(), key.to_string());
             }
         }
 
@@ -11063,20 +11059,15 @@ impl MainWindow {
         }
     }
 
-    pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &HashMap<String, String>, effect_plugins: &HashMap<String, String>) {
+    pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &HashMap<String, ScannedPlugin>, effect_plugins: &HashMap<String, ScannedPlugin>) {
         self.track_details_dialogues.iter().for_each(|(track_uuid, panel)| {
             let active_instrument_id = panel.track_instrument_choice.active_id();
             panel.track_instrument_choice.remove_all();
             panel.track_instrument_choice.append(None, "");
 
-            let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+            let instrument_keys = instrument_plugins.iter().sorted_by(|(key1, _value1), (key2, _value2)| key1.cmp(key2)).map(|(key, _value)| key).collect_vec();
             for key in instrument_keys.iter() {
-                if let Some(value) = instrument_plugins.get(*key) {
-                    let adjusted_key = key.replace(char::from(0), "");
-                    let adjusted_value = value.replace(char::from(0), "");
-                    // debug!("Add instrument to choice: key={}, value={}", adjusted_key.as_str(), adjusted_value.as_str());
-                    panel.track_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
-                }
+                panel.track_instrument_choice.append(Some(key.as_str()), key.as_str());
             }
             if let Some(active_instrument_id) = active_instrument_id {
                 if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(track_uuid) {
@@ -11091,11 +11082,9 @@ impl MainWindow {
             }
 
             panel.track_effects_choice.remove_all();
-            let effect_keys = effect_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+            let effect_keys = effect_plugins.iter().sorted_by(|(key1, _value1), (key2, _value2)| key1.cmp(key2)).map(|(key, _value)| key).collect_vec();
             for key in effect_keys.iter() {
-                if let Some(value) = effect_plugins.get(*key) {
-                    panel.track_effects_choice.append(Some(key.replace(char::from(0), "").as_str()), value.replace(char::from(0), "").as_str());
-                }
+                panel.track_effects_choice.append(Some(key.as_str()), key.as_str());
             }
         });
     }

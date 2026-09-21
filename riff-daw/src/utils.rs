@@ -259,22 +259,23 @@ impl DAWUtils {
     }
 
     fn create_plugin_parameter_blocks(block_size_in_samples: f64, passage_length_in_frames: f64, plugin_parameter_events: &Vec<PluginParameter>) -> Vec<Vec<PluginParameter>> {
-        let mut param_event_blocks = vec![];
+        let mut param_event_blocks = Vec::with_capacity((passage_length_in_frames / block_size_in_samples) as usize + 1);
+        // the events are sorted by absolute position, so a single forward pass is enough
+        let mut event_index = 0_usize;
         for current_start_frame in (0..passage_length_in_frames as i32).step_by(block_size_in_samples as usize) {
             let mut param_event_block: Vec<PluginParameter> = Vec::new();
             let current_end_frame = current_start_frame + block_size_in_samples as i32;
 
-            // loop through param events
-            // only start processing when events are in range
-            for event in plugin_parameter_events.iter() {
-                let absolute_position_in_frames = event.position() as i32;
-                if current_start_frame <= absolute_position_in_frames && absolute_position_in_frames < current_end_frame {
-                    param_event_block.push(event.clone());
-                }
-
+            // consume the events that fall within this block, the cursor only ever moves forward
+            while event_index < plugin_parameter_events.len() {
+                let absolute_position_in_frames = plugin_parameter_events[event_index].position() as i32;
                 if absolute_position_in_frames >= current_end_frame {
                     break;
                 }
+                if absolute_position_in_frames >= current_start_frame {
+                    param_event_block.push(plugin_parameter_events[event_index].clone());
+                }
+                event_index += 1;
             }
 
             param_event_blocks.push(param_event_block);
@@ -283,25 +284,26 @@ impl DAWUtils {
     }
 
     fn create_midi_event_blocks(block_size_in_samples: f64, passage_length_in_frames: f64, midi_events: &mut Vec<MidiEvent>) -> Vec<Vec<MidiEvent>> {
-        let mut event_blocks = vec![];
+        let mut event_blocks = Vec::with_capacity((passage_length_in_frames / block_size_in_samples) as usize + 1);
+        // the events are sorted by absolute position, so a single forward pass is enough
+        let mut event_index = 0_usize;
         for current_start_frame in (0..passage_length_in_frames as i32).step_by(block_size_in_samples as usize) {
             let mut event_block: Vec<MidiEvent> = Vec::new();
             let current_end_frame = current_start_frame + block_size_in_samples as i32;
 
-            // loop through events
-            // only start processing when events are in range
+            // consume the events that fall within this block, the cursor only ever moves forward
             // adjust the delta frames back from absolute frames to block relative delta frames
-            for event in midi_events.iter() {
-                let absolute_delta_frames = event.delta_frames;
-                if current_start_frame <= absolute_delta_frames && absolute_delta_frames < current_end_frame {
-                    let mut adjusted_event = *event;
-                    adjusted_event.delta_frames = absolute_delta_frames - current_start_frame;
-                    event_block.push(adjusted_event);
-                }
-
+            while event_index < midi_events.len() {
+                let absolute_delta_frames = midi_events[event_index].delta_frames;
                 if absolute_delta_frames >= current_end_frame {
                     break;
                 }
+                if absolute_delta_frames >= current_start_frame {
+                    let mut adjusted_event = midi_events[event_index];
+                    adjusted_event.delta_frames = absolute_delta_frames - current_start_frame;
+                    event_block.push(adjusted_event);
+                }
+                event_index += 1;
             }
 
             event_blocks.push(event_block);
@@ -310,29 +312,28 @@ impl DAWUtils {
     }
 
     fn create_track_event_blocks(block_size_in_samples: f64, passage_length_in_frames: f64, track_events: &mut Vec<TrackEvent>) -> Vec<Vec<TrackEvent>> {
-        let mut event_blocks = vec![];
+        let mut event_blocks = Vec::with_capacity((passage_length_in_frames / block_size_in_samples) as usize + 1);
+        // the events are sorted by absolute position, so a single forward pass is enough
+        let mut event_index = 0_usize;
         for current_start_frame in (0..passage_length_in_frames as i32).step_by(block_size_in_samples as usize) {
             let mut event_block: Vec<TrackEvent> = Vec::new();
             let current_end_frame = current_start_frame + block_size_in_samples as i32;
 
-            // loop through events
-            // only start processing when events are in range
+            // consume the events that fall within this block, the cursor only ever moves forward
             // adjust the delta frames back from absolute frames to block relative delta frames
-            for event in track_events.iter() {
-                let absolute_delta_frames = event.position() as i32;
-                // debug!("create_track_event_blocks: event position={}, current_start_frame={}, current_end_frame={}", event.position(), current_start_frame, current_end_frame);
-                if current_start_frame <= absolute_delta_frames && absolute_delta_frames < current_end_frame {
-                    let mut adjusted_event = event.clone();
-                    adjusted_event.set_position((absolute_delta_frames - current_start_frame) as f64);
-                    event_block.push(adjusted_event);
-                }
-
+            while event_index < track_events.len() {
+                let absolute_delta_frames = track_events[event_index].position() as i32;
                 if absolute_delta_frames >= current_end_frame {
                     break;
                 }
+                if absolute_delta_frames >= current_start_frame {
+                    let mut adjusted_event = track_events[event_index].clone();
+                    adjusted_event.set_position((absolute_delta_frames - current_start_frame) as f64);
+                    event_block.push(adjusted_event);
+                }
+                event_index += 1;
             }
 
-            // debug!("Created track event block length: {}", event_block.len());
             event_blocks.push(event_block);
         }
         event_blocks
@@ -417,21 +418,31 @@ impl DAWUtils {
         for envelope in automation_envelopes.iter() {
             let event_details: TrackEvent = envelope.event_details().clone();
 
+            // pre compute the envelope point positions in frames, the points are in position order
+            let envelope_point_positions_in_frames: Vec<i32> = envelope.events().iter()
+                .map(|event| (event.position() / bpm * 60.0 * sample_rate) as i32)
+                .collect();
+            // the sample positions increase with every step, so the point cursor only ever moves forward
+            let mut point_index = 0_usize;
+
             for position_in_samples in (0..(passage_length_in_frames as i32)).step_by(block_size_in_samples as usize) {
                 // find applicable envelope events
-                let mut point_1 = None;
-                let mut point_2 = None;
-                // zoom until an envelope event position is greater than the current position
-                for event in envelope.events().iter() {
-                    let envelope_position = (event.position() / bpm * 60.0 * sample_rate) as i32;
-                    if envelope_position >= position_in_samples {
-                        point_2 = Some((envelope_position as f64, event.value()));
-                        break;
-                    }
-                    if position_in_samples > envelope_position {
-                        point_1 = Some((envelope_position as f64, event.value()));
-                    }
+                while point_index < envelope_point_positions_in_frames.len() && envelope_point_positions_in_frames[point_index] < position_in_samples {
+                    point_index += 1;
                 }
+                // point 1 is the last point strictly before the current position, point 2 is the first point at or after the current position
+                let point_1 = if point_index > 0 {
+                    Some((envelope_point_positions_in_frames[point_index - 1] as f64, envelope.events()[point_index - 1].value()))
+                }
+                else {
+                    None
+                };
+                let point_2 = if point_index < envelope_point_positions_in_frames.len() {
+                    Some((envelope_point_positions_in_frames[point_index] as f64, envelope.events()[point_index].value()))
+                }
+                else {
+                    None
+                };
 
                 if let Some(point_1) = point_1 {
                     if let Some(point_2) = point_2 {
@@ -759,9 +770,15 @@ impl DAWUtils {
     ) -> Vec<TrackEvent> {
         let mut events_all: Vec<TrackEvent> = Vec::new();
 
+        // index the riffs by uuid so each riff ref only needs a single lookup
+        let mut riffs_by_uuid: HashMap<String, &Riff> = HashMap::with_capacity(riffs.len());
+        for riff in riffs.iter() {
+            riffs_by_uuid.insert(riff.uuid().to_string(), riff);
+        }
+
         for riff_ref in riff_refs {
-            for riff in riffs.iter() {
-                if riff.uuid().to_string() == riff_ref.linked_to() {
+            if let Some(riff) = riffs_by_uuid.get(riff_ref.linked_to().as_str()) {
+                {
                     debug!("util-extract_riff_ref_events: riff name={}", riff.name());
                     let mut use_notes = match riff_ref.mode() {
                         RiffReferenceMode::Normal => true,
@@ -817,9 +834,6 @@ impl DAWUtils {
                     }
 
                     // somehow add the full play out loop point marker
-
-
-                    break;
                 }
             }
         }

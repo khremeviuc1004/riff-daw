@@ -1006,8 +1006,13 @@ pub fn alert_dialog<P: gtk4::prelude::IsA<gtk4::Window> + Clone + 'static>(
     buttons: &[&str],
 ) -> Option<usize> {
     let alert = gtk4::AlertDialog::builder().modal(true).build();
-    alert.set_property("text", text);
+    // GTK4's `GtkAlertDialog` exposes `message`/`detail` properties - there is
+    // no `text` property (that one belongs to the removed GTK3-style
+    // `GtkMessageDialog`), so `set_property("text", ...)` panicked here with
+    // "property 'text' of type 'GtkAlertDialog' not found".
+    alert.set_message(text);
     alert.set_buttons(buttons);
+
     match gtk4::glib::MainContext::default().block_on(alert.choose_future(parent)) {
         Ok(index) if index >= 0 => Some(index as usize),
         _ => None,

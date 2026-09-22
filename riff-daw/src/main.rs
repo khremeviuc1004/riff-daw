@@ -5957,36 +5957,24 @@ win.connect_close_request(|window| {
             DAWEvents::TempoChange(tempo) => {
                 match state.lock() {
                     Ok(mut state) => {
+                        let old_bpm = state.project().song().tempo();
+                        let was_playing = state.playing();
                         state.get_project().song_mut().set_tempo(tempo);
-                        if let Some(track_grid) = gui.track_grid() {
-                            if let Ok(track) = track_grid.lock() {
-                                let mut grid = track;
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        if let Some(piano_roll_grid) = gui.piano_roll_grid() {
-                            if let Ok(piano_roll) = piano_roll_grid.lock() {
-                                let mut grid = piano_roll;
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        if let Some(automation_grid) = gui.automation_grid() {
-                            if let Ok(mut grid) = automation_grid.lock() {
-                                grid.set_tempo(state.project().song().tempo());
-                            }
-                        }
-                        if let Some(riff_grid) = gui.riff_grid() {
-                            if let Ok(mut grid) = riff_grid.lock() {
-                                grid.set_tempo(state.project().song().tempo());
-                            }
+
+                        // update the master transport (position/pacing) and the global transport struct.
+                        TRANSPORT.get().write().bpm = tempo;
+                        match tx_to_audio.send(AudioLayerInwardEvent::Tempo(tempo)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
                         }
 
+                        // update the host time info for the plugins (tempo/signature/ppq are
+                        // all valid again).
                         {
                             let mut time_info = vst_host_time_info.write();
-                            time_info.sample_pos = 0.0;
+                            time_info.sample_pos = state.play_position_in_frames() as f64;
                             time_info.sample_rate = state.configuration.audio.sample_rate as f64;
                             time_info.nanoseconds = 0.0;
-                            time_info.ppq_pos = 0.0;
                             time_info.tempo = tempo;
                             time_info.bar_start_pos = 0.0;
                             time_info.cycle_start_pos = 0.0;
@@ -5996,17 +5984,79 @@ win.connect_close_request(|window| {
                             time_info.smpte_offset = 0;
                             time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
                             time_info.samples_to_next_clock = 0;
-                            time_info.flags = 3;
+                            time_info.flags = vst::api::TimeInfoFlags::TEMPO_VALID.bits()
+                                | vst::api::TimeInfoFlags::TIME_SIG_VALID.bits()
+                                | vst::api::TimeInfoFlags::PPQ_POS_VALID.bits();
                         }
 
-                        match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
-                            Ok(_) => (),
-                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
+                        // update the tempo dependent grids.
+                        if let Some(track_grid) = gui.track_grid() {
+                            if let Ok(mut grid) = track_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
                         }
-                        for track in state.project().song().tracks().iter() {
-                            state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
+                        if let Some(piano_roll_grid) = gui.piano_roll_grid() {
+                            if let Ok(mut grid) = piano_roll_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
                         }
-                },
+                        if let Some(sample_roll_grid) = gui.sample_roll_grid() {
+                            if let Ok(mut grid) = sample_roll_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
+                        }
+                        if let Some(automation_grid) = gui.automation_grid() {
+                            if let Ok(mut grid) = automation_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
+                        }
+                        if let Some(riff_grid) = gui.riff_grid() {
+                            if let Ok(mut grid) = riff_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
+                        }
+                        if let Some(riff_arrangement_overview_grid) = gui.riff_arrangement_overview_grid.clone() {
+                            if let Ok(mut grid) = riff_arrangement_overview_grid.lock() {
+                                grid.set_tempo(tempo);
+                            }
+                        }
+
+                        // hand the new tempo to every track background processor (plugins get
+                        // their tempo updated there - VST2 hosts, VST3 process contexts and
+                        // CLAP transports).
+                        let track_uuids: Vec<String> = state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+                        for track_uuid in track_uuids.iter() {
+                            state.send_to_track_background_processor(track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
+                        }
+
+                        // event blocks are scheduled (beats -> samples) at play start against
+                        // the tempo in use then - while playing, reschedule them against the
+                        // new tempo, preserving the musical play position.
+                        if was_playing && old_bpm > 0.0 {
+                            let new_play_position_in_frames = ((state.play_position_in_frames() as f64) * tempo / old_bpm) as u32;
+                            state.set_play_position_in_frames(new_play_position_in_frames);
+
+                            let play_riff_set_uuid = state.playing_riff_set().clone();
+                            let play_riff_sequence_uuid = state.playing_riff_sequence().clone();
+                            let play_riff_grid_uuid = state.playing_riff_grid().clone();
+                            let play_riff_arrangement_uuid = state.playing_riff_arrangement().clone();
+                            if let Some(riff_set_uuid) = play_riff_set_uuid {
+                                state.play_riff_set(tx_to_audio.clone(), riff_set_uuid);
+                            }
+                            else if let Some(riff_sequence_uuid) = play_riff_sequence_uuid {
+                                state.play_riff_sequence(tx_to_audio.clone(), riff_sequence_uuid);
+                            }
+                            else if let Some(riff_grid_uuid) = play_riff_grid_uuid {
+                                state.play_riff_grid(tx_to_audio.clone(), riff_grid_uuid);
+                            }
+                            else if let Some(riff_arrangement_uuid) = play_riff_arrangement_uuid {
+                                state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0);
+                            }
+                            else {
+                                state.play_song(tx_to_audio.clone());
+                            }
+                        }
+                    },
                     Err(_) => debug!("Main - rx_ui processing loop - tempo change - could not get lock on state"),
                 };
             },

@@ -3655,9 +3655,17 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
-    pub fn handle_incoming_events(&mut self) {
+    pub fn handle_incoming_events(&mut self) -> bool {
+        // drain all pending messages (the old single try_recv meant each queued event
+        // could wait one audio block (~46ms) behind the next - badly delayed presets,
+        // routings and transport changes when several arrive in a burst).
+        // returns whether any message was consumed so callers can detect activity.
+        let mut had_events = false;
+        loop {
         match self.rx_vst_thread.try_recv() {
-            Ok(message) => match message {
+            Ok(message) => {
+                had_events = true;
+                match message {
                 TrackBackgroundProcessorInwardEvent::SetEventProcessorType(event_processor_type) => {
                     match event_processor_type {
                         EventProcessorType::RiffBufferEventProcessor => {
@@ -4183,9 +4191,12 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::RemoveAudioReceiveRouting(route_uuid) => {
                     self.remove_audio_inward_routing(route_uuid);
                 }
+                }
             },
-            Err(_) => (),
+            Err(_) => break,
         }
+        }
+        had_events
     }
 
     fn stop_all_playing_notes(&mut self) {
@@ -4277,12 +4288,64 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
-    pub fn handle_host_events_from_plugins(&self) {
+    /// True when any plugin on this track has a GUI editor attached. Tracks with open
+    /// editors must not go quiescent: VST2 editors need editor_idle pumping and CLAP/VST3
+    /// windows need their timer callbacks, both of which are tied to the plugin being
+    /// processed. VST3/CLAP only expose a sticky xid, so this is conservative for them.
+    pub fn plugin_editor_open(&mut self) -> bool {
+        if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+            match instrument_plugin {
+                BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                    if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
+                        if editor.is_open() {
+                            return true;
+                        }
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    if vst3_plugin.xid().is_some() {
+                        return true;
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    if clap_plugin.xid().is_some() {
+                        return true;
+                    }
+                }
+            }
+        }
+        for effect_plugin in self.effect_plugin_instances.iter_mut() {
+            match effect_plugin {
+                BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                    if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
+                        if editor.is_open() {
+                            return true;
+                        }
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                    if vst3_plugin.xid().is_some() {
+                        return true;
+                    }
+                }
+                BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                    if clap_plugin.xid().is_some() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn handle_host_events_from_plugins(&self) -> bool {
+        let mut had_events = false;
         if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(_) => {
-                    match instrument_plugin.rx_from_host().try_recv() {
-                        Ok(event) => match event {
+                    while let Ok(event) = instrument_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
                                     Ok(_) => (),
@@ -4296,12 +4359,12 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                         }
-                        Err(_) => (),
                     }
                 }
                 BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
-                    match vst3_plugin.rx_from_host().try_recv() {
-                        Ok(event) => match event {
+                    while let Ok(event) = vst3_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
                                     Ok(_) => (),
@@ -4315,24 +4378,22 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                         }
-                        Err(_) => ()
                     }
                 }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                     // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
-                    match clap_plugin.rx_from_host().try_recv() {
-                        Ok(event) => {
-                            if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, _is_instrument, param_index, param_value) = event {
-                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
-                                    Ok(_) => (),
-                                    Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
-                                }
+                    while let Ok(event) = clap_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, _is_instrument, param_index, param_value) = event {
+                            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
                             }
                         }
-                        Err(_) => {}
                     }
-                    match clap_plugin.host_receiver.try_recv() {
-                        Ok(message) => match message {
+                    while let Ok(message) = clap_plugin.host_receiver.try_recv() {
+                        had_events = true;
+                        match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width as i32, height as i32)) {
                                     Ok(_) => (),
@@ -4340,7 +4401,6 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                         }
-                        Err(_) => {}
                     }
                 }
             }
@@ -4349,8 +4409,9 @@ impl TrackBackgroundProcessorHelper {
         for effect_plugin in self.effect_plugin_instances.iter() {
             match effect_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(_) => {
-                    match effect_plugin.rx_from_host().try_recv() {
-                        Ok(event) => match event {
+                    while let Ok(event) = effect_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
                                     Ok(_) => (),
@@ -4363,13 +4424,13 @@ impl TrackBackgroundProcessorHelper {
                                     Err(error) => debug!("Problem relaying effect VstHost size window from VST thread to state: {}", error),
                                 }
                             },
-                        },
-                        Err(_) => (),
+                        }
                     }
                 }
                 BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
-                    match vst3_plugin.rx_from_host().try_recv() {
-                        Ok(event) => match event {
+                    while let Ok(event) = vst3_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        match event {
                             AudioPluginHostOutwardEvent::Automation(_track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(self.track_uuid.clone(), plugin_uuid, is_instrument, param_index, param_value)) {
                                     Ok(_) => (),
@@ -4383,24 +4444,22 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                         }
-                        Err(_) => ()
                     }
                 }
                 BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                     // this first event receive is a bit bogus because it should really happen inside the host but calling the clap plugin process method is done outside the host
-                    match clap_plugin.rx_from_host().try_recv() {
-                        Ok(event) => {
-                            if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, _is_instrument, param_index, param_value) = event {
-                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
-                                    Ok(_) => (),
-                                    Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
-                                }
+                    while let Ok(event) = clap_plugin.rx_from_host().try_recv() {
+                        had_events = true;
+                        if let AudioPluginHostOutwardEvent::Automation(track_uuid, plugin_uuid, _is_instrument, param_index, param_value) = event {
+                            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, true, param_index, param_value)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem relaying instrument Clap Host automation from CLAP thread to state: {}", error),
                             }
                         }
-                        Err(_) => {}
                     }
-                    match clap_plugin.host_receiver.try_recv() {
-                        Ok(message) => match message {
+                    while let Ok(message) = clap_plugin.host_receiver.try_recv() {
+                        had_events = true;
+                        match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(self.track_uuid.clone(), clap_plugin.uuid().to_string(), width as i32, height as i32)) {
                                     Ok(_) => (),
@@ -4408,11 +4467,11 @@ impl TrackBackgroundProcessorHelper {
                                 }
                             }
                         }
-                        Err(_) => {}
                     }
                 }
             }
         }
+        had_events
     }
 
     pub fn handle_request_plugin_preset_data(&mut self) {
@@ -5131,8 +5190,22 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 track_background_processor_helper.send_audio_consumer_details_to_jack(audio_consumer_details);
                 // track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
 
+                // P5 quiescence: after the transport has been stopped and this track has
+                // produced several consecutive silent blocks, stop running the plugins
+                // (the dsp is the expensive part) but keep sending silent blocks at the
+                // block rate - the jack layer waits for a block from every consumer before
+                // it mixes, so a track that stopped sending altogether would starve every
+                // other track's live monitoring. Any inbound event (note immediate,
+                // transport play, preset/param requests, routing changes...), any relayed
+                // plugin host event or an open plugin editor wakes the track back up on the
+                // next poll - no slower than the event polling that happens today.
+                const SILENT_BLOCKS_BEFORE_QUIESCE: i32 = 8;
+                const SILENCE_THRESHOLD: f32 = 1e-5;
+                let mut silent_block_run: i32 = 0;
+                let mut quiescent = false;
+
                 loop {
-                    track_background_processor_helper.handle_incoming_events();
+                    let had_inbound_events = track_background_processor_helper.handle_incoming_events();
 
                     if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
                         track_background_processor_helper.refresh_instrument_plugin_editor();
@@ -5140,9 +5213,49 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     }
                     iteration_count += 1;
 
-                    track_background_processor_helper.handle_host_events_from_plugins();
+                    let had_plugin_host_events = track_background_processor_helper.handle_host_events_from_plugins();
                     track_background_processor_helper.handle_request_plugin_preset_data();
                     track_background_processor_helper.handle_request_effect_plugins_parameters();
+
+                    if quiescent {
+                        let track_wakeup_needed = had_inbound_events
+                            || had_plugin_host_events
+                            || *track_background_processor_helper.event_processor.play()
+                            || track_background_processor_helper.plugin_editor_open();
+                        if track_wakeup_needed {
+                            quiescent = false;
+                            silent_block_run = 0;
+                        }
+                        else {
+                            let quiet_mode = match track_thread_coast.lock() {
+                                Ok(mode) => match *mode {
+                                    TrackBackgroundProcessorMode::AudioOut => TrackBackgroundProcessorMode::AudioOut,
+                                    TrackBackgroundProcessorMode::Coast => TrackBackgroundProcessorMode::Coast,
+                                    TrackBackgroundProcessorMode::Render => TrackBackgroundProcessorMode::Render,
+                                }
+                                Err(_) => TrackBackgroundProcessorMode::AudioOut,
+                            };
+                            match quiet_mode {
+                                TrackBackgroundProcessorMode::Render => {
+                                    // a render is in flight - stay awake and keep processing
+                                    quiescent = false;
+                                    silent_block_run = 0;
+                                }
+                                TrackBackgroundProcessorMode::AudioOut => {
+                                    let audio_block = audio_block_buffer.get_mut(0).unwrap();
+                                    audio_block.block = *track_background_processor_helper.event_processor.block_index();
+                                    audio_block.audio_data_left.fill(0.0);
+                                    audio_block.audio_data_right.fill(0.0);
+                                    let _ = producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+                                    let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), 0.0, 0.0));
+                                }
+                                TrackBackgroundProcessorMode::Coast => {
+                                    thread::sleep(Duration::from_millis(100));
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     // track_background_processor_helper.dump_play_info();
                     // track_background_processor_helper.process_plugin_events();
                     track_background_processor_helper.process_plugin_events();
@@ -5186,7 +5299,12 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         for audio_route_uuid in track_background_processor_helper.audio_inward_routings.iter().find(|(_, audio_route)| match &audio_route.destination {
                             AudioRoutingNodeType::Track(_) => false,
                             AudioRoutingNodeType::Instrument(_, _, _, _) => false,
-                            AudioRoutingNodeType::Effect(_, effect_uuid, _, _) => effect.uuid().to_string() == effect_uuid.to_string(),
+                            // parse (no allocation) and compare as Uuid instead of
+                            // formatting both sides to String per audio block
+                            AudioRoutingNodeType::Effect(_, effect_uuid, _, _) => match effect_uuid.parse::<Uuid>() {
+                                Ok(parsed_uuid) => parsed_uuid == effect.uuid(),
+                                Err(_) => false,
+                            },
                         }).map(|(_, audio_routing)| audio_routing.uuid()).iter() {
                             if let Some((consumer_left, consumer_right)) = track_background_processor_helper.audio_inward_consumers.get_mut(audio_route_uuid) {
                                 let (_, mut outputs_32) = audio_buffer.split();
@@ -5335,6 +5453,23 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                         // might be a good idea to do this every x number of blocks
                         let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
+
+                        // P5: consider going quiescent - only when the transport is
+                        // stopped, feeding the normal output (not a render) and several
+                        // consecutive blocks have been silent (reverb/echo tails decayed).
+                        if !*track_background_processor_helper.event_processor.play()
+                            && mode == TrackBackgroundProcessorMode::AudioOut
+                            && left_channel_level < SILENCE_THRESHOLD
+                            && right_channel_level < SILENCE_THRESHOLD {
+                            silent_block_run += 1;
+                            if silent_block_run >= SILENT_BLOCKS_BEFORE_QUIESCE
+                                && !track_background_processor_helper.plugin_editor_open() {
+                                quiescent = true;
+                            }
+                        }
+                        else {
+                            silent_block_run = 0;
+                        }
                     }
                     else if mode == TrackBackgroundProcessorMode::Coast {
                         thread::sleep(Duration::from_millis(100));

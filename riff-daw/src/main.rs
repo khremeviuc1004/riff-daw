@@ -56,10 +56,9 @@ mod vst3_cxx_bridge;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// Set to false when the `GtkApplication` emits `shutdown` (i.e. once the last
-/// application window has been closed). An `idle_add_local` pump that always
-/// returns `ControlFlow::Continue` keeps the GMainContext permanently busy and
-/// prevents `g_application_run()` from returning, so every idle pump must check
-/// this flag and return `ControlFlow::Break` once the UI is shutting down.
+/// application window has been closed). The fixed-rate event pump returns
+/// `ControlFlow::Continue` so it must check this flag and return
+/// `ControlFlow::Break` once the UI is shutting down.
 static UI_RUNNING: AtomicBool = AtomicBool::new(true);
 
 thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
@@ -176,7 +175,6 @@ fn main() {
     // handle incoming events in the gui thread - lots of ui interaction
     {
         let mut state = state.clone();
-        let mut delay_count = 0;
         let mut progress_bar_pulse_delay_count = 0;
         let rx_to_audio = rx_to_audio.clone();
         let jack_midi_sender = jack_midi_sender.clone();
@@ -187,8 +185,13 @@ fn main() {
         let jack_midi_receiver = jack_midi_receiver_ui.clone();
         let tx_to_audio = tx_to_audio.clone();
 
-
-        glib::idle_add_local(move || {
+        // A fixed-rate tick (125 Hz) drives the event pumps instead of a free-running
+        // glib idle source. The previous `idle_add_local` pump always returned Continue,
+        // which kept the GMainContext permanently runnable and burned a full core (~105%)
+        // doing nothing but re-polling empty channels. 125 Hz is well above the JACK block
+        // rate (~21.5 Hz at 2048/44100) and above the screen refresh, so transport and meter
+        // updates remain smooth while idle CPU drops to ~1-2%.
+        glib::timeout_add_local(Duration::from_millis(8), move || {
             if !UI_RUNNING.load(Ordering::Relaxed) {
                 return glib::ControlFlow::Break;
             }
@@ -211,32 +214,25 @@ fn main() {
                 &mut gui,
             );
             do_progress_dialogue_pulse(&mut gui, &mut progress_bar_pulse_delay_count);
-
-            if delay_count > 1000 {
-                delay_count = 0;
-                process_application_events(
-                    &mut history_manager, 
-                    tx_from_ui.clone(),
-                    &mut audio_plugin_windows,
-                    &lua,
-                    &mut gui,
-                    vst24_plugin_loaders.clone(),
-                    clap_plugin_loaders.clone(),
-                    track_audio_coast.clone(),
-                    rx_from_ui.clone(),
-                    &mut state,
-                    tx_to_audio.clone(),
-                    &rx_to_audio,
-                    &jack_midi_sender,
-                    &jack_midi_sender_ui,
-                    &jack_time_critical_midi_sender,
-                    &track_audio_coast,
-                    vst_host_time_info.clone(),
-                );
-            }
-            else {
-                delay_count += 1;
-            }
+            process_application_events(
+                &mut history_manager, 
+                tx_from_ui.clone(),
+                &mut audio_plugin_windows,
+                &lua,
+                &mut gui,
+                vst24_plugin_loaders.clone(),
+                clap_plugin_loaders.clone(),
+                track_audio_coast.clone(),
+                rx_from_ui.clone(),
+                &mut state,
+                tx_to_audio.clone(),
+                &rx_to_audio,
+                &jack_midi_sender,
+                &jack_midi_sender_ui,
+                &jack_time_critical_midi_sender,
+                &track_audio_coast,
+                vst_host_time_info.clone(),
+            );
 
             glib::ControlFlow::Continue
         });
@@ -14947,7 +14943,8 @@ fn handle_automation_pitch_bend_change(state: &mut DAWState, changed_events: Vec
 
 fn do_progress_dialogue_pulse(gui: &mut MainWindow, progress_bar_pulse_delay_count: &mut i32) {
     if gui.ui.progress_dialogue.is_visible() {
-        if *progress_bar_pulse_delay_count > 10000 {
+        // pulse roughly every 125ms (the pump runs at an 8ms tick)
+        if *progress_bar_pulse_delay_count > 15 {
             *progress_bar_pulse_delay_count = 0;
             gui.ui.dialogue_progress_bar.pulse();
         } else {

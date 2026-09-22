@@ -497,7 +497,7 @@ extern "C" fn vst_host_callback(effect: *mut AEffect, op_code: i32, _index: i32,
 
 fn check_vst_plugin(vst_plugin_path: &str) {
     unsafe {
-        match libloading::Library::new(vst_plugin_path.clone()) {
+        match libloading::Library::new(vst_plugin_path) {
             Ok(lib) => {
                 let lib_vst_plug_in_main_function: Result<libloading::Symbol<PluginMain>, libloading::Error> = lib.get(b"VSTPluginMain");
                 match lib_vst_plug_in_main_function {

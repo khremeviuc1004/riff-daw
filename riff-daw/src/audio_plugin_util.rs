@@ -70,6 +70,10 @@ pub fn create_vst24_audio_plugin(
                 let shell_id = id.to_string();
                 plugin_identifier.push_str(shell_id.as_str());
             }
+            // One loader (one dlopen) per shared library path. Note that u-he plugins (and
+            // likely others) re-initialise process-wide state when their entry point is called
+            // with a different host than the first load, so a fresh loader per instance must
+            // not be created here - it crashes the plugin.
             let plugin_loader = if let Some(_vst_plugin_loader) = loaders.get(&plugin_identifier) {
                 loaders.get_mut(&plugin_identifier)
             }
@@ -87,7 +91,10 @@ pub fn create_vst24_audio_plugin(
                 plugin_loader
             };
             let vst_loader = plugin_loader.unwrap();
-            let mut instance = vst_loader.instance().unwrap();
+            // Bind this instance to its own host so that callbacks (automation, editor
+            // requests, time info) are routed to the correct track instead of the host of
+            // whichever track loaded the library first.
+            let mut instance = vst_loader.instance_with_host(host.clone()).unwrap();
             let info = instance.get_info();
 
             debug!(

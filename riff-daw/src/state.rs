@@ -10,7 +10,7 @@ use apres::MIDI;
 use apres::MIDIEvent::{InstrumentName, TrackName};
 use factor::factor_include::factor_include;
 use itertools::Itertools;
-use jack::{AsyncClient, Client, ClientOptions, Frames, PortFlags};
+use jack::{AsyncClient, Client, ClientOptions, Frames, MidiOut, PortFlags};
 use log::*;
 use parking_lot::RwLock;
 use rb::{RB, RbConsumer, SpscRb};
@@ -2307,13 +2307,29 @@ impl DAWState {
         let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
-        // these should come from configuration and be selected from a menu and dialogue
-        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_l", "system:playback_1");
-        let _ = jack_async_client.as_client().connect_ports_by_name("DAW:out_r", "system:playback_2");
-        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "DAW:midi_control_in");
-        let _ = jack_async_client.as_client().connect_ports_by_name("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in");
-
         self.set_jack_client(jack_async_client);
+
+        // these should come from configuration and be selected from a menu and dialogue -
+        // successful default connections are recorded in the jack connections map so that
+        // they get re-established when the jack client is restarted (e.g. after an audio
+        // configuration change).
+        let default_connections = [
+            ("DAW:out_l", "system:playback_1"),
+            ("DAW:out_r", "system:playback_2"),
+            ("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "DAW:midi_control_in"),
+            ("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in"),
+        ];
+        let mut established_connections: Vec<(String, String)> = vec![];
+        if let Some(client) = self.jack_client() {
+            for (from, to) in default_connections {
+                if client.connect_ports_by_name(from, to).is_ok() {
+                    established_connections.push((from.to_string(), to.to_string()));
+                }
+            }
+        }
+        for (from, to) in established_connections {
+            self.jack_connection_add(from, to);
+        }
     }
 
     pub fn stop_jack(&mut self) {
@@ -2338,8 +2354,19 @@ impl DAWState {
             match async_client.deactivate() {
                 Ok((_client, _notification_handler, mut process_handler)) => {
                     let consumers = process_handler.get_all_audio_consumers();
+                    // the midi out ports belong to the old jack client - the consumers
+                    // are kept (their ring buffers are shared with the track threads) but
+                    // new ports must be registered against the new client.
+                    let mut midi_consumers = process_handler.get_all_midi_consumers();
                     let (jack_client, _status) =
                         Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
+                    let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
+                    for midi_consumer in midi_consumers.iter_mut() {
+                        match jack_client.register_port(midi_consumer.track_uuid().as_str(), MidiOut::default()) {
+                            Ok(midi_out_port) => midi_consumer.set_midi_out_port(Some(midi_out_port)),
+                            Err(_) => debug!("Jack restart: couldn't re-register the midi out port for track={}", midi_consumer.track_uuid().as_str()),
+                        }
+                    }
                     let audio = Audio::new_with_consumers(
                         &jack_client,
                         rx_to_audio,
@@ -2348,7 +2375,7 @@ impl DAWState {
                         jack_time_critical_midi_sender.clone(),
                         coast,
                         consumers,
-                        vec![],
+                        midi_consumers,
                         vst_host_time_info,
                         self.configuration.audio.sample_rate,
                         self.configuration.audio.block_size,
@@ -3110,6 +3137,56 @@ impl DAWState {
             match tx_to_audio.send(AudioLayerInwardEvent::RemoveTrack(current_track_uuid.to_string())) {
                 Ok(_) => (),
                 Err(error) => debug!("Problem using tx_to_audio to send remove track consumer message to jack layer: {}", error),
+            }
+        }
+    }
+
+    /// Rebuild all resampled audio data against the given (new) sample rate and resend it to the audio track
+    /// background processors (the sample data is resampled at load time against the then current rate).
+    pub fn reload_samples_for_new_sample_rate(&mut self, sample_rate: i32) {
+        // sample_data_uuid -> wav file name - the paths come from the song's sample references
+        let mut file_names: HashMap<String, String> = HashMap::new();
+        for (_sample_uuid, sample_reference) in self.project().song().samples().iter() {
+            file_names.insert(sample_reference.sample_data_uuid().to_string(), sample_reference.file_name().to_string());
+        }
+
+        let sample_data_uuids: Vec<String> = self.sample_data.keys().cloned().collect();
+        for sample_data_uuid in sample_data_uuids {
+            if let Some(file_name) = file_names.get(&sample_data_uuid) {
+                let resampled_sample_data = SampleData::new_with_uuid(sample_data_uuid.clone(), file_name.to_string(), sample_rate);
+                self.sample_data_mut().insert(sample_data_uuid, resampled_sample_data);
+            }
+        }
+
+        // resend the samples to the audio tracks - mirroring the (last sample wins) selection that
+        // init_track made when the file was loaded.
+        let mut sample_reference_to_data: HashMap<String, String> = HashMap::new();
+        for (sample_uuid, sample_reference) in self.project().song().samples().iter() {
+            sample_reference_to_data.insert(sample_uuid.to_string(), sample_reference.sample_data_uuid().to_string());
+        }
+        let mut samples_to_send: Vec<(String, String)> = vec![];
+        {
+            for track in self.project().song().tracks().iter() {
+                if let TrackType::AudioTrack(audio_track) = track {
+                    let mut last_sample_data_uuid: Option<String> = None;
+                    for riff in audio_track.riffs().iter() {
+                        for event in riff.events().iter() {
+                            if let TrackEvent::Sample(sample_reference) = event {
+                                if let Some(sample_data_uuid) = sample_reference_to_data.get(sample_reference.sample_ref_uuid().to_string().as_str()) {
+                                    last_sample_data_uuid = Some(sample_data_uuid.to_string());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(last_sample_data_uuid) = last_sample_data_uuid {
+                        samples_to_send.push((audio_track.uuid().to_string(), last_sample_data_uuid));
+                    }
+                }
+            }
+        }
+        for (track_uuid, sample_data_uuid) in samples_to_send {
+            if let Some(sample_data) = self.sample_data().get(&sample_data_uuid) {
+                self.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetSample(sample_data.clone()));
             }
         }
     }

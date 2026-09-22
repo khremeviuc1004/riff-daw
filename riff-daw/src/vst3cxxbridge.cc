@@ -464,6 +464,7 @@ public:
 
     bool setActive(bool active);
     bool setProcessing(bool startProcessing);
+    bool changeSampleRate(double newSampleRate, int32_t newBlockSize);
     bool process(rust::Slice<const float> channel1InputBuffer, rust::Slice<const float> channel2InputBuffer, rust::Slice<float> channel1OutputBuffer, rust::Slice<float> channel2OutputBuffer);
     bool initialise(
         std::string daw_plugin_uuid,
@@ -752,6 +753,76 @@ bool Vst3PluginHandler::setProcessing(bool startProcessing)
         std::cout << "Failed to set the audio processor to processing with value: " << startProcessing << std::endl;
         return false;
     }
+
+    return true;
+}
+
+bool Vst3PluginHandler::changeSampleRate(double newSampleRate, int32_t newBlockSize)
+{
+    if (component == nullptr || audioProcessor == nullptr || newBlockSize <= 0)
+    {
+        std::cout << "Failed to change the sample rate of a plugin that is not set up correctly." << std::endl;
+        return false;
+    }
+
+    // VST3 protocol: setupProcessing can only be called when processing is stopped and
+    // the component is deactivated - stop, deactivate, re-setup, reactivate, restart.
+    audioProcessor->setProcessing(false);
+    component.get()->setActive(false);
+
+    // the process data channel buffers were allocated against the old maximum block
+    // size - grow them if the new block size is larger (a smaller block size still fits
+    // into the existing allocations).
+    if (newBlockSize > this->blockSize)
+    {
+        for (auto index = 0; index < processData.numInputs; index++)
+        {
+            for (auto channelIndex = 0; channelIndex < processData.inputs[index].numChannels; channelIndex++)
+            {
+                delete[] processData.inputs[index].channelBuffers32[channelIndex];
+                processData.inputs[index].channelBuffers32[channelIndex] = new Steinberg::Vst::Sample32[newBlockSize];
+            }
+        }
+
+        for (auto index = 0; index < processData.numOutputs; index++)
+        {
+            for (auto channelIndex = 0; channelIndex < processData.outputs[index].numChannels; channelIndex++)
+            {
+                delete[] processData.outputs[index].channelBuffers32[channelIndex];
+                processData.outputs[index].channelBuffers32[channelIndex] = new Steinberg::Vst::Sample32[newBlockSize];
+            }
+        }
+    }
+
+    this->sampleRate = newSampleRate;
+    this->blockSize = newBlockSize;
+    processSetUp.sampleRate = newSampleRate;
+    processSetUp.maxSamplesPerBlock = newBlockSize;
+
+    processData.numSamples = newBlockSize;
+    processContext.sampleRate = newSampleRate;
+    // match the (questionable) frame rate initialisation done at create time - the fps
+    // field carries the sample rate with the pull down flag.
+    processContext.frameRate = Steinberg::Vst::FrameRate {
+        static_cast<Steinberg::uint32>(newSampleRate),
+        Steinberg::Vst::FrameRate::kPullDownRate
+    };
+
+    if (audioProcessor->setupProcessing(processSetUp) != Steinberg::kResultOk)
+    {
+        std::cout << "Failed to setup processing for the new audio configuration - restoring the previous configuration." << std::endl;
+        component.get()->setActive(true);
+        audioProcessor->setProcessing(true);
+        return false;
+    }
+
+    if (component.get()->setActive(true) != Steinberg::kResultTrue)
+    {
+        std::cout << "Failed to reactivate the component after the audio configuration change." << std::endl;
+        return false;
+    }
+
+    audioProcessor->setProcessing(true);
 
     return true;
 }
@@ -1326,6 +1397,20 @@ void vst3_plugin_change_tempo(rust::String riff_daw_plugin_uuid, double tempo)
     catch(const std::out_of_range& ex)
     {
         std::cout << "vst3_plugin_change_tempo: Can't find plugin." << std::endl;
+    }
+}
+
+bool vst3_plugin_change_sample_rate(rust::String riff_daw_plugin_uuid, double sample_rate, int32_t block_size)
+{
+    try
+    {
+        Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
+        return vst3PluginHandler.changeSampleRate(sample_rate, block_size);
+    }
+    catch(const std::out_of_range& ex)
+    {
+        std::cout << "vst3_plugin_change_sample_rate: Can't find plugin." << std::endl;
+        return false;
     }
 }
 

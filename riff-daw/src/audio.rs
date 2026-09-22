@@ -853,6 +853,14 @@ impl Audio {
         consumers
     }
 
+    pub fn get_all_midi_consumers(&mut self) -> Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>> {
+        let mut consumers = vec![];
+        for _ in 0..self.midi_consumers.len() {
+            consumers.push(self.midi_consumers.remove(0));
+        }
+        consumers
+    }
+
     pub fn preview_sample(&self) -> &Option<SampleData> {
         &self.preview_sample
     }

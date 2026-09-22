@@ -39,6 +39,7 @@ pub mod ffi {
             sendPluginWindowResize: fn(context: Box<Vst3Host>, new_window_width: i32, new_window_height: i32) -> Box<Vst3Host>,
         ) -> bool;
         fn vst3_plugin_change_tempo(riff_daw_plugin_uuid: String, tempo: f64);
+        fn vst3_plugin_change_sample_rate(riff_daw_plugin_uuid: String, sample_rate: f64, block_size: i32) -> bool;
         fn vst3_plugin_change_time_signature(riff_daw_plugin_uuid: String, timeSignatureNumerator: u32, timeSignatureDenominator: u32);
         fn vst3_plugin_get_window_height(riff_daw_plugin_uuid: String) -> u32;
         fn vst3_plugin_get_window_width(riff_daw_plugin_uuid: String) -> u32;

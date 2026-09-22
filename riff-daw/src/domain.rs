@@ -1988,6 +1988,10 @@ impl VstHost {
         self.ppq_pos = ppq_pos;
     }
 
+    pub fn set_block_size(&mut self, block_size: isize) {
+        self.block_size = block_size;
+    }
+
     pub fn set_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
     }
@@ -2269,6 +2273,10 @@ pub trait BackgroundProcessorAudioPlugin {
 
     fn sample_rate(&self) -> f64;
     fn set_sample_rate(&mut self, sample_rate: f64);
+    /// Reconfigure the plugin while it is loaded: the implementing format-specific code
+    /// must follow the plugin protocols - stop/suspend processing, set the new sample
+    /// rate and block size, then restart processing.
+    fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64);
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32);
 }
 pub enum BackgroundProcessorAudioPluginType {
@@ -2516,6 +2524,20 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
         }
     }
 
+    fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64) {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                vst24_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
+            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
+            }
+        }
+    }
+
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
         match self {
             BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
@@ -2644,6 +2666,25 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
         self.vst_plugin_instance_mut().set_sample_rate(sample_rate as f32);
+    }
+
+    fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64) {
+        // VST2 protocol (public.sdk/source/vst2.x/aeffeditor.h, audio plugin header):
+        // the host must suspend the plugin (effMKSUSE), then set the new sample rate
+        // (effSetSampleRate) and block size (effSetBlockSize) and finally resume
+        // processing (effStartSuspend). The plugin keeps its state throughout - no
+        // need to stop or reload it.
+        {
+            let instance = self.vst_plugin_instance_mut();
+            instance.suspend();
+            instance.set_sample_rate(sample_rate as f32);
+            instance.set_block_size(block_size);
+            instance.resume();
+        }
+        self.sample_rate = sample_rate;
+        if let Ok(mut host) = self.host().lock() {
+            host.set_block_size(block_size as isize);
+        }
     }
 
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
@@ -2924,6 +2965,40 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
+        self.process_data.config.sample_rate = sample_rate;
+    }
+
+    fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64) {
+        // CLAP protocol: the audio setup (sample rate and frame sizes) is given at
+        // activate time - to change it the host must stop processing, deactivate the
+        // plugin and reactivate it with the new sample rate and buffer sizes. The
+        // host owned audio buffers are sized by the block size, so they must be
+        // recreated for the new size before reactivation.
+        use simple_clap_host_helper_lib::plugin::ext::audio_ports::AudioPorts;
+        use simple_clap_host_helper_lib::plugin::instance::process::{AudioBuffers, OutOfPlaceAudioBuffers};
+
+        self.plugin.stop_processing();
+        self.plugin.deactivate();
+
+        if let Some(audio_ports) = self.plugin.get_extension::<AudioPorts>() {
+            if let Ok(audio_ports_config) = audio_ports.config(&self.plugin) {
+                let (input_buffers, output_buffers) = audio_ports_config.create_buffers(block_size as usize);
+                match OutOfPlaceAudioBuffers::new(input_buffers, output_buffers) {
+                    Ok(audio_buffers) => self.process_data.buffers = AudioBuffers::OutOfPlace(audio_buffers),
+                    Err(error) => debug!("CLAP: problem recreating the audio buffers for the new block size: {:?}", error),
+                }
+            }
+        }
+
+        self.process_data.config.sample_rate = sample_rate;
+        match self.plugin.activate(sample_rate, 1, block_size as usize) {
+            Ok(_) => (),
+            Err(error) => debug!("CLAP: problem reactivating the plugin with the new audio configuration: {:?}", error),
+        }
+        self.plugin.start_processing();
+
+        self.sample_rate = sample_rate;
+        self.block_size = block_size;
     }
 
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
@@ -3223,6 +3298,15 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
+    }
+
+    fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64) {
+        // VST3 protocol: setProcessing(false), setActive(false), setupProcessing with a
+        // new ProcessSetup carrying the sample rate and max samples per block, then
+        // setActive(true), setProcessing(true) - done in the C++ bridge.
+        ffi::vst3_plugin_change_sample_rate(self.daw_plugin_uuid.to_string(), sample_rate, block_size as i32);
+        self.sample_rate = sample_rate;
+        self.block_size = block_size;
     }
 
     fn set_time_signature(&mut self, time_signature_numerator: u32, time_signature_denominator: u32) {
@@ -4094,6 +4178,7 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 TrackBackgroundProcessorInwardEvent::Tempo(tempo) => {
+                    self.tempo = tempo;
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.set_tempo(tempo);
                     }
@@ -4108,6 +4193,29 @@ impl TrackBackgroundProcessorHelper {
                     for effect in self.effect_plugin_instances.iter_mut() {
                         effect.set_time_signature(numerator, denominator);
                     }
+                }
+                TrackBackgroundProcessorInwardEvent::AudioConfigurationChange(sample_rate, block_size) => {
+                    debug!("Track background processor received audio configuration change: sample_rate={}, block_size={}", sample_rate, block_size);
+
+                    // stop this track's playback and flush any sounding notes before the
+                    // plugins are reconfigured.
+                    self.event_processor.set_play(false);
+                    self.stop_all_playing_notes();
+                    self.event_processor.set_block_index(-1);
+
+                    // reconfigure the plugins following their format specific protocol
+                    // (stop/suspend -> set rate & size -> restart/resume).
+                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
+                    }
+                    for effect in self.effect_plugin_instances.iter_mut() {
+                        effect.change_sample_rate_and_block_size(sample_rate, block_size);
+                    }
+
+                    // update this track's audio configuration
+                    self.sample_rate = sample_rate;
+                    self.block_size = block_size as f64;
+                    self.event_processor.set_block_size(block_size as f64);
                 }
                 TrackBackgroundProcessorInwardEvent::AddTrackEventSendRouting(track_event_routing, ring_buffer, producer) => {
                     match &track_event_routing.source {
@@ -5262,7 +5370,13 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     // track_background_processor_helper.process_plugin_audio(); - having problems with life times
 
                     // couldn't push the following into a member method because of lifetime issues
-                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64  * tempo / (60.0 * sample_rate)) + 1.0;
+                    // the audio configuration (sample rate, block size) and tempo are read from
+                    // the helper on every iteration so that an AudioConfigurationChange event
+                    // received by handle_incoming_events takes effect immediately.
+                    let current_sample_rate = track_background_processor_helper.sample_rate;
+                    let current_block_size = track_background_processor_helper.block_size as i32;
+                    let current_tempo = track_background_processor_helper.tempo;
+                    let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64  * current_tempo / (60.0 * current_sample_rate)) + 1.0;
                     let sample_position = (track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64;
 
                     if let Some(instrument_plugin) = track_background_processor_helper.instrument_plugin_instances.get_mut(0) {
@@ -5273,7 +5387,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                     vst_host.set_sample_position(sample_position);
                                 }
                                 let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
-                                vst_plugin_instance.process(&mut audio_buffer, block_size as i32);
+                                vst_plugin_instance.process(&mut audio_buffer, current_block_size);
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(&mut audio_buffer);
@@ -5346,7 +5460,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                     vst_host.set_ppq_pos(ppq_pos);
                                     vst_host.set_sample_position(sample_position);
                                 }
-                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, block_size as i32);
+                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, current_block_size);
                             }
                             BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
                                 vst3_plugin.process(audio_buffer_in_use);
@@ -5575,6 +5689,9 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                 // track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
 
                 loop {
+                    // read the audio configuration from the helper each iteration so an
+                    // AudioConfigurationChange event takes effect without restarting the thread
+                    let current_block_size = track_background_processor_helper.block_size as i32;
                     track_background_processor_helper.handle_incoming_events();
                     track_background_processor_helper.process_audio_events();
                     track_background_processor_helper.refresh_effect_plugin_editors();
@@ -5620,7 +5737,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     }
 
                     if use_sample_audio {
-                        track_background_processor_helper.process_sample(&mut audio_buffer, block_size as i32, left_pan, right_pan);
+                        track_background_processor_helper.process_sample(&mut audio_buffer, current_block_size, left_pan, right_pan);
                     }
 
                     let mut swap = true;
@@ -5635,7 +5752,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                         match effect {
                             BackgroundProcessorAudioPluginType::Vst24(effect) => {
-                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, block_size as i32);
+                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, current_block_size);
                             }
                             BackgroundProcessorAudioPluginType::Vst3(_effect) => {
 
@@ -7462,6 +7579,10 @@ pub trait TrackEventProcessor {
     fn set_playing_notes(&mut self, playing_notes: Vec<i32>);
     fn mute(&self) -> &bool;
     fn set_mute(&mut self, mute: bool);
+    /// Change the block size the processor is scheduled against. Any pre-blocked
+    /// events are invalidated - they get regenerated (against the new configuration)
+    /// when playback (re)starts.
+    fn set_block_size(&mut self, block_size: f64);
 }
 
 pub struct BlockBufferTrackEventProcessor {
@@ -7705,6 +7826,14 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
 
     fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
+    }
+
+    fn set_block_size(&mut self, _block_size: f64) {
+        // the blocks are scheduled per block size - drop them, they are regenerated when
+        // playback (re)starts.
+        self.track_event_blocks = None;
+        self.track_event_blocks_transition_to = None;
+        self.param_event_blocks = None;
     }
 }
 
@@ -8007,6 +8136,15 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
 
     fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
+    }
+
+    fn set_block_size(&mut self, block_size: f64) {
+        self.block_size = block_size;
+        // the blocks are scheduled per block size - drop them, they are regenerated when
+        // playback (re)starts.
+        self.track_event_blocks = None;
+        self.track_event_blocks_transition_to = None;
+        self.param_event_blocks = None;
     }
 }
 

@@ -7998,20 +7998,64 @@ win.connect_close_request(|window| {
                 }
             }
             DAWEvents::AudioConfigurationChanged(sample_rate, block_size) => {
-                debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged");
-                gui.clear_ui();
-                let state_arc = state.clone();
+                debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - sample_rate={}, block_size={}", sample_rate, block_size);
                 match state.lock() {
                     Ok(mut state) => {
-                        state.close_all_tracks(tx_to_audio.clone());
-                        state.reset_state();
+                        // stop the transport (if running) so playback is not torn out of
+                        // sync while the audio configuration changes underneath it.
+                        if state.playing() {
+                            let song = state.project().song();
+                            let song_length_in_beats = song.length_in_beats() as f64;
+                            let bpm = song.tempo();
+                            for track in song.tracks() {
+                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Stop);
+                            }
+                            let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate as f64 / block_size as f64) as i32;
+                            match tx_to_audio.send(AudioLayerInwardEvent::Play(false, number_of_blocks, 0)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when stopping play for an audio configuration change: {}", error),
+                            }
+                            state.set_playing(false);
+                            state.set_playing_riff_set(None);
+                            state.set_playing_riff_sequence(None);
+                            state.set_playing_riff_arrangement(None);
+                            state.set_playing_riff_grid(None);
+                        }
+
+                        // apply the requested configuration and restart the jack client -
+                        // the restarted client requests the new buffer size from the jack
+                        // server before activation and the track audio consumers are moved
+                        // over intact, so the track plugin threads keep running and keep
+                        // their state.
                         state.configuration.audio.sample_rate = sample_rate;
                         state.configuration.audio.block_size = block_size;
+                        state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+
+                        // the sample rate is a jack server wide setting and the server can
+                        // also override the requested buffer size (it picks the largest of
+                        // all client requests) - reconcile the configuration with what the
+                        // jack server actually gave us.
+                        let actual_configuration = match state.jack_client() {
+                            Some(client) => Some((client.sample_rate() as i32, client.buffer_size() as i32)),
+                            None => None,
+                        };
+                        if let Some((actual_sample_rate, actual_block_size)) = actual_configuration {
+                            if actual_sample_rate != state.configuration.audio.sample_rate {
+                                debug!("The jack server is running at {} - the requested sample rate of {} cannot be applied to a running server.", actual_sample_rate, sample_rate);
+                            }
+                            if actual_block_size != state.configuration.audio.block_size {
+                                debug!("The jack server granted a buffer size of {} - the requested block size of {} was adjusted to match.", actual_block_size, block_size);
+                            }
+                            state.configuration.audio.sample_rate = actual_sample_rate;
+                            state.configuration.audio.block_size = actual_block_size;
+                        }
+                        let actual_sample_rate = state.configuration.audio.sample_rate as f64;
+                        let actual_block_size = state.configuration.audio.block_size as f64;
 
                         {
                             let mut time_info =  vst_host_time_info.write();
                             time_info.sample_pos = 0.0;
-                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;
+                            time_info.sample_rate = actual_sample_rate;
                             time_info.nanoseconds = 0.0;
                             time_info.ppq_pos = 0.0;
                             time_info.tempo = state.project().song().tempo();
@@ -8027,47 +8071,41 @@ win.connect_close_request(|window| {
                         }
 
                         // update the transport
-                        TRANSPORT.get().write().sample_rate = sample_rate as f64;
-                        TRANSPORT.get().write().block_size = block_size as f64;
+                        TRANSPORT.get().write().sample_rate = actual_sample_rate;
+                        TRANSPORT.get().write().block_size = actual_block_size;
 
-                        state.stop_jack();
-                        state.start_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
-
-                        let mut instrument_track_senders2 = HashMap::new();
-                        let mut instrument_track_receivers2 = HashMap::new();
-                        let sample_references = HashMap::new();
-                        let samples_data = HashMap::new();
-                        let sample_rate = state.configuration.audio.sample_rate as f64;
-                        let block_size = state.configuration.audio.block_size as f64;
-                        let tempo = state.project().song().tempo();
-                        let time_signature_numerator = state.project().song().time_signature_numerator();
-                        let time_signature_denominator = state.project().song().time_signature_denominator();
-                        for track in state.get_project().song_mut().tracks_mut().iter_mut() {
-                            DAWState::init_track(
-                                vst24_plugin_loaders.clone(),
-                                clap_plugin_loaders.clone(),
-                                tx_to_audio.clone(),
-                                track_audio_coast.clone(),
-                                &mut instrument_track_senders2,
-                                &mut instrument_track_receivers2,
-                                track,
-                                Some(&sample_references),
-                                Some(&samples_data),
-                                vst_host_time_info.clone(),
-                                sample_rate,
-                                block_size,
-                                tempo,
-                                time_signature_numerator as i32,
-                                time_signature_denominator as i32,
-                            );
+                        // tell the jack/master audio layer about the new configuration
+                        match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(actual_sample_rate)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send sample rate message to jack layer: {}", error),
                         }
-                        state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
-
-                        gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
+                        match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(actual_block_size)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                        }
                         match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
                             Ok(_) => (),
                             Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
                         }
+
+                        // rebuild the resampled audio data against the new rate and resend it
+                        // to the audio tracks.
+                        let configured_sample_rate = state.configuration.audio.sample_rate;
+                        state.reload_samples_for_new_sample_rate(configured_sample_rate);
+
+                        // tell every running track background processor - each of them
+                        // reconfigures its plugins following the plugin format protocol
+                        // (stop/suspend processing -> set sample rate and block size ->
+                        // restart processing) without reloading them.
+                        let track_uuids: Vec<String> = state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+                        for track_uuid in track_uuids.iter() {
+                            state.send_to_track_background_processor(track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::AudioConfigurationChange(actual_sample_rate, actual_block_size as i64));
+                        }
+
+                        // keep the chosen configuration across sessions
+                        state.configuration.save();
+
+                        let _ = tx_from_ui.send(DAWEvents::UpdateUIPlugins);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - could not get lock on state"),
                 }

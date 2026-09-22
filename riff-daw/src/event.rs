@@ -499,6 +499,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
     
     Tempo(f64),
     TimeSignatureChange(u32, u32),
+    AudioConfigurationChange(f64, i64), // new sample rate, new block size
 
     AddTrackEventSendRouting(TrackEventRouting, SpscRb<TrackEvent>, Producer<TrackEvent>), // track event routing, ring buffer, producer
     RemoveTrackEventSendRouting(String), // route uuid

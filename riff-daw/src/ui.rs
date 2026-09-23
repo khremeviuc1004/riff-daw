@@ -8384,10 +8384,13 @@ impl MainWindow {
         }
         else if let RiffSetType::RiffSet = riff_set_type {
             for child in riff_set_box.children().iter() {
-                child.set_width_request(69 + 15);
+                // 69 (content) + 15 (padding) + 6 (head frame border/margins) so the blade
+                // matches the natural width of the riff set head widget (90) and the head
+                // strip lines up with the blades below it.
+                child.set_width_request(69 + 15 + 6);
             }
             riff_set_heads_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);
-            riff_sets_box.pack_start(&riff_set_blade.riff_set_box, false, false, 2);
+            riff_sets_box.pack_start(&riff_set_box, false, false, 2);
         }
         else {
             riff_set_heads_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);

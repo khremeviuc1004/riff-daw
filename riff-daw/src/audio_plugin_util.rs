@@ -259,6 +259,28 @@ pub fn create_vst3_audio_plugin(
     );
 }
 
+ /// Work out the CLAP plugin factory id for a scanned/persisted plugin.
+ ///
+ /// The clap scanner records the CLAP plugin id (e.g. `com.u-he.Hive`) in the `id` field and
+ /// leaves `sub_id` empty, while older persisted tracks can have the id in either field (the
+ /// `id`/uid field may hold `Unknown` or a numeric VST id with the CLAP id in `sub_id`).
+ /// Prefer a usable `id` and fall back to `sub_id`.
+ pub fn clap_plugin_id(scanned_plugin: &ScannedPlugin) -> Option<String> {
+     let usable = |id: &str| !id.is_empty() && id != "Unknown";
+     if usable(scanned_plugin.id.as_str()) {
+         Some(scanned_plugin.id.clone())
+     }
+     else if let Some(sub_id) = scanned_plugin.sub_id.as_ref() {
+         if usable(sub_id.as_str()) {
+             return Some(sub_id.clone());
+         }
+         None
+     }
+     else {
+         None
+     }
+ }
+
  pub fn create_clap_audio_plugin(
     plugin_libraries: Arc<Mutex<HashMap<String, PluginLibrary>>>,
     audio_plugin_path: &str,
@@ -279,6 +301,8 @@ pub fn create_vst3_audio_plugin(
     match plugin_libraries.lock() {
         Ok(mut libraries) => {
             let plugin_identifier = audio_plugin_path.to_owned();
+            // an empty id never resolves against the factory - treat it as missing.
+            let clap_plugin_id = clap_plugin_id.filter(|id| !id.is_empty());
             if let Some(clap_plugin_id) = clap_plugin_id {
                 let plugin_library = if let Some(clap_plugin_library) = libraries.get_mut(&plugin_identifier) {
                     clap_plugin_library
@@ -300,11 +324,12 @@ pub fn create_vst3_audio_plugin(
                 let (host_sender, host_receiver) = crossbeam_channel::unbounded();
                 let host = simple_clap_host_helper_lib::host::Host::new(host_sender);
             
-                let plugin = if let Ok(plugin) = plugin_library.create_plugin(clap_plugin_id.as_str(), host) {
-                    plugin
-                }
-                else {
-                    panic!("Couldn't create the plugin.");
+                let plugin = match plugin_library.create_plugin(clap_plugin_id.as_str(), host) {
+                    Ok(plugin) => plugin,
+                    Err(error) => {
+                        debug!("Couldn't create the CLAP plugin '{}' from '{}': {:?}", clap_plugin_id.as_str(), audio_plugin_path, error);
+                        panic!("Couldn't create the plugin '{}' from '{}'.", clap_plugin_id, audio_plugin_path);
+                    }
                 };
             
             
@@ -509,5 +534,40 @@ fn do_plugin_check(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scanned(id: &str, sub_id: Option<&str>) -> ScannedPlugin {
+        ScannedPlugin {
+            name: "test".to_string(),
+            path: "/home/kevin/Desktop/Linux_VST/ACE.64.so".to_string(),
+            id: id.to_string(),
+            sub_id: sub_id.map(|s| s.to_string()),
+            audio_plugin_stack: AudioPluginType::CLAP,
+        }
+    }
+
+    #[test]
+    fn clap_id_prefers_scanned_id() {
+        // freshly scanned CLAP plugins: id holds the factory id, sub_id is empty
+        assert_eq!(clap_plugin_id(&scanned("com.u-he.ACE", Some(""))).as_deref(), Some("com.u-he.ACE"));
+        assert_eq!(clap_plugin_id(&scanned("com.u-he.ACE", None)).as_deref(), Some("com.u-he.ACE"));
+    }
+
+    #[test]
+    fn clap_id_falls_back_to_sub_id() {
+        // older persisted tracks: uid may be empty/Unknown with the CLAP id in sub_id
+        assert_eq!(clap_plugin_id(&scanned("Unknown", Some("com.u-he.ACE"))).as_deref(), Some("com.u-he.ACE"));
+        assert_eq!(clap_plugin_id(&scanned("", Some("com.u-he.ACE"))).as_deref(), Some("com.u-he.ACE"));
+    }
+
+    #[test]
+    fn clap_id_none_when_nothing_usable() {
+        assert_eq!(clap_plugin_id(&scanned("Unknown", Some(""))), None);
+        assert_eq!(clap_plugin_id(&scanned("", None)), None);
     }
 }

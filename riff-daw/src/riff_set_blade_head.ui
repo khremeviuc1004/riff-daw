@@ -83,11 +83,13 @@
                 <property name="width-request">10</property>
                 <property name="visible">True</property>
                 <property name="valign">start</property>
-                <property name="width-chars">9</property>
+                <property name="width-chars">2</property>
+                <property name="max-width-chars">2</property>
+                <property name="hexpand">True</property>
                 <layout>
                   <property name="column">0</property>
                   <property name="row">0</property>
-                  <property name="column-span">4</property>
+                  <property name="column-span">3</property>
                 </layout>
               </object>
             </child>
@@ -120,9 +122,11 @@
               <object class="GtkButton" id="riff_set_drag_btn">
                 <property name="icon-name">go-jump</property>
                 <property name="visible">True</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
                 <layout>
-                  <property name="column">2</property>
-                  <property name="row">2</property>
+                  <property name="column">0</property>
+                  <property name="row">3</property>
                 </layout>
               </object>
             </child>
@@ -133,8 +137,8 @@
                 <property name="halign">start</property>
                 <property name="valign">start</property>
                 <layout>
-                  <property name="column">3</property>
-                  <property name="row">1</property>
+                  <property name="column">1</property>
+                  <property name="row">3</property>
                 </layout>
               </object>
             </child>

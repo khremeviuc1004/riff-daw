@@ -51,6 +51,7 @@ mod audio_plugin_util;
 mod history;
 mod lua_api;
 mod vst3_cxx_bridge;
+mod xembed_host;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -1622,8 +1623,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     };
                 },
                 TrackChangeType::ShowInstrument => {
-                    let mut xid = 0;
                     let mut track_uuid = track_uuid.unwrap();
+                    let state_for_xid = state.clone();
                     match state.lock() {
                         Ok(mut state) => {
                             match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
@@ -1663,19 +1664,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                     });
                                             }
 
-                                            unsafe {
-                                                match win.surface() {
-                                                    Some(gdk_window) => {
-                                                        if let Some(x11_surface) = gdk_window.downcast_ref::<X11Surface>() {
-                                                            xid = x11_surface.xid() as u32;
-                                                        }
-                                                        debug!("xid: {}", xid);
-                                                    },
-                                                    None => debug!("Couldn't get gdk window."),
-                                                }
-                                            }
-
                                             track_uuid = track.uuid().to_string();
+                                            let cb_track_uuid = track_uuid.clone();
+                                            obtain_plugin_window_xid(&win, move |xid| {
+                                                debug!("Plugin editor window xid: {:#x}", xid);
+                                                match state_for_xid.lock() {
+                                                    Ok(state) => {
+                                                        state.send_to_track_background_processor(cb_track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid));
+                                                    },
+                                                    Err(_) => debug!("Could not get read only lock on state."),
+                                                }
+                                            });
                                         }
                                     },
                                     TrackType::AudioTrack(_) => (),
@@ -1686,14 +1685,6 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - show track instrument - could not get lock on state"),
                     };
-                    if xid != 0 {
-                        match state.lock() {
-                            Ok(state) => {
-                                state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid));
-                            },
-                            Err(_) => debug!("Could not get read only lock on state."),
-                        }
-                    }
                 }
                 TrackChangeType::TrackNameChanged(track_name) => {
                     match state.lock() {
@@ -4492,7 +4483,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 TrackChangeType::EffectToggleWindowVisibility(effect_uuid) => {
                     match track_uuid {
                         Some(track_uuid) => {
-                            let mut xid = 0;
+                            let state_for_xid = state.clone();
                             match state.lock() {
                                 Ok(mut state) => {
                                     match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
@@ -4536,17 +4527,17 @@ win.connect_close_request(|window| {
                                                                     });
                                                                 }
 
-                                                                unsafe {
-                                                                    match win.surface() {
-                                                                        Some(gdk_window) => {
-                                                                            if let Some(x11_surface) = gdk_window.downcast_ref::<X11Surface>() {
-                                                                                xid = x11_surface.xid() as u32;
-                                                                            }
-                                                                            debug!("xid: {}", xid);
+                                                                let cb_track_uuid = track_uuid.clone();
+                                                                let cb_effect_uuid = effect_uuid.clone();
+                                                                obtain_plugin_window_xid(&win, move |xid| {
+                                                                    debug!("Plugin editor window xid: {:#x}", xid);
+                                                                    match state_for_xid.lock() {
+                                                                        Ok(state) => {
+                                                                            state.send_to_track_background_processor(cb_track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetEffectWindowId(cb_effect_uuid.clone(), xid));
                                                                         },
-                                                                        None => debug!("Couldn't get gdk window."),
+                                                                        Err(_) => debug!("Could not get read only lock on state."),
                                                                     }
-                                                                }
+                                                                });
                                                             }
 
                                                             break;
@@ -4562,14 +4553,6 @@ win.connect_close_request(|window| {
                                 },
                                 Err(_) => debug!("Main - rx_ui processing loop - track effect toggle window visibility - could not get lock on state"),
                             };
-                            if xid != 0 {
-                                match state.lock() {
-                                    Ok(state) => {
-                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetEffectWindowId(effect_uuid, xid));
-                                    },
-                                    Err(_) => debug!("Could not get read only lock on state."),
-                                }
-                            }
                         },
                         None => (),
                     }
@@ -15029,6 +15012,94 @@ fn handle_automation_pitch_bend_change(state: &mut DAWState, changed_events: Vec
 }
 
 
+/// Gets the X11 id of a plugin editor host window.
+///
+/// The id handed to the plugin is a dedicated plain-visual (24-bit) child window created
+/// inside the GTK window rather than the GTK window itself - GTK4's windows use a 32-bit
+/// ARGB visual which makes plugin GUIs that blit from 24-bit offscreen buffers fail with
+/// "xcb_copy_area: BadMatch" and never render (see xembed_host).
+/// Hands the plugin editor a dedicated embedding window (see xembed_host).
+///
+/// A small override-redirect X11 window (screen default visual) is created once the
+/// GTK window is mapped; it is kept positioned over the GTK window's client area so the
+/// plugin can render into a depth-compatible parent instead of GTK4's 32-bit ARGB
+/// surfaces. The xid is delivered to `on_ready` (async, from the main loop context).
+fn obtain_plugin_window_xid(window: &Window, on_ready: impl Fn(u32) + 'static) {
+    fn gtk_window_xid(window: &Window) -> u32 {
+        unsafe {
+            if let Some(gdk_window) = window.surface() {
+                if let Some(x11_surface) = gdk_window.downcast_ref::<X11Surface>() {
+                    return x11_surface.xid() as u32;
+                }
+            }
+            0
+        }
+    }
+
+    let on_ready = std::rc::Rc::new(on_ready);
+
+    // wait (50ms poll) for the GTK window to be viewable, then create + track the
+    // embedding window for the lifetime of this editor window.
+    let poll_window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        if !UI_RUNNING.load(Ordering::Relaxed) {
+            return glib::ControlFlow::Break;
+        }
+        let anchor_xid = gtk_window_xid(&poll_window);
+        if anchor_xid == 0 || !poll_window.surface().map(|surface| surface.is_mapped()).unwrap_or(false) {
+            return glib::ControlFlow::Continue;
+        }
+
+        let on_ready = on_ready.clone();
+        let embed_xid = std::cell::Cell::new(0u32);
+        let last_rect = std::cell::Cell::new((-1i32, -1i32, -1i32, -1i32, false));
+        let tracker_window = poll_window.clone();
+        let on_ready_delivered = std::cell::Cell::new(false);
+        glib::timeout_add_local(Duration::from_millis(100), move || {
+            if !UI_RUNNING.load(Ordering::Relaxed) {
+                return glib::ControlFlow::Break;
+            }
+            // handle XEmbed messages from plugins (they create their editor as a separate
+            // top-level and ask to be reparented into the embedding window).
+            xembed_host::drain_xembed_events();
+            if embed_xid.get() == 0 {
+                let anchor = gtk_window_xid(&tracker_window);
+                if anchor == 0 {
+                    return glib::ControlFlow::Continue;
+                }
+                let created = xembed_host::create_embedding_window(tracker_window.width().max(1) as u32, tracker_window.height().max(1) as u32);
+                if created == 0 {
+                    return glib::ControlFlow::Break; // no X11 - give up quietly
+                }
+                embed_xid.set(created);
+            }
+            // The full geometry: root position + client size + visibility. Position must be
+            // tracked too - moving the GTK window has to move the overlay with it. GTK4 can
+            // destroy a hidden window's surface, so the hide/unmap path must work without it.
+            let visible = tracker_window.is_visible() && tracker_window.surface().map(|surface| surface.is_mapped()).unwrap_or(false);
+            let rect = if visible {
+                match xembed_host::anchor_root_origin(gtk_window_xid(&tracker_window)) {
+                    Some((x, y)) => (x, y, tracker_window.width(), tracker_window.height(), true),
+                    None => (-1i32, -1i32, -1i32, -1i32, false),
+                }
+            } else {
+                (-1i32, -1i32, tracker_window.width(), tracker_window.height(), false)
+            };
+            if last_rect.get() != rect {
+                last_rect.set(rect);
+                xembed_host::position_embedding_window(embed_xid.get(), rect.4, rect.0, rect.1, rect.2.max(1) as u32, rect.3.max(1) as u32);
+            }
+            if visible && !on_ready_delivered.get() {
+                on_ready_delivered.set(true);
+                let ready = on_ready.clone();
+                let xid = embed_xid.get();
+                glib::idle_add_local_once(move || ready(xid));
+            }
+            glib::ControlFlow::Continue
+        });
+        glib::ControlFlow::Break
+    });
+}
 fn do_progress_dialogue_pulse(gui: &mut MainWindow, progress_bar_pulse_delay_count: &mut i32) {
     if gui.ui.progress_dialogue.is_visible() {
         // pulse roughly every 125ms (the pump runs at an 8ms tick)

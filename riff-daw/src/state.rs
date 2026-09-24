@@ -24,7 +24,7 @@ use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
 
-extern "C" {
+unsafe extern "C" {
     fn gdk_x11_window_get_xid(window: gdk4::Surface) -> u32;
 }
 
@@ -192,6 +192,48 @@ impl DAWState {
         self.current_file_path = Some(path.to_string());
         let json_text = std::fs::read_to_string(path).unwrap();
         let project: Project = serde_json::from_str(&json_text).unwrap();
+        self.initialise_loaded_project(project,
+            vst24_plugin_loaders,
+            clap_plugin_loaders,
+            tx_audio,
+            track_audio_coast,
+            vst_host_time_info);
+    }
+
+    pub fn load_from_dawproject(&mut self,
+                            vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                            clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+                            path: &str,
+                            tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                            track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
+    ) -> bool {
+        match crate::dawproject_parser::parse_dawproject(path) {
+            Ok(project) => {
+                self.current_file_path = Some(path.to_string());
+                self.initialise_loaded_project(project,
+                    vst24_plugin_loaders,
+                    clap_plugin_loaders,
+                    tx_audio,
+                    track_audio_coast,
+                    vst_host_time_info);
+                true
+            }
+            Err(error) => {
+                error!("state.load_from_dawproject() - could not parse dawproject file: {}", error);
+                false
+            }
+        }
+    }
+
+    fn initialise_loaded_project(&mut self,
+                            project: Project,
+                            vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                            clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+                            tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
+                            track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+                            vst_host_time_info: Arc<RwLock<TimeInfo>>,
+    ) {
         let mut instrument_track_senders2 = HashMap::new();
         let mut instrument_track_receivers2 = HashMap::new();
 

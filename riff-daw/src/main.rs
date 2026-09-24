@@ -52,6 +52,7 @@ mod history;
 mod lua_api;
 mod vst3_cxx_bridge;
 mod xembed_host;
+mod dawproject_parser;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -878,6 +879,156 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         if let Ok(mut coast) = track_audio_coast.lock() {
                             *coast = TrackBackgroundProcessorMode::AudioOut;
+                        }
+                        let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                    }));
+                }
+            }
+            DAWEvents::ImportDawProjectFile(path) => {
+                gui.clear_ui();
+                gui.ui.dialogue_progress_bar.set_text(Some(format!("Importing dawproject file {}...", path.to_str().unwrap()).as_str()));
+                gui.ui.progress_dialogue.set_title(Some("Import Dawproject File"));
+                gui.ui.progress_dialogue.set_visible(true);
+
+                let state_arc = state.clone();
+                let state = state_arc;
+                let track_audio_coast = track_audio_coast;
+                let tx_to_audio = tx_to_audio;
+                let vst24_plugin_loaders = vst24_plugin_loaders;
+                let tx_from_ui = tx_from_ui;
+                THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
+                    if let Ok(mut coast) = track_audio_coast.lock() {
+                        *coast = TrackBackgroundProcessorMode::Coast;
+                    }
+                    thread::sleep(Duration::from_millis(1000));
+                    let mut midi_tracks = HashMap::new();
+                    let state_arc2 = state.clone();
+
+                    // get and release locks on state regularly (parking lot promises round robin locking to prevent starvation) otherwise it locks up the UI and causes jack under runs
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Closing all tracks...".to_string()));
+                        state.close_all_tracks(tx_to_audio.clone());
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Resetting state...".to_string()));
+                        state.reset_state();
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Importing dawproject file...".to_string()));
+                        if !state.load_from_dawproject(
+                            vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), path.to_str().unwrap(), tx_to_audio.clone(), track_audio_coast.clone(), vst_host_time_info.clone()) {
+                            if let Ok(mut coast) = track_audio_coast.lock() {
+                                *coast = TrackBackgroundProcessorMode::AudioOut;
+                            }
+                            let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                            let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, "Could not import dawproject file.".to_string()));
+                            return;
+                        }
+                    }
+                    if let Ok(state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Setting up VST24 time info...".to_string()));
+                        let tempo = state.project().song().tempo();
+
+                        {
+                            let mut time_info = vst_host_time_info.write();
+                            time_info.sample_pos = 0.0;
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;
+                            time_info.nanoseconds = 0.0;
+                            time_info.ppq_pos = 0.0;
+                            time_info.tempo = tempo;
+                            time_info.bar_start_pos = 0.0;
+                            time_info.cycle_start_pos = 0.0;
+                            time_info.cycle_end_pos = 0.0;
+                            time_info.time_sig_numerator = state.project().song().time_signature_numerator() as i32;
+                            time_info.time_sig_denominator = state.project().song().time_signature_denominator() as i32;
+                            time_info.smpte_offset = 0;
+                            time_info.smpte_frame_rate = vst::api::SmpteFrameRate::Smpte24fps;
+                            time_info.samples_to_next_clock = 0;
+                            time_info.flags = 3;
+                        }
+                    }
+                    match state.lock() {
+                        Ok(state) => {
+                            let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to track background processor...".to_string()));
+                            let tempo = state.project().song().tempo();
+                            for track in state.project().song().tracks() {
+                                match track {
+                                    TrackType::MidiTrack(track) => {
+                                        midi_tracks.insert(track.uuid().to_string(), track.name().to_string());
+                                    }
+                                    _ => {
+                                        state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Tempo(tempo));
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - Import Dawproject File - could not get lock on state"),
+                    }
+                    if let Ok(state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending block size to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::BlockSize(state.configuration.audio.block_size as f64)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send block size message to jack layer: {}", error),
+                        }
+                    }
+                    if let Ok(state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending tempo to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::Tempo(state.project().song().tempo())) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send tempo message to jack layer: {}", error),
+                        }
+                    }
+                    if let Ok(state) = state.lock() {
+                        let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Sending sample rate to the audio layer...".to_string()));
+                        match tx_to_audio.send(AudioLayerInwardEvent::SampleRate(state.configuration.audio.sample_rate as f64)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send sample rate message to jack layer: {}", error),
+                        }
+                    }
+
+                    match state_arc2.lock() {
+                        Ok(state) => {
+                            let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Creating track midi ports...".to_string()));
+                            // add midi track ports
+                            for (track_uuid, _) in midi_tracks {
+                                if let Some(jack_client) = state.jack_client() {
+                                    if let Ok(midi_out_port) = jack_client.register_port(track_uuid.as_str(), MidiOut::default()) {
+                                        match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
+                                            Ok(_) => (),
+                                            Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
+
+                    if let Ok(mut coast) = track_audio_coast.lock() {
+                        *coast = TrackBackgroundProcessorMode::AudioOut;
+                    }
+
+                    let _ = tx_from_ui.send(DAWEvents::UpdateUI);
+                    let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
+                }));
+            },
+            DAWEvents::ExportDawProjectFile(path) => {
+                gui.ui.dialogue_progress_bar.set_text(Some(format!("Exporting dawproject file as {}...", path.to_str().unwrap()).as_str()));
+                gui.ui.progress_dialogue.set_title(Some("Export Dawproject File"));
+                gui.ui.progress_dialogue.set_visible(true);
+
+                {
+                    let state = state.clone();
+                    let tx_from_ui = tx_from_ui;
+                    let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
+                        match state.lock() {
+                            Ok(state) => {
+                                debug!("Main - rx_ui processing loop - Export Dawproject File - attempting to export.");
+                                if let Err(error) = dawproject_parser::write_dawproject(state.project(), path.to_str().unwrap()) {
+                                    let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, format!("Could not export dawproject file: {}", error)));
+                                }
+                            }
+                            Err(_) => debug!("Main - rx_ui processing loop - Export Dawproject File - could not get lock on state"),
                         }
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     }));

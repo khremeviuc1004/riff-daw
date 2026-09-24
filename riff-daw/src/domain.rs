@@ -31,7 +31,7 @@ use crate::state::MidiPolyphonicExpressionNoteId;
 use crate::vst3_cxx_bridge::{ffi, Vst3Host};
 use crate::vst3_cxx_bridge::ffi::{showPluginEditor, vst3_plugin_get_window_width};
 
-extern "C" {
+unsafe extern "C" {
     fn gdk_x11_window_get_xid(window: gdk4::Surface) -> u32;
 }
 pub static TRANSPORT: InitCell<RwLock<Transport>> = InitCell::new();
@@ -3614,6 +3614,66 @@ impl AudioPlugin {
 
     pub fn set_uid(&mut self, uid: String) {
         self.uid = uid;
+    }
+
+    /// Get the vst audio plugin's instrument flag.
+    pub fn is_instrument(&self) -> bool {
+        self.is_instrument
+    }
+
+    /// Set the vst audio plugin's instrument flag.
+    pub fn set_is_instrument(&mut self, is_instrument: bool) {
+        self.is_instrument = is_instrument;
+    }
+
+    /// Get a reference to the vst audio plugin's format.
+    pub fn format(&self) -> &str {
+        self.format.as_ref()
+    }
+
+    /// Set the vst audio plugin's format.
+    pub fn set_format(&mut self, format: String) {
+        self.format = format;
+    }
+
+    /// Get a reference to the vst audio plugin's descriptive name.
+    pub fn descriptive_name(&self) -> &str {
+        self.descriptive_name.as_ref()
+    }
+
+    /// Set the vst audio plugin's descriptive name.
+    pub fn set_descriptive_name(&mut self, descriptive_name: String) {
+        self.descriptive_name = descriptive_name;
+    }
+
+    /// Get a reference to the vst audio plugin's category.
+    pub fn category(&self) -> &str {
+        self.category.as_ref()
+    }
+
+    /// Set the vst audio plugin's category.
+    pub fn set_category(&mut self, category: String) {
+        self.category = category;
+    }
+
+    /// Get a reference to the vst audio plugin's manufacturer.
+    pub fn manufacturer(&self) -> &str {
+        self.manufacturer.as_ref()
+    }
+
+    /// Set the vst audio plugin's manufacturer.
+    pub fn set_manufacturer(&mut self, manufacturer: String) {
+        self.manufacturer = manufacturer;
+    }
+
+    /// Get a reference to the vst audio plugin's version.
+    pub fn version(&self) -> &str {
+        self.version.as_ref()
+    }
+
+    /// Set the vst audio plugin's version.
+    pub fn set_version(&mut self, version: String) {
+        self.version = version;
     }
 }
 

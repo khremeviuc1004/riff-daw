@@ -963,6 +963,12 @@
                           </object>
                         </child>
                         <child>
+                          <object class="GtkButton" id="menu_item_import_dawproject">
+                            <property name="visible">True</property>
+                            <property name="label" translatable="yes">Import dawproject file</property>
+                          </object>
+                        </child>
+                        <child>
                           <object class="GtkButton" id="menu_item_export_midi">
                             <property name="visible">True</property>
                             <property name="label" translatable="yes">Export song to midi</property>
@@ -978,6 +984,12 @@
                           <object class="GtkButton" id="menu_item_export_midi_riffs_separate">
                             <property name="visible">True</property>
                             <property name="label" translatable="yes">Export riffs to separate midi files</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="menu_item_export_dawproject">
+                            <property name="visible">True</property>
+                            <property name="label" translatable="yes">Export song to dawproject</property>
                           </object>
                         </child>
                         <child>

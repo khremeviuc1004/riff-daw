@@ -1244,6 +1244,14 @@
                       </object>
                     </child>
                     <child>
+                      <object class="GtkImageMenuItem" id="menu_item_import_dawproject">
+                        <property name="label" translatable="yes">Import dawproject file</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="use-stock">False</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkImageMenuItem" id="menu_item_export_midi">
                         <property name="label" translatable="yes">Export song to midi</property>
                         <property name="visible">True</property>
@@ -1267,6 +1275,14 @@
                         <property name="visible">True</property>
                         <property name="can-focus">False</property>
                         <property name="image">image7</property>
+                        <property name="use-stock">False</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkImageMenuItem" id="menu_item_export_dawproject">
+                        <property name="label" translatable="yes">Export song to dawproject</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
                         <property name="use-stock">False</property>
                       </object>
                     </child>

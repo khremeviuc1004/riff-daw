@@ -86,9 +86,11 @@ pub struct Ui {
     pub menu_item_save: Button,
     pub menu_item_save_as: Button,
     pub menu_item_import_midi: Button,
+    pub menu_item_import_dawproject: Button,
     pub menu_item_export_midi: Button,
     pub menu_item_export_midi_riffs: Button,
     pub menu_item_export_midi_riffs_separate: Button,
+    pub menu_item_export_dawproject: Button,
     pub menu_item_export_wave: Button,
     pub menu_item_quit: Button,
 
@@ -758,9 +760,11 @@ gtk4_builder_from!(Ui {
     menu_item_save: Button,
     menu_item_save_as: Button,
     menu_item_import_midi: Button,
+    menu_item_import_dawproject: Button,
     menu_item_export_midi: Button,
     menu_item_export_midi_riffs: Button,
     menu_item_export_midi_riffs_separate: Button,
+    menu_item_export_dawproject: Button,
     menu_item_export_wave: Button,
     menu_item_quit: Button,
     menu_item_cut: Button,
@@ -4116,6 +4120,60 @@ impl MainWindow {
                         }
                         if let Some(filename) = filename {
                             let _ = tx_from_ui.send(DAWEvents::ImportMidiFile(filename));
+                        }
+                    }
+                });
+
+                true
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let window = self.ui.get_wnd_main().clone();
+            self.ui.menu_item_import_dawproject.connect_button_press_event(move |_menu_item, _btn|{
+                let dialog = FileChooserDialog::new(Some("Import dawproject file..."),     Some(&window), FileChooserAction::Open);
+                let filter = FileFilter::new();
+                filter.add_mime_type("application/zip");
+                filter.set_name(Some("DAW project file"));
+                filter.add_pattern("*.dawproject");
+                dialog.add_filter(&filter);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
+                let window = window.clone();
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            if let Some(filename_display) = filename.to_str() {
+                                window.set_title(Some(format!("DAW - {}", filename_display).as_str()));
+                            }
+                            let _ = tx_from_ui.send(DAWEvents::ImportDawProjectFile(filename));
+                        }
+                    }
+                });
+
+                true
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let window = self.ui.get_wnd_main().clone();
+            self.ui.menu_item_export_dawproject.connect_button_press_event(move |_menu_item, _btn|{
+                let dialog = FileChooserDialog::new(Some("Export song to dawproject..."),     Some(&window), FileChooserAction::Save);
+                let filter = FileFilter::new();
+                filter.add_mime_type("application/zip");
+                filter.set_name(Some("DAW project file"));
+                filter.add_pattern("*.dawproject");
+                dialog.add_filter(&filter);
+                dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
+                dialog.add_button("Ok", gtk4::ResponseType::Ok);
+                let tx_from_ui = tx_from_ui.clone();
+                dialog.run_with(move |result, dialog| {
+                    if result == gtk4::ResponseType::Ok {
+                        if let Some(filename) = dialog.filename() {
+                            let _ = tx_from_ui.send(DAWEvents::ExportDawProjectFile(filename));
                         }
                     }
                 });

@@ -101,7 +101,7 @@ const XEMBED_VERSION_MINOR: u64 = 3;
 /// XEMBED_NOTIFY_CURRENT - default focus-notify style for FOCUS_IN.
 const XEMBED_NOTIFY_CURRENT: u64 = 0;
 
-extern "C" {
+unsafe extern "C" {
     fn XOpenDisplay(display_name: *const i8) -> *mut XDisplay;
     fn XDefaultScreen(display: *mut XDisplay) -> i32;
     fn XDefaultVisual(display: *mut XDisplay, screen: i32) -> *mut c_void;

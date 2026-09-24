@@ -294,6 +294,8 @@ pub enum DAWEvents {
     ExportRiffsToMidiFile(PathBuf),
     ExportRiffsToSeparateMidiFiles(PathBuf),
     ExportWaveFile(PathBuf),
+    ImportDawProjectFile(PathBuf),
+    ExportDawProjectFile(PathBuf),
 
     ScanPlugins,
 

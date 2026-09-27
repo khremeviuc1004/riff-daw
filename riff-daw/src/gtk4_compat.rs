@@ -337,31 +337,71 @@ impl GtkContainerCompat for Widget {
 /// Replacement for the GTK3 `Dialog::run()` blocking dialog exec.
 ///
 /// GTK3's `Dialog::run()` made the dialog modal, showed it, and ran a nested
-/// main loop until the user responded. GTK4 removed `Dialog::run()` in favour
-/// of `present()` + the `response` signal, so this compatibility trait
-/// reimplements the blocking behaviour with a nested `glib::MainLoop`.
+/// main loop until the user responded; the dialog's action-area buttons
+/// completed that loop with their response ids. GTK4 removed `Dialog::run()`
+/// in favour of `present()` + the `response` signal, and the converted
+/// dialogs are plain `GtkWindow`s whose action buttons are ordinary buttons
+/// with no response wiring at all - clicking them used to leave `run()`
+/// blocked forever. This compatibility trait reimplements the blocking
+/// behaviour with a nested `glib::MainLoop` and restores the response wiring:
+/// dialog button handlers call `respond()` to complete the pending `run()`.
+struct DialogRunState {
+    response: std::cell::Cell<Option<gtk4::ResponseType>>,
+    main_loop: glib::MainLoop,
+}
+
 pub trait GtkDialogRunCompat: gtk4::prelude::IsA<gtk4::Window> + gtk4::prelude::Cast + 'static {
     fn run(&self) -> gtk4::ResponseType {
-        use std::cell::Cell;
-        use std::rc::Rc;
+        let state = std::rc::Rc::new(DialogRunState {
+            response: std::cell::Cell::new(None),
+            main_loop: glib::MainLoop::new(None, false),
+        });
+        unsafe {
+            self.set_data("riff_gtk4_dialog_run_state", state.clone());
+        }
 
-        let response_holder: Rc<Cell<Option<gtk4::ResponseType>>> = Rc::new(Cell::new(None));
-        let main_loop = Rc::new(glib::MainLoop::new(None, false));
-
-        let close_response_holder = response_holder.clone();
-        let close_main_loop = main_loop.clone();
+        let close_state = state.clone();
         self.connect_close_request(move |_| {
-            if close_main_loop.is_running() {
-                close_response_holder.set(Some(gtk4::ResponseType::DeleteEvent));
-                close_main_loop.quit();
+            if close_state.main_loop.is_running() {
+                close_state.response.set(Some(gtk4::ResponseType::DeleteEvent));
+                close_state.main_loop.quit();
             }
             glib::Propagation::Proceed
         });
 
+        // a window that is hidden without ever being closed (an AboutDialog
+        // hiding itself via its own close button, or a button handler that
+        // just calls set_visible(false)) must also complete the loop,
+        // otherwise the nested main loop would never unwind.
+        let hide_state = state.clone();
+        self.connect_notify_local(Some("is-visible"), move |window, _| {
+            let window: &gtk4::Window = window.as_ref();
+            if !window.is_visible() && hide_state.main_loop.is_running() {
+                hide_state.main_loop.quit();
+            }
+        });
+
         self.set_modal(true);
         self.present();
-        main_loop.run();
-        response_holder.get().unwrap_or(gtk4::ResponseType::DeleteEvent)
+        state.main_loop.run();
+        state.response.get().unwrap_or(gtk4::ResponseType::DeleteEvent)
+    }
+
+    /// GTK3-style dialog response: completes the pending `run()` of this
+    /// window with the given response. The action buttons of the dialogs
+    /// converted from `GtkDialog` have no response-id wiring in GTK4, so
+    /// their clicked handlers call this.
+    fn respond(&self, response: gtk4::ResponseType) {
+        let state = unsafe {
+            self.data::<std::rc::Rc<DialogRunState>>("riff_gtk4_dialog_run_state")
+                .map(|ptr| ptr.as_ref().clone())
+        };
+        if let Some(state) = state {
+            if state.main_loop.is_running() {
+                state.response.set(Some(response));
+                state.main_loop.quit();
+            }
+        }
     }
 }
 
@@ -461,6 +501,14 @@ pub trait GtkDragSourceCompat:
     ) {
         let source = gtk4::DragSource::new();
         source.set_actions(actions);
+        // GtkButton (and every other source widget here is a button) claims the
+        // pointer press with its own capture-phase gesture - a bubble-phase
+        // drag source attached to it would never see the press and the drag
+        // would never start. GTK3's legacy drag sources started on buttons
+        // directly, so attach at the capture phase to keep that behaviour; the
+        // source only claims the sequence once the drag threshold is passed,
+        // so plain clicks still reach the button.
+        source.set_propagation_phase(gtk4::PropagationPhase::Capture);
         self.add_controller(source.clone());
         unsafe {
             self.set_data("riff_gtk4_drag_source", source);
@@ -477,6 +525,7 @@ pub trait GtkDragSourceCompat:
                 None => {
                     let source = gtk4::DragSource::new();
                     source.set_actions(gdk4::DragAction::COPY);
+                    source.set_propagation_phase(gtk4::PropagationPhase::Capture);
                     self.set_data("riff_gtk4_drag_source", source.clone());
                     self.add_controller(source.clone());
                     source
@@ -536,8 +585,31 @@ pub trait GtkDropDestCompat:
         targets: &[TargetEntry],
         actions: gdk4::DragAction,
     ) {
-        let mime_types: Vec<&str> = targets.iter().map(|entry| entry.target).collect();
-        let formats = gdk4::ContentFormats::new(&mime_types);
+        // In-process GTK4 drags carry the data as a GValue: the app's drag
+        // sources put String values on the bus, and a String value is
+        // advertised with the gtype format name ("gchararray"). The legacy
+        // atom/mime names the GTK3 call sites ask for ("STRING", "text/plain")
+        // do NOT match "gchararray", so a DropTarget restricted to just those
+        // names is never found during the drag: the drag starts (the source is
+        // happy) but releasing over the destination does nothing. Keep the
+        // requested mime names (they still describe what external drops offer)
+        // and add the gtype that the text targets correspond to, so
+        // same-process drops are accepted and the drop value arrives as a
+        // String.
+        let mut formats = gdk4::ContentFormats::builder();
+        for entry in targets.iter() {
+            formats = formats.add_mime_type(entry.target);
+            match entry.target {
+                "STRING" | "text/plain" | "UTF8_STRING" => {
+                    formats = formats.add_type(glib::types::Type::STRING);
+                }
+                "text/uri-list" => {
+                    formats = formats.add_type(Vec::<glib::GString>::static_type());
+                }
+                _ => (),
+            }
+        }
+        let formats = formats.build();
         let drop_target = gtk4::DropTarget::builder()
             .actions(actions)
             .formats(&formats)

@@ -2268,6 +2268,13 @@ pub trait BackgroundProcessorAudioPlugin {
     fn stop_processing(&mut self);
     fn shutdown(&mut self);
 
+    /// Tear down the plugin's GUI (if any) before the plugin is stopped/shut down. The
+    /// plugin formats require the editor/GUI to be destroyed before the plugin instance
+    /// itself: VST2 wants effMClose before effClose, CLAP wants clap_plugin_gui::destroy
+    /// before clap_plugin::destroy (u-he plugins abort in destroy() while a GUI is alive).
+    /// Dropping an instance with a live editor crashes the plugin.
+    fn close_editor(&mut self);
+
     fn preset_data(&mut self) -> String;
     fn set_preset_data(&mut self, data: String);
 
@@ -2408,6 +2415,20 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.shutdown();
+            }
+        }
+    }
+
+    fn close_editor(&mut self) {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                vst24_plugin.close_editor();
+            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.close_editor();
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.close_editor();
             }
         }
     }
@@ -2621,6 +2642,21 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
         self.vst_plugin_instance_mut().suspend();
     }
 
+    fn close_editor(&mut self) {
+        // VST2 protocol: the host must close the editor (effMClose) before shutting the
+        // plugin down. vst-rs never closes the editor on its own (there is no Drop impl on
+        // its editor, and PluginInstance::drop dispatches effClose), so an instance
+        // dropped after the user opened and closed the GUI would be torn down with the
+        // editor still open, which crashes plugins.
+        if let Some(editor) = self.editor_mut().as_mut() {
+            if editor.is_open() {
+                editor.close();
+            }
+        }
+        self.editor = None;
+        self.xid = None;
+    }
+
     fn set_tempo(&mut self, tempo: f64) {
         if let Ok(mut host) = self.host().lock() {
             host.set_tempo(tempo);
@@ -2708,7 +2744,7 @@ impl BackgroundProcessorVst24AudioPlugin {
         tempo: f64,
         time_signature_numerator: i32,
         time_signature_denominator: i32,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (tx_from_vst_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (host, mut vst_plugin_instance) = create_vst24_audio_plugin(
             vst_plugin_loaders,
@@ -2724,12 +2760,12 @@ impl BackgroundProcessorVst24AudioPlugin {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
-        );
+        )?;
         let midi_sender = SendEventBuffer::new(1);
         vst_plugin_instance.set_sample_rate(sample_rate as f32);
         vst_plugin_instance.set_block_size(block_size);
         // let vst_editor = vst_plugin_instance.get_editor();
-        Self {
+        Ok(Self {
             uuid,
             host,
             vst_plugin_instance,
@@ -2739,7 +2775,7 @@ impl BackgroundProcessorVst24AudioPlugin {
             editor: None,
             vst_host_time_info,
             sample_rate,
-        }
+        })
     }
 
     /// Get a reference to the vst effect plugin's host.
@@ -2805,12 +2841,22 @@ impl BackgroundProcessorVst24AudioPlugin {
     }
 }
 
+impl Drop for BackgroundProcessorVst24AudioPlugin {
+    fn drop(&mut self) {
+        // Safety net for every drop path (instrument change, effect delete, track kill):
+        // the plugin instance field is dropped after this, dispatching effClose - the
+        // editor must be gone (effMClose) by then or the plugin crashes.
+        let _ = BackgroundProcessorAudioPlugin::close_editor(self);
+    }
+}
+
 
 #[derive()]
 pub struct BackgroundProcessorClapAudioPlugin {
     track_uuid: String,
     uuid: Uuid,
     xid: Option<u32>,
+    gui_created: bool,
     tx_from_clap_host: Sender<AudioPluginHostOutwardEvent>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
     plugin: simple_clap_host_helper_lib::plugin::instance::Plugin, 
@@ -2833,9 +2879,21 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     /// Set the vst effect's xid.
     fn set_xid(&mut self, xid: Option<u32>) {
         self.xid = xid;
+        let Some(parent_xid) = self.xid else {
+            // No host window: tear the GUI down if one was created.
+            self.destroy_gui();
+            return;
+        };
+        if self.gui_created {
+            // The GUI is already alive and parented to a window id - creating it again
+            // for a new (re-shown) host window would leak it, the plugin only supports
+            // one.
+            return;
+        }
         if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
             if gui.is_api_supported(&self.plugin, CLAP_WINDOW_API_X11, false) {
                 if gui.create(&self.plugin, CLAP_WINDOW_API_X11, false) {
+                    self.gui_created = true;
                     if gui.set_scale(&self.plugin, 1.0) {
                         debug!("Successfully set the scale.");
                     }
@@ -2848,11 +2906,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
                     else {
                         debug!("GIU can not resize.");
                     }
-                    let window_id = &self.xid;
                     let window_def = clap_window {
                         api: CLAP_WINDOW_API_X11.as_ptr(),
                         specific: clap_window_handle {
-                            x11: window_id.unwrap() as u64
+                            x11: parent_xid as u64
                         }
                     };
                     if gui.set_parent(&self.plugin, &window_def) {
@@ -2915,6 +2972,17 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         // }
     }
 
+    fn close_editor(&mut self) {
+        // CLAP protocol: the GUI must be destroyed (clap_plugin_gui::destroy) before the
+        // plugin instance itself is destroyed (clap_plugin::destroy runs in Plugin::drop).
+        // The helper library's Drop always calls clap_plugin::destroy, so dropping a
+        // replaced instrument whose GUI was ever created makes the plugin abort (this is
+        // what crashed u-he ACE when another instrument was selected after closing its
+        // GUI window - hiding the host window does not destroy the plugin GUI).
+        self.xid = None;
+        self.destroy_gui();
+    }
+
     fn set_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
         self.process_data.config.tempo = tempo;
@@ -2948,6 +3016,18 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     }
 
     fn get_window_size(&self) -> (i32, i32) {
+        // Once the GUI has been created, ask the plugin for its own idea of the window
+        // size instead of guessing - the plugin may have requested a size (e.g. after a
+        // preset change) before the host window was resized. get_size() is only valid on
+        // a created GUI, plugins (u-he) abort when called on a non-existent one.
+        if self.gui_created {
+            if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
+                let (mut width, mut height) = (400u32, 300u32);
+                if gui.get_size(&self.plugin, &mut width, &mut height) {
+                    return (width as i32, height as i32);
+                }
+            }
+        }
         (400, 300)
     }
 
@@ -3019,7 +3099,7 @@ impl BackgroundProcessorClapAudioPlugin {
         tempo: f64,
         time_signature_numerator: i32,
         time_signature_denominator: i32,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (tx_from_clap_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let (plugin, process_data, host_receiver) = create_clap_audio_plugin(
             clap_plugin_loaders, 
@@ -3034,11 +3114,12 @@ impl BackgroundProcessorClapAudioPlugin {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
-        );
-        Self {
+        )?;
+        Ok(Self {
             track_uuid,
             uuid,
             xid: None,
+            gui_created: false,
             tx_from_clap_host,
             rx_from_host,
             plugin, 
@@ -3049,7 +3130,7 @@ impl BackgroundProcessorClapAudioPlugin {
             block_size,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
-        }
+        })
     }
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
@@ -3179,6 +3260,77 @@ impl BackgroundProcessorClapAudioPlugin {
     pub fn plugin(&self) -> &simple_clap_host_helper_lib::plugin::instance::Plugin {
         &self.plugin
     }
+
+    /// Destroy the plugin GUI if one was created. Idempotent: plugins (u-he) are fine
+    /// with destroy() on a never-created GUI but skipping it keeps the state honest.
+    fn destroy_gui(&mut self) {
+        if self.gui_created {
+            self.gui_created = false;
+            if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
+                let _ = gui.hide(&self.plugin);
+                gui.destroy(&self.plugin);
+            }
+        }
+    }
+
+    /// The host's answer to a plugin calling `clap_host_gui::request_resize()` - a plugin
+    /// uses it when it wants a different window size (preset change, tabbed GUI, ...).
+    /// The CLAP protocol requires the host to actually apply the new size by calling
+    /// `clap_plugin_gui::set_size()`, respecting the plugin's own resize constraints
+    /// (`get_resize_hints`/`adjust_size`); resizing only the host window is not enough
+    /// since X11 never resizes a parent's child windows and CLAP-conformant plugins wait
+    /// for the host to confirm the size. Returns the (possibly plugin-adjusted) size so
+    /// the host window can be resized to match.
+    pub fn handle_gui_resize(&self, width: u32, height: u32) -> (u32, u32) {
+        // request_resize() can arrive at any time - including during plugin load before
+        // the host has ever created a GUI (u-he ACE does exactly this). The GUI size
+        // functions are only valid on a created GUI, plugins (u-he) log an error and
+        // abort when they are called on a non-existent one, so just relay the requested
+        // size to the host window in that case.
+        if !self.gui_created {
+            debug!("CLAP gui resize request of {}x{} before the GUI was created, sizing the host window only.", width, height);
+            return (width, height);
+        }
+        match self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
+            Some(gui) => {
+                // set_size()/adjust_size() are only valid while the GUI is resizable: a
+                // fixed-size GUI resizes itself and only asks the host to follow, so for
+                // non-resizable GUIs the requested size is simply passed through to the
+                // host window.
+                if !gui.can_resize(&self.plugin) {
+                    return (width, height);
+                }
+                let mut width = width;
+                let mut height = height;
+                // snap the requested size to the plugin's min/max/aspect/step limits
+                if !gui.adjust_size(&self.plugin, &mut width, &mut height) {
+                    debug!("CLAP gui {}x{} resize request could not be adjusted by the plugin, applying it as requested.", width, height);
+                }
+                if !gui.set_size(&self.plugin, width, height) {
+                    debug!("CLAP gui rejected the requested size of {}x{}, keeping its current size.", width, height);
+                    let (mut current_width, mut current_height) = (width, height);
+                    if gui.get_size(&self.plugin, &mut current_width, &mut current_height) {
+                        return (current_width, current_height);
+                    }
+                }
+                (width, height)
+            },
+            None => {
+                debug!("CLAP gui resize request of {}x{} for a plugin without a GUI extension, ignoring.", width, height);
+                (width, height)
+            },
+        }
+    }
+}
+
+impl Drop for BackgroundProcessorClapAudioPlugin {
+    fn drop(&mut self) {
+        // Safety net for every drop path: Plugin::drop dispatches clap_plugin::destroy,
+        // which aborts in plugins (u-he) while the GUI is still alive, so destroy the GUI
+        // first. Drop::drop runs before any field is dropped, so this happens before the
+        // `plugin` field is torn down.
+        let _ = BackgroundProcessorAudioPlugin::close_editor(self);
+    }
 }
 
 #[derive()]
@@ -3274,6 +3426,13 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
         ffi::vst3_plugin_remove(self.daw_plugin_uuid.to_string());
     }
 
+    fn close_editor(&mut self) {
+        // The VST3 C++ bridge never frees the plug view (vst3_plugin_remove keeps the
+        // plugin and its view alive), so no editor can outlive the instance - just forget
+        // the window id here; vst3_plugin_remove (shutdown) stops the editor run loop.
+        self.xid = None;
+    }
+
     fn preset_data(&mut self) -> String {
         let mut data: [u8; 1000000] = [0; 1000000];
         let data_length = data.len() as u32;
@@ -3328,10 +3487,10 @@ impl BackgroundProcessorVst3AudioPlugin {
         tempo: f64,
         time_signature_numerator: i32,
         time_signature_denominator: i32,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (tx_from_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
         let vst3host = Box::new(Vst3Host(track_uuid.clone(), daw_plugin_uuid.to_string(), instrument, tx_from_host.clone()));
-        create_vst3_audio_plugin(
+        if !create_vst3_audio_plugin(
             library_path.clone(),
             daw_plugin_uuid.to_string(),
             vst3_plugin_uid.clone(),
@@ -3341,8 +3500,10 @@ impl BackgroundProcessorVst3AudioPlugin {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
-        );
-        Self {
+        ) {
+            return Err(format!("Could not create an instance of VST3 plugin '{}' (uid={}) from '{}'.", daw_plugin_uuid, vst3_plugin_uid, library_path));
+        }
+        Ok(Self {
             track_uuid: track_uuid.clone(),
             daw_plugin_uuid: daw_plugin_uuid.clone(),
             vst3_plugin_uid,
@@ -3356,7 +3517,7 @@ impl BackgroundProcessorVst3AudioPlugin {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
-        }
+        })
     }
 
     pub fn repaint(&self) {
@@ -3908,16 +4069,20 @@ impl TrackBackgroundProcessorHelper {
                         } */,
                 TrackBackgroundProcessorInwardEvent::Kill => {
                     for effect in self.effect_plugin_instances.iter_mut() {
+                        effect.close_editor();
                         effect.stop_processing();
+                        effect.shutdown();
                     }
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.close_editor();
                         instrument_plugin.stop_processing();
+                        instrument_plugin.shutdown();
                     }
                     self.keep_alive = false;
                 },
                 TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin) => {
-                    let plugin_instance: BackgroundProcessorAudioPluginType = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
-                        let vst_plugin_instance = BackgroundProcessorVst24AudioPlugin::new_with_uuid(
+                    let plugin_instance: Result<BackgroundProcessorAudioPluginType, String> = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
+                        BackgroundProcessorVst24AudioPlugin::new_with_uuid(
                             vst24_plugin_loaders,
                             self.track_uuid.clone(),
                             uuid,
@@ -3929,12 +4094,10 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-
-                        BackgroundProcessorAudioPluginType::Vst24(vst_plugin_instance)
+                        ).map(BackgroundProcessorAudioPluginType::Vst24)
                     }
                     else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
-                        let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
+                        BackgroundProcessorClapAudioPlugin::new_with_uuid(
                             clap_plugin_loaders, 
                             self.track_uuid.clone(), 
                             uuid, 
@@ -3945,11 +4108,10 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-                        BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
+                        ).map(BackgroundProcessorAudioPluginType::Clap)
                     }
                     else {
-                        let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
+                        BackgroundProcessorVst3AudioPlugin::new_with_uuid(
                             self.track_uuid.clone(),
                             uuid,
                             scanned_plugin.id.clone(),
@@ -3960,18 +4122,29 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-                        BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
+                        ).map(BackgroundProcessorAudioPluginType::Vst3)
                     };
 
-                    self.effect_plugin_instances.push(plugin_instance);
-                    self.request_effect_params = true;
-                    self.request_effect_params_for_uuid.clear();
-                    self.request_effect_params_for_uuid.push_str(uuid.to_string().as_str());
+                    match plugin_instance {
+                        Ok(plugin_instance) => {
+                            self.effect_plugin_instances.push(plugin_instance);
+                            self.request_effect_params = true;
+                            self.request_effect_params_for_uuid.clear();
+                            self.request_effect_params_for_uuid.push_str(uuid.to_string().as_str());
+                        },
+                        Err(error) => {
+                            // the track thread must stay alive (and keep sending silent
+                            // blocks to the jack layer) even if a plugin cannot be loaded.
+                            let message = format!("Track '{}' could not load effect plugin '{}' from '{}': {}", self.track_uuid, scanned_plugin.name, scanned_plugin.path, error);
+                            error!("{}", message);
+                            eprintln!("{}", message);
+                        },
+                    }
                 }
                 TrackBackgroundProcessorInwardEvent::DeleteEffect(uuid) => {
                     for effect in self.effect_plugin_instances.iter_mut() {
                         if effect.uuid().to_string() == uuid {
+                            effect.close_editor();
                             effect.stop_processing();
                             effect.shutdown();
                             self.vst_effect_editors.remove(&effect.uuid().to_string());
@@ -3982,7 +4155,11 @@ impl TrackBackgroundProcessorHelper {
                     });
                 }
                 TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin) => {
-                    if let Some(plugin_instance_to_delete) = self.instrument_plugin_instances.pop() {
+                    if let Some(mut plugin_instance_to_delete) = self.instrument_plugin_instances.pop() {
+                        // The GUI/editor has to be destroyed before the plugin instance is
+                        // shut down and dropped, otherwise the plugin aborts (CLAP) or
+                        // crashes (VST2) when it is torn down with a live editor.
+                        plugin_instance_to_delete.close_editor();
                         match plugin_instance_to_delete {
                             BackgroundProcessorAudioPluginType::Vst24(mut vst24_plugin) => {
                                 vst24_plugin.stop_processing();
@@ -3998,8 +4175,8 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
 
-                    let plugin_instance_to_add: BackgroundProcessorAudioPluginType = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
-                        let vst_plugin_instance = BackgroundProcessorVst24AudioPlugin::new_with_uuid(
+                    let plugin_instance_to_add: Result<BackgroundProcessorAudioPluginType, String> = if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
+                        BackgroundProcessorVst24AudioPlugin::new_with_uuid(
                             vst24_plugin_loaders,
                             self.track_uuid.clone(),
                             uuid,
@@ -4011,17 +4188,10 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-                        let instrument_name = vst_plugin_instance.vst_plugin_instance.get_info().name;
-                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
-                            Ok(_) => debug!("Sent instrument name to main processing loop."),
-                            Err(_) => debug!("Failed to send instrument name to main processing loop."),
-                        }
-
-                        BackgroundProcessorAudioPluginType::Vst24(vst_plugin_instance)
+                        ).map(BackgroundProcessorAudioPluginType::Vst24)
                     }
                     else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
-                        let clap_plugin_instance = BackgroundProcessorClapAudioPlugin::new_with_uuid(
+                        BackgroundProcessorClapAudioPlugin::new_with_uuid(
                             clap_plugin_loaders, 
                             self.track_uuid.clone(), 
                             uuid, 
@@ -4032,11 +4202,10 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-                        BackgroundProcessorAudioPluginType::Clap(clap_plugin_instance)
+                        ).map(BackgroundProcessorAudioPluginType::Clap)
                     }
                     else {
-                        let vst3_plugin = BackgroundProcessorVst3AudioPlugin::new_with_uuid(
+                        BackgroundProcessorVst3AudioPlugin::new_with_uuid(
                             self.track_uuid.clone(),
                             uuid,
                             scanned_plugin.id.clone(),
@@ -4047,19 +4216,39 @@ impl TrackBackgroundProcessorHelper {
                             self.tempo,
                             self.time_signature_numerator,
                             self.time_signature_denominator,
-                        );
-                        let instrument_name = vst3_plugin.name();
-                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
-                            Ok(_) => debug!("Sent instrument name to main processing loop."),
-                            Err(_) => debug!("Failed to send instrument name to main processing loop."),
-                        }
-                        BackgroundProcessorAudioPluginType::Vst3(vst3_plugin)
+                        ).map(BackgroundProcessorAudioPluginType::Vst3)
                     };
 
-                    // FIXME the following commented out line causes a crash - or kills the track thread
-                    // self.instrument_plugin_instances.clear();
-                    self.instrument_plugin_instances.push(plugin_instance_to_add);
-                    self.handle_request_instrument_plugin_parameters();
+                    match plugin_instance_to_add {
+                        Ok(plugin_instance_to_add) => {
+                            // the track panel displays the loaded instrument's name - the
+                            // project load/ChangeInstrument event has to report it back for
+                            // every plugin format.
+                            let instrument_name = BackgroundProcessorAudioPlugin::name(&plugin_instance_to_add);
+                            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(instrument_name)) {
+                                Ok(_) => debug!("Sent instrument name to main processing loop."),
+                                Err(_) => debug!("Failed to send instrument name to main processing loop."),
+                            }
+
+                            // FIXME the following commented out line causes a crash - or kills the track thread
+                            // self.instrument_plugin_instances.clear();
+                            self.instrument_plugin_instances.push(plugin_instance_to_add);
+                            self.handle_request_instrument_plugin_parameters();
+                        },
+                        Err(error) => {
+                            // the track thread must stay alive (and keep sending silent
+                            // blocks to the jack layer) even if an instrument plugin cannot
+                            // be loaded, otherwise this track's missing audio blocks starve
+                            // the whole master mix.
+                            let message = format!("Track '{}' could not load instrument plugin '{}' from '{}': {}", self.track_uuid, scanned_plugin.name, scanned_plugin.path, error);
+                            error!("{}", message);
+                            eprintln!("{}", message);
+                            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentName(format!("{} (not loaded)", scanned_plugin.name))) {
+                                Ok(_) => (),
+                                Err(_) => debug!("Failed to send instrument name to main processing loop."),
+                            }
+                        },
+                    }
                 }
                 TrackBackgroundProcessorInwardEvent::SetPresetData(instrument_preset_data, effect_presets) => {
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
@@ -4563,6 +4752,10 @@ impl TrackBackgroundProcessorHelper {
                         had_events = true;
                         match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
+                                // apply the resize to the plugin GUI first (CLAP wants the
+                                // host to answer request_resize() with set_size()), then
+                                // grow/shrink the host window to the resulting size
+                                let (width, height) = clap_plugin.handle_gui_resize(width, height);
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width as i32, height as i32)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument Clap Host size window from CLAP thread to state: {}", error),
@@ -4629,6 +4822,10 @@ impl TrackBackgroundProcessorHelper {
                         had_events = true;
                         match message {
                             DAWCallback::PluginGuiWindowRequestResize(width, height) => {
+                                // apply the resize to the plugin GUI first (CLAP wants the
+                                // host to answer request_resize() with set_size()), then
+                                // grow/shrink the host window to the resulting size
+                                let (width, height) = clap_plugin.handle_gui_resize(width, height);
                                 match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(self.track_uuid.clone(), clap_plugin.uuid().to_string(), width as i32, height as i32)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying effect Clap Host size window from CLAP thread to state: {}", error),

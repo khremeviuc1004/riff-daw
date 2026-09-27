@@ -57,14 +57,14 @@
         <child>
           <object class="GtkBox">
             <child>
-              <object class="GtkButton" id="button3">
+              <object class="GtkButton" id="configuration_dialogue_cancel_button">
                 <property name="label" translatable="yes">_Cancel</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
               </object>
             </child>
             <child>
-              <object class="GtkButton" id="button4">
+              <object class="GtkButton" id="configuration_dialogue_ok_button">
                 <property name="label" translatable="yes">_OK</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -773,7 +773,7 @@
               <placeholder />
             </child>
             <child>
-              <object class="GtkButton" id="button2">
+              <object class="GtkButton" id="riff_name_dialogue_ok_button">
                 <property name="label" translatable="yes">_OK</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -4973,9 +4973,9 @@
                                         <property name="orientation">vertical</property>
                                         <child>
                                           <object class="GtkScrolledWindow">
-                                            <property name="height-request">60</property>
                                             <property name="visible">True</property>
                                             <property name="valign">start</property>
+                                            <property name="propagate-natural-height">True</property>
                                             <property name="hadjustment">riff_set_horizontal_adjustment</property>
                                             <property name="hscrollbar-policy">external</property>
                                             <property name="vscrollbar-policy">external</property>

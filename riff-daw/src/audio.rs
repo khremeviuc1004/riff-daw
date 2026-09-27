@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::From;
 use std::sync::{Arc, Mutex};
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
@@ -198,10 +197,6 @@ impl NotificationHandler for JackNotificationHandler {
 pub struct Audio {
     audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
     audio_block_pool: Vec<AudioBlock>,
-    block_number_buffer: HashMap<i32, HashMap<i32, AudioBlock>>,
-    btree_map_pool: Vec<HashMap<i32, AudioBlock>>,
-    stuck_block_number: i32,
-    stuck_block_number_attempt_count: i32,
     jack_midi_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
     out_l: Port<AudioOut>,
     out_r: Port<AudioOut>,
@@ -248,15 +243,10 @@ impl Audio {
                tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
-        let btree_map_pool: Vec<HashMap<i32, AudioBlock>> = (0..100).map(|_| HashMap::new()).collect();
 
         Audio {
             audio_blocks: vec![],
             audio_block_pool,
-            block_number_buffer: HashMap::new(),
-            btree_map_pool,
-            stuck_block_number: 0,
-            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -305,15 +295,10 @@ impl Audio {
                               tempo: f64,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
-        let btree_map_pool: Vec<HashMap<i32, AudioBlock>> = (0..100).map(|_| HashMap::new()).collect();
 
         Audio {
             audio_blocks: vec![],
             audio_block_pool,
-            block_number_buffer: HashMap::new(),
-            btree_map_pool,
-            stuck_block_number: 0,
-            stuck_block_number_attempt_count: 0,
             jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
             out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
@@ -377,7 +362,6 @@ impl Audio {
                         self.block = 0;
                     }
                     self.play_position_in_frames = 0;
-                    self.block_number_buffer.clear();
                 }
                 AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
                     // debug!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
@@ -457,74 +441,33 @@ impl Audio {
         }
 
         {
-            // the following breaks down when a consumer's producer takes too long to send audio blocks
-            // the block_number_buffer keeps filling up until all pool resources are consumed and there is no audio
-
+            // Mix every track directly into the master bus, consuming at most one audio
+            // block per track per jack cycle. The track background producers are paced by
+            // this consumption (they write_blocking into two slot ring buffers), so one
+            // block per track per cycle keeps every track locked to the jack cycle rate.
+            //
+            // The previous design only mixed a block once *every* track had delivered a
+            // block for the same block number. A single slow or dead producer then either
+            // starved the whole master output (total silence) or - with the partial mix
+            // fallback - mixed time skewed blocks in separate cycles, which came out as
+            // crackling, robotic audio and a wrong tempo on dense projects. A track that
+            // cannot keep up now only misses its own block instead of wrecking the mix.
             let out_left = self.out_l.as_mut_slice(process_scope);
             let out_right = self.out_r.as_mut_slice(process_scope);
 
-            // if block number is 0 then dump all previous data and return audio blocks and maps to their respective pools - works when loop in the riff views
-            if self.block == 0 {
-                let block_numbers: Vec<i32> = self.block_number_buffer.keys().map(|key| *key).collect();
-                for block_number in block_numbers.iter() {
-                    if let Some(mut tracks) = self.block_number_buffer.remove(&block_number) {
-                        let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
-                        for track_number in track_numbers.iter() {
-                            if let Some(audio_block) = tracks.remove(&track_number) {
-                                self.audio_block_pool.push(audio_block);
-                            }
-                        }
-                        self.btree_map_pool.push(tracks);
-                    }
-                }
-            }
-
-            // read the consumers and store the audio blocks appropriately
-            // TODO this would work better for track deletes if the track uuid was used as the key
-            for (track_key, audio_consumer_details) in self.audio_consumers.iter_mut().enumerate() {
+            for audio_consumer_details in self.audio_consumers.iter_mut() {
                 let consumer = audio_consumer_details.consumer();
-                if let Some(new_audio_block) = self.audio_block_pool.pop() {
-                    self.audio_blocks.push(new_audio_block);
+                if let Some(audio_block) = self.audio_block_pool.pop() {
+                    self.audio_blocks.push(audio_block);
 
+                    let mut read_audio_block = false;
                     match consumer.read(&mut self.audio_blocks) {
-                        Ok(read) => {
-                            if read == 1 {
-                                if let Some(audio_block) = self.audio_blocks.pop() {
-                                    if self.block_number_buffer.contains_key(&audio_block.block) {
-                                        if let Some(tracks) = self.block_number_buffer.get_mut(&audio_block.block) {
-                                            tracks.insert(track_key as i32, audio_block);
-                                        }
-                                    } else if let Some(mut tracks) = self.btree_map_pool.pop() {
-                                        let block_number = audio_block.block;
-                                        tracks.insert(track_key as i32, audio_block);
-                                        self.block_number_buffer.insert(block_number, tracks);
-                                    }
-                                    else {
-                                        self.audio_block_pool.push(audio_block);
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            if let Some(audio_block) = self.audio_blocks.pop() {
-                                self.audio_block_pool.push(audio_block);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // play the audio for the lowest number of block if it has an audio block for each and every tracks
-            let mut key_to_remove = None;
-            if let Some(key) = self.block_number_buffer.keys().min() {
-                if let Some(track_buffer) = self.block_number_buffer.get(key) {
-                    if self.stuck_block_number != *key {
-                        self.stuck_block_number = *key;
-                        self.stuck_block_number_attempt_count = 0;
+                        Ok(read) => read_audio_block = read == 1,
+                        Err(_) => (),
                     }
 
-                    if track_buffer.len() == self.audio_consumers.len() {
-                        for audio_block in track_buffer.values() {
+                    if let Some(audio_block) = self.audio_blocks.pop() {
+                        if read_audio_block {
                             for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
                                 if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
                                     *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
@@ -540,29 +483,12 @@ impl Audio {
                                 }
                             }
                         }
-                        key_to_remove = Some(*key);
-                    } else {
-                        self.stuck_block_number_attempt_count += 1;
-
-                        if self.stuck_block_number_attempt_count > 2 {
-                            key_to_remove = Some(*key);
-                        }
-                    }
-                }
-
-                if let Some(key) = key_to_remove {
-                    if let Some(mut tracks) = self.block_number_buffer.remove(&key) {
-                        let track_numbers: Vec<i32> = tracks.keys().map(|key| *key).collect();
-                        for track_number in track_numbers.iter() {
-                            if let Some(audio_block) = tracks.remove(&track_number) {
-                                self.audio_block_pool.push(audio_block);
-                            }
-                        }
-                        self.btree_map_pool.push(tracks);
+                        // always return the scratch block to the pool - a consumer that
+                        // had nothing to read must not drain the pool one block per cycle.
+                        self.audio_block_pool.push(audio_block);
                     }
                 }
             }
-            // debug!("btree_map_pool size: {}, block_number_buffer size: {}, audio_block_pool size: {}", self.btree_map_pool.len(), self.block_number_buffer.len(), self.audio_block_pool.len());
         }
 
         let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));

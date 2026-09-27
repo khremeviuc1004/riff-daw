@@ -5216,10 +5216,12 @@ win.connect_close_request(|window| {
                                     }
                                 }
 
+                                let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
+
                                 for (track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                     if track.uuid().to_string() == track_uuid {
                                         let mut track_number = track_number as i32;
-                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &mut track_number, &track);
+                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track);
                                         break;
                                     }
                                 }
@@ -6575,10 +6577,11 @@ win.connect_close_request(|window| {
                 debug!("Main - rx_ui processing loop - riff set track set riff: riff set={}, track={}, riff={}", riff_set_uuid.as_str(), track_uuid.as_str(), riff_uuid.as_str());
                 match state.lock() {
                     Ok(mut state) => {
-                        state.riff_set_riff_for_track(riff_set_uuid, track_uuid, riff_uuid);
+                        state.riff_set_riff_for_track(riff_set_uuid, track_uuid.clone(), riff_uuid);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff set track set riff - could not get lock on state"),
                 };
+                gui.repaint_riff_set_blades_for_track(track_uuid.as_str());
                 gui.ui.riff_sets_box.queue_draw();
             }
             DAWEvents::RiffSequencePlay(riff_sequence_uuid) => {

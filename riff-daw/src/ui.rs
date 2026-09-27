@@ -21,7 +21,8 @@ use uuid::Uuid;
 
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID, PLUGIN_PATHS_SEPARATOR};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, ScannedPlugin};
+use crate::domain::{AudioPluginType, DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, ScannedPlugin};
+use crate::audio_plugin_util::{clap_plugin_id, clap_plugin_id_from};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
 use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
@@ -65,8 +66,11 @@ pub struct Ui {
     pub dialogue_progress_bar: ProgressBar,
     pub riff_name_dialogue: Window,
     pub riff_name_entry: Entry,
+    pub riff_name_dialogue_ok_button: Button,
 
     pub configuration_dialogue: Window,
+    pub configuration_dialogue_ok_button: Button,
+    pub configuration_dialogue_cancel_button: Button,
     pub sample_rate_combobox: DropDown,
     pub block_size_combobox: DropDown,
     pub vst24_plugin_paths_entry: Entry,
@@ -744,7 +748,10 @@ gtk4_builder_from!(Ui {
     dialogue_progress_bar: ProgressBar,
     riff_name_dialogue: Window,
     riff_name_entry: Entry,
+    riff_name_dialogue_ok_button: Button,
     configuration_dialogue: Window,
+    configuration_dialogue_ok_button: Button,
+    configuration_dialogue_cancel_button: Button,
     sample_rate_combobox: DropDown,
     block_size_combobox: DropDown,
     vst24_plugin_paths_entry: Entry,
@@ -1316,6 +1323,117 @@ impl MainWindow {
         }
     }
 
+    /// Repaint every drawing area inside the riff set blade area whenever the
+    /// split view (or the window) changes the size of the blade viewports. The
+    /// blades and their drawing areas keep their fixed requested size, so when
+    /// the viewport grows they are never resized and GTK4 does not re-run their
+    /// draw funcs for the newly visible strip - that strip was never recorded
+    /// into the area's snapshot and would stay blank until the next scroll or
+    /// mouse motion happened to trigger a redraw (same effect that
+    /// `connect_scroll_repaint` works around for scrolling).
+    fn connect_resize_repaint(&self) {
+        fn collect_drawing_areas(widget: &Widget, areas: &mut Vec<DrawingArea>) {
+            if let Some(area) = widget.downcast_ref::<DrawingArea>() {
+                areas.push(area.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(current_child) = child {
+                collect_drawing_areas(&current_child, areas);
+                child = current_child.next_sibling();
+            }
+        }
+
+        fn repaint_drawing_areas(widget: &Widget) {
+            let mut areas = vec![];
+            collect_drawing_areas(widget, &mut areas);
+            for area in areas.iter() {
+                area.queue_draw();
+            }
+        }
+
+        let blade_bodies = self.ui.riff_sets_scrolled_window.clone();
+        let blade_heads = self.ui.riff_sets_view_port.clone();
+        let track_panels = self.ui.riff_sets_track_panel_scrolled_window.clone();
+        let repaint_all = move || {
+            repaint_drawing_areas(blade_bodies.upcast_ref());
+            repaint_drawing_areas(blade_heads.upcast_ref());
+            repaint_drawing_areas(track_panels.upcast_ref());
+        };
+
+        // dragging the split pane of the riff set view
+        if let Some(paned) = self.ui.riff_sets_box.ancestor(Paned::static_type()) {
+            if let Some(paned) = paned.downcast::<Paned>().ok() {
+                let paned_repaint = repaint_all.clone();
+                paned.connect_position_notify(move |_paned| {
+                    paned_repaint();
+                });
+            }
+        }
+
+        // any change to the size of the scroll viewports (window resize, pane
+        // moves elsewhere) shows up as an adjustment page size change
+        let horizontal_repaint = repaint_all.clone();
+        self.ui.riff_set_horizontal_adjustment.connect_changed(move |_adjustment| {
+            horizontal_repaint();
+        });
+        let vertical_repaint = repaint_all.clone();
+        self.ui.riff_set_vertical_adjustment.connect_changed(move |_adjustment| {
+            vertical_repaint();
+        });
+
+        // scrolling the blade bodies/heads/track panel changes only the
+        // adjustments' *value* - which emits value-changed, not changed - and
+        // GTK4 just translates the recorded snapshot of the huge drawing areas
+        // instead of re-running their draw funcs, so the newly visible strip of
+        // the blades has to be repainted explicitly (the statically built views
+        // get the same treatment in `connect_scroll_repaint`).
+        let horizontal_scroll_repaint = repaint_all.clone();
+        self.ui.riff_set_horizontal_adjustment.connect_value_changed(move |_adjustment| {
+            horizontal_scroll_repaint();
+        });
+        let vertical_scroll_repaint = repaint_all.clone();
+        self.ui.riff_set_vertical_adjustment.connect_value_changed(move |_adjustment| {
+            vertical_scroll_repaint();
+        });
+    }
+
+    /// Wire the action buttons of the dialogs that were converted from GTK3
+    /// `GtkDialog`s to plain `GtkWindow`s. A GTK3 dialog's action area buttons
+    /// carried response ids that completed `Dialog::run()`; after the port the
+    /// buttons are ordinary buttons with no response wiring, so clicking them
+    /// did nothing and the compat `run()` nested main loop blocked forever
+    /// (the middle-click "add riff" name dialogue was stuck: OK pressed, dialog
+    /// stayed, nothing added). Each button now responds with the same
+    /// `ResponseType` the stock GTK3 button implied.
+    pub fn setup_dialog_responses(&self) {
+        {
+            let dialogue = self.ui.riff_name_dialogue.clone();
+            self.ui.riff_name_dialogue_ok_button.connect_clicked(move |_| {
+                dialogue.respond(gtk4::ResponseType::Ok);
+            });
+        }
+        {
+            // the entry's "activate" (enter key) behaves like the old default
+            // action-area OK button
+            let dialogue = self.ui.riff_name_dialogue.clone();
+            self.ui.riff_name_entry.connect_activate(move |_| {
+                dialogue.respond(gtk4::ResponseType::Ok);
+            });
+        }
+        {
+            let dialogue = self.ui.configuration_dialogue.clone();
+            self.ui.configuration_dialogue_ok_button.connect_clicked(move |_| {
+                dialogue.respond(gtk4::ResponseType::Ok);
+            });
+        }
+        {
+            let dialogue = self.ui.configuration_dialogue.clone();
+            self.ui.configuration_dialogue_cancel_button.connect_clicked(move |_| {
+                dialogue.respond(gtk4::ResponseType::Cancel);
+            });
+        }
+    }
+
     fn populate_static_combos(&self) {
         {
             let items = [
@@ -1678,6 +1796,7 @@ impl MainWindow {
         };
 
         main_window.populate_static_combos();
+        main_window.setup_dialog_responses();
 
         main_window.setup_menus(tx_from_ui.clone(), state.clone());
         main_window.setup_main_tool_bar(tx_from_ui.clone());
@@ -1696,6 +1815,32 @@ impl MainWindow {
         main_window.setup_riff_arrangements_view(tx_from_ui.clone(), state.clone());
         main_window.setup_loops(tx_from_ui.clone(), state.clone());
         main_window.connect_scroll_repaint();
+        main_window.connect_resize_repaint();
+
+        // the riff set blade head strip sizes itself to the natural height of the
+        // heads now that its scrolled window propagates that height (see the
+        // propagate-natural-height on the strip in daw.ui), so no head is ever
+        // clipped vertically. mirror the same height onto the "new riff set" strip
+        // above the track detail panels in the left column so both columns start
+        // their track panels/blade rows at the same vertical position.
+        {
+            let heads_box = ui.riff_set_heads_box.clone();
+            let track_panels_scrolled_window = ui.riff_sets_track_panel_scrolled_window.clone();
+            let sync_heads_box = heads_box.clone();
+            let sync_strip_heights = move || {
+                let (_, natural_height, _, _) = sync_heads_box.measure(Orientation::Vertical, -1);
+                if let Some(new_riff_set_strip) = track_panels_scrolled_window.prev_sibling() {
+                    if natural_height > 0 {
+                        new_riff_set_strip.set_height_request(natural_height);
+                    }
+                }
+            };
+            sync_strip_heights();
+            let notify_sync_strip_heights = sync_strip_heights.clone();
+            heads_box.connect_notify_local(Some("children"), move |_heads_box, _param_spec| {
+                notify_sync_strip_heights();
+            });
+        }
         main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new());
         MainWindow::setup_riff_set_drag_and_drop(ui.riff_set_heads_box.clone(), ui.riff_sets_box.clone(), ui.riff_set_horizontal_adjustment.clone(), ui.riff_sets_view_port.clone(), RiffSetType::RiffSet, tx_from_ui.clone());
 
@@ -3977,6 +4122,15 @@ impl MainWindow {
 
         self.track_midi_routing_dialogues.insert(track_uuid.to_string(), track_midi_routing_dialogue.clone());
 
+        // the converted dialog is a plain window - its close button has no
+        // response-id wiring, so it has to complete the compat run() itself
+        {
+            let dialogue = track_midi_routing_dialogue.track_midi_routing_dialogue.clone();
+            track_midi_routing_dialogue.track_midi_routing_close_button.connect_clicked(move |_| {
+                dialogue.respond(gtk4::ResponseType::Close);
+            });
+        }
+
         track_midi_routing_dialogue
     }
 
@@ -4016,6 +4170,15 @@ impl MainWindow {
         }
 
         self.track_audio_routing_dialogues.insert(track_uuid.to_string(), track_audio_routing_dialogue.clone());
+
+        // the converted dialog is a plain window - its close button has no
+        // response-id wiring, so it has to complete the compat run() itself
+        {
+            let dialogue = track_audio_routing_dialogue.track_audio_routing_dialogue.clone();
+            track_audio_routing_dialogue.track_audio_routing_close_button.connect_clicked(move |_| {
+                dialogue.respond(gtk4::ResponseType::Close);
+            });
+        }
 
         track_audio_routing_dialogue
     }
@@ -8316,6 +8479,9 @@ impl MainWindow {
                         }
                     }
 
+                    // create the head exactly as the file load path does (see
+                    // update_riff_sets) - no margin/height overrides and all of the
+                    // head's buttons (including delete and drag) left visible.
                     let (riff_set_blade_head, _riff_set_blade, _) = MainWindow::add_riff_set_blade(
                         tx_from_ui.clone(),
                         riff_sets_box.clone(),
@@ -8330,11 +8496,6 @@ impl MainWindow {
                         "".to_string(),
                         None,
                     );
-
-                    riff_set_blade_head.riff_set_blade.set_margin_top(20);
-                    riff_set_blade_head.riff_set_blade.set_height_request(100);
-                    riff_set_blade_head.riff_set_blade_delete.set_visible(false);
-                    riff_set_blade_head.riff_set_drag_btn.set_visible(false);
 
                     // move the new blade to the right position if there is a selection
                     let mut selected_child_position = None;
@@ -8447,6 +8608,10 @@ impl MainWindow {
                 // strip lines up with the blades below it.
                 child.set_width_request(69 + 15 + 6);
             }
+            // the head itself is pinned to exactly the blade row width - without
+            // this the head frame could stretch to the width of the 3000px wide
+            // head box and end up wider than its blade.
+            riff_set_blade_head.riff_set_blade.set_width_request(69 + 15 + 6);
             riff_set_heads_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);
             riff_sets_box.pack_start(&riff_set_box, false, false, 2);
         }
@@ -10541,6 +10706,10 @@ impl MainWindow {
             }
         }
 
+        // taken before the song borrow below - used to resolve the scanned plugin key of
+        // each instrument track's current instrument in the track details dialogues.
+        let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
+
         let project = state.get_project();
         let song = project.song_mut();
         let mut track_number = 0;
@@ -10603,7 +10772,7 @@ impl MainWindow {
                     );
                 }
             }
-            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &mut track_number, &track);
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track);
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -10988,6 +11157,7 @@ impl MainWindow {
         midi_input_devices: &Vec<String>,
         instrument_plugins: &mut IndexMap<String, String>,
         effects_plugins: &mut IndexMap<String, String>,
+        scanned_instrument_plugins: &HashMap<String, ScannedPlugin>,
         track_number: &mut i32,
         track: &&mut TrackType
     ) {
@@ -11030,13 +11200,39 @@ impl MainWindow {
                     TrackType::InstrumentTrack(track) => {
                         // select the instrument
                         let track_instrument_choice = track_details_dialogue.track_instrument_choice.clone();
-                        let mut instrument_id = track.instrument().file().to_string();
-                        instrument_id.push(':');
-                        if let Some(sub_plugin_id) = track.instrument().sub_plugin_id() {
-                            instrument_id.push_str(sub_plugin_id.as_str());
-                        }
-                        instrument_id.push(':');
-                        instrument_id.push_str(track.instrument().plugin_type());
+                        let instrument = track.instrument();
+                        // the instrument combo entries are keyed by the scanned plugin map key (e.g.
+                        // "Hive (VST24)") while the track only stores the plugin's details (library
+                        // file, shell plugin id, plugin type), so find the key of the scanned plugin
+                        // the track's instrument was loaded from.
+                        let mut instrument_id = scanned_instrument_plugins
+                            .iter()
+                            .find(|(_key, scanned_plugin)| {
+                                scanned_plugin.path == instrument.file()
+                                    && scanned_plugin.audio_plugin_stack.to_string() == instrument.plugin_type()
+                                    // the id of a plugin lives in different fields depending on the
+                                    // format: VST2 keeps the shell id in the sub id, CLAP keeps the
+                                    // factory id in the id when scanned but persisted tracks may hold
+                                    // it in the sub plugin id (with a placeholder uid), and VST3 uses
+                                    // the id field, so compare the ids the way the loader resolves them.
+                                    && match scanned_plugin.audio_plugin_stack {
+                                        AudioPluginType::VST24 => &scanned_plugin.sub_id == instrument.sub_plugin_id(),
+                                        AudioPluginType::CLAP => clap_plugin_id(scanned_plugin) == clap_plugin_id_from(instrument.uid(), instrument.sub_plugin_id()),
+                                        AudioPluginType::VST3 => scanned_plugin.id == instrument.uid(),
+                                    }
+                            })
+                            .map(|(key, _scanned_plugin)| key.clone())
+                            .unwrap_or_else(|| {
+                                // fall back to the file[:shell plugin id]:plugin type identifier
+                                let mut legacy_instrument_id = instrument.file().to_string();
+                                legacy_instrument_id.push(':');
+                                if let Some(sub_plugin_id) = instrument.sub_plugin_id() {
+                                    legacy_instrument_id.push_str(sub_plugin_id.as_str());
+                                }
+                                legacy_instrument_id.push(':');
+                                legacy_instrument_id.push_str(instrument.plugin_type());
+                                legacy_instrument_id
+                            });
 
                         // re-populate the track instrument choice
                         track_instrument_choice.remove_all();
@@ -11051,10 +11247,11 @@ impl MainWindow {
                         }
 
                         // set the active element without generating an event
-                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") || instrument_id.ends_with(".vst3") || instrument_id.contains(".vst3:") {
+                        if instrument_id.ends_with(".so") || instrument_id.contains(".so:") || instrument_id.ends_with(".clap") || instrument_id.contains(".clap:") || instrument_id.ends_with(".vst3") || instrument_id.contains(".vst3:") || scanned_instrument_plugins.contains_key(instrument_id.as_str()) {
                             if let Some(signal_handler_id) = self.track_details_dialogue_track_instrument_choice_signal_handlers.get(&track_uuid) {
                                 track_instrument_choice.block_signal(signal_handler_id);
 
+                                instrument_id = instrument_id.replace(char::from(0), "");
                                 if !track_instrument_choice.set_active_id(Some(instrument_id.as_str())) {
                                     debug!("failed to set the active id for: track={}, instrument={} taking the shell plugin id off and trying again", track_number, instrument_id.as_str());
                                     let adjusted_instrument_id = instrument_id.replace(char::from(0), "");
@@ -11678,6 +11875,26 @@ impl MainWindow {
             }
         }
    }
+
+    /// Queue a redraw of every riff set blade drawing area that belongs to a
+    /// track. Middle-clicking a blade links the track's riff reference to the
+    /// new riff while the add-riff dialogue is open (the dialogue's nested
+    /// main loop processes the set-riff event), so once the riff itself has
+    /// been created the reference cells have to be invalidated explicitly -
+    /// GTK4 replays the cached snapshot for a drawing area that was not queued
+    /// itself (queueing an ancestor is not enough).
+    pub fn repaint_riff_set_blades_for_track(&self, track_uuid: &str) {
+        let track_suffix = format!("_{}", track_uuid);
+        for riff_set_drawing_areas_box in self.ui.riff_sets_box.children().iter() {
+            if let Some(riff_set_box) = riff_set_drawing_areas_box.downcast_ref::<Box>() {
+                for drawing_area in riff_set_box.children().iter() {
+                    if drawing_area.widget_name().ends_with(track_suffix.as_str()) {
+                        drawing_area.queue_draw();
+                    }
+                }
+            }
+        }
+    }
 
     pub fn repaint_riff_sequence_view_riff_sequence_active_drawing_areas(&self, riff_sequence_uuid: &str, play_position_in_beats: f64, playing_riff_sequence_summary_data: &(f64, Vec<(f64, String, String)>)) {
         // get the playing riff sequence details
@@ -12526,3 +12743,110 @@ mod track_details_dialogue_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod riff_sequence_blade_combobox_tests {
+    use super::*;
+    use crate::domain::RiffSet;
+
+    fn state_with_riff_sets(count: usize) -> Arc<Mutex<DAWState>> {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let state_arc = Arc::new(Mutex::new(DAWState::new(tx)));
+        {
+            let mut state = state_arc.lock().unwrap();
+            let song = state.get_project().song_mut();
+            for index in 0..count {
+                let mut riff_set = RiffSet::new();
+                riff_set.set_name(format!("Riff Set {}", index + 1));
+                song.add_riff_set(riff_set);
+            }
+        }
+        state_arc
+    }
+
+    #[gtk4::test]
+    fn blade_created_for_new_sequence_contains_all_riff_sets() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let state_arc = state_with_riff_sets(3);
+        let riff_sequences_box = Box::new(Orientation::Vertical, 0);
+        let blade = MainWindow::add_riff_sequence_blade(
+            riff_sequences_box.clone(),
+            tx.clone(),
+            state_arc.clone(),
+            None,
+            None,
+            None,
+            true,
+            RiffSequenceType::RiffSequence,
+            CssProvider::new(),
+            None,
+        );
+        assert_eq!(blade.riff_set_combobox.len(), 3);
+    }
+
+    // mirrors the traversal in MainWindow::update_available_items_in_blade_combobox
+    fn refresh_blade_combobox(blade: &Frame, items: &[(String, String)], combo_box_widget_name: &str) {
+        if let Some(blade_child) = blade.child() {
+            if let Some(blade_box) = blade_child.dynamic_cast_ref::<Box>() {
+                if let Some(blade_box_child) = blade_box.children().get(0) {
+                    if let Some(blade_top_scrolled_window) = blade_box_child.dynamic_cast_ref::<ScrolledWindow>() {
+                        if let Some(view_port_widget) = blade_top_scrolled_window.child() {
+                            if let Some(view_port) = view_port_widget.dynamic_cast_ref::<Viewport>() {
+                                if let Some(grid_widget) = view_port.child() {
+                                    if let Some(grid) = grid_widget.dynamic_cast_ref::<Grid>() {
+                                        for child in grid.children().iter() {
+                                            if child.widget_name() == combo_box_widget_name {
+                                                if let Some(item_combobox) = child.dynamic_cast_ref::<DropDown>() {
+                                                    item_combobox.remove_all();
+                                                    for (index, (uuid, name)) in items.iter().enumerate() {
+                                                        item_combobox.append(Some(uuid), format!("{}. {}", index + 1, name).as_str());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[gtk4::test]
+    fn blade_refresh_with_all_riff_sets_keeps_all_items() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let state_arc = state_with_riff_sets(3);
+        let riff_sequences_box = Box::new(Orientation::Vertical, 0);
+        let blade = MainWindow::add_riff_sequence_blade(
+            riff_sequences_box.clone(),
+            tx.clone(),
+            state_arc.clone(),
+            None,
+            None,
+            None,
+            true,
+            RiffSequenceType::RiffSequence,
+            CssProvider::new(),
+            None,
+        );
+
+        let items: Vec<(String, String)> = {
+            let state = state_arc.lock().unwrap();
+            state
+                .project()
+                .song()
+                .riff_sets()
+                .iter()
+                .map(|riff_set| (riff_set.uuid(), riff_set.name().to_string()))
+                .collect()
+        };
+
+        refresh_blade_combobox(&blade.riff_sequence_blade, &items, "riff_seq_riff_set_combo");
+        assert_eq!(blade.riff_set_combobox.len(), 3);
+    }
+}
+
+
+

@@ -2334,6 +2334,27 @@ impl DAWState {
         let (jack_client, _status) =
             Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
         let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
+
+        // the jack server is not obliged to honour the requested buffer size (the
+        // driver constrains it) and the sample rate is server wide - reconcile the
+        // configuration with the parameters the server actually granted *before*
+        // anything is built on top of them. if the track producers emit fewer
+        // frames per block than the jack callback consumes (e.g. a configured
+        // 1024 against a server running at 2048) the playback comes out at the
+        // wrong tempo with stale repeated frames - crackly, robotic audio.
+        let actual_sample_rate = jack_client.sample_rate() as i32;
+        let actual_block_size = jack_client.buffer_size() as i32;
+        if actual_sample_rate != self.configuration.audio.sample_rate
+            || actual_block_size != self.configuration.audio.block_size {
+            debug!(
+                "Jack granted sample rate={} and buffer size={} - configured were sample rate={} block size={} - reconfiguring to match.",
+                actual_sample_rate, actual_block_size, self.configuration.audio.sample_rate, self.configuration.audio.block_size
+            );
+            self.configuration.audio.sample_rate = actual_sample_rate;
+            self.configuration.audio.block_size = actual_block_size;
+            self.apply_actual_audio_configuration(vst_host_time_info.clone());
+        }
+
         let audio = Audio::new(
             &jack_client,
             rx_to_audio,
@@ -2403,6 +2424,20 @@ impl DAWState {
                     let (jack_client, _status) =
                         Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
                     let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
+                    // same reconciliation as in start_jack - the server may grant a
+                    // different buffer size than the one requested.
+                    let actual_sample_rate = jack_client.sample_rate() as i32;
+                    let actual_block_size = jack_client.buffer_size() as i32;
+                    let audio_configuration_adjusted = actual_sample_rate != self.configuration.audio.sample_rate
+                        || actual_block_size != self.configuration.audio.block_size;
+                    if audio_configuration_adjusted {
+                        debug!(
+                            "Jack restart granted sample rate={} and buffer size={} - configured were sample rate={} block size={} - reconfiguring to match.",
+                            actual_sample_rate, actual_block_size, self.configuration.audio.sample_rate, self.configuration.audio.block_size
+                        );
+                        self.configuration.audio.sample_rate = actual_sample_rate;
+                        self.configuration.audio.block_size = actual_block_size;
+                    }
                     for midi_consumer in midi_consumers.iter_mut() {
                         match jack_client.register_port(midi_consumer.track_uuid().as_str(), MidiOut::default()) {
                             Ok(midi_out_port) => midi_consumer.set_midi_out_port(Some(midi_out_port)),
@@ -2418,7 +2453,7 @@ impl DAWState {
                         coast,
                         consumers,
                         midi_consumers,
-                        vst_host_time_info,
+                        vst_host_time_info.clone(),
                         self.configuration.audio.sample_rate,
                         self.configuration.audio.block_size,
                         self.project().song().tempo(),
@@ -2429,6 +2464,9 @@ impl DAWState {
                         let _ = jack_async_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());
                     }
                     self.set_jack_client(jack_async_client);
+                    if audio_configuration_adjusted {
+                        self.apply_actual_audio_configuration(vst_host_time_info);
+                    }
                 }
                 Err(_) => {
                     self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
@@ -2437,6 +2475,27 @@ impl DAWState {
         }
         else {
             self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
+        }
+    }
+
+    /// Push the actual (server granted) sample rate and block size - which must
+    /// already have been stored into the configuration - into every part of the
+    /// audio engine that paces itself by them: the global transport, the vst host
+    /// time info and all running track background processors (which reconfigure
+    /// their plugins through the AudioConfigurationChange event).
+    fn apply_actual_audio_configuration(&self, vst_host_time_info: Arc<RwLock<TimeInfo>>) {
+        let actual_sample_rate = self.configuration.audio.sample_rate as f64;
+        let actual_block_size = self.configuration.audio.block_size as f64;
+
+        let transport = TRANSPORT.get();
+        transport.write().sample_rate = actual_sample_rate;
+        transport.write().block_size = actual_block_size;
+
+        vst_host_time_info.write().sample_rate = actual_sample_rate;
+
+        let track_uuids: Vec<String> = self.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+        for track_uuid in track_uuids.iter() {
+            self.send_to_track_background_processor(track_uuid.to_string(), TrackBackgroundProcessorInwardEvent::AudioConfigurationChange(actual_sample_rate, actual_block_size as i64));
         }
     }
 

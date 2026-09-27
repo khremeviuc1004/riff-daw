@@ -31,7 +31,7 @@ pub fn create_vst24_audio_plugin(
     tempo: f64,
     time_signature_numerator: i32,
     time_signature_denominator: i32,
-) -> (Arc<Mutex<VstHost>>, PluginInstance) {
+) -> Result<(Arc<Mutex<VstHost>>, PluginInstance), String> {
     let mut path_buf = PathBuf::new();
     let mut path = Path::new(library_path);
     let host = Arc::new(Mutex::new(VstHost::new(
@@ -84,17 +84,35 @@ pub fn create_vst24_audio_plugin(
                         loaders.get_mut(&plugin_identifier)
                     },
                     Err(error) => {
-                        debug!("{:?}", error);
-                        panic!()
+                        // A load failure must not kill the track background thread - the
+                        // thread keeps running (and keeps feeding the jack layer silent
+                        // blocks) and the caller reports the plugin as not loaded.
+                        let message = format!("Could not load audio plugin '{}': {:?}", path.to_string_lossy(), error);
+                        debug!("{}", message);
+                        return Err(message);
                     }
                 };
                 plugin_loader
             };
-            let vst_loader = plugin_loader.unwrap();
+            let vst_loader = match plugin_loader {
+                Some(loader) => loader,
+                None => {
+                    let message = format!("Audio plugin loader for '{}' is missing.", path.to_string_lossy());
+                    debug!("{}", message);
+                    return Err(message);
+                }
+            };
             // Bind this instance to its own host so that callbacks (automation, editor
             // requests, time info) are routed to the correct track instead of the host of
             // whichever track loaded the library first.
-            let mut instance = vst_loader.instance_with_host(host.clone()).unwrap();
+            let mut instance = match vst_loader.instance_with_host(host.clone()) {
+                Ok(instance) => instance,
+                Err(error) => {
+                    let message = format!("Could not create an instance of audio plugin '{}': {:?}", path.to_string_lossy(), error);
+                    debug!("{}", message);
+                    return Err(message);
+                }
+            };
             let info = instance.get_info();
 
             debug!(
@@ -217,11 +235,12 @@ pub fn create_vst24_audio_plugin(
             instance.resume();
             instance.start_process();
 
-            (host, instance)
+            Ok((host, instance))
         },
         Err(error) => {
-            debug!("Couldn't lock vst24_plugin_loaders: path={} error={:?}", path.to_str().unwrap(), error);
-            panic!()
+            let message = format!("Couldn't lock vst24_plugin_loaders: path={} error={:?}", path.to_string_lossy(), error);
+            debug!("{}", message);
+            Err(message)
         },
     }
  }
@@ -263,15 +282,24 @@ pub fn create_vst3_audio_plugin(
  ///
  /// The clap scanner records the CLAP plugin id (e.g. `com.u-he.Hive`) in the `id` field and
  /// leaves `sub_id` empty, while older persisted tracks can have the id in either field (the
- /// `id`/uid field may hold `Unknown` or a numeric VST id with the CLAP id in `sub_id`).
+ /// `id`/uid field may hold `unknown`/`Unknown` or a numeric VST id with the CLAP id in
+ /// `sub_id`). When the uid is a placeholder such as `unknown` and the sub plugin id is
+ /// present and non-empty, use the sub plugin id.
  /// Prefer a usable `id` and fall back to `sub_id`.
  pub fn clap_plugin_id(scanned_plugin: &ScannedPlugin) -> Option<String> {
-     let usable = |id: &str| !id.is_empty() && id != "Unknown";
-     if usable(scanned_plugin.id.as_str()) {
-         Some(scanned_plugin.id.clone())
+     clap_plugin_id_from(scanned_plugin.id.as_str(), &scanned_plugin.sub_id)
+ }
+
+ /// Resolve the CLAP factory id from the raw plugin identifiers - the `id`/uid field holding
+ /// a placeholder (`unknown`/`Unknown`) or being empty means the CLAP id lives in the sub
+ /// plugin id (as persisted on older tracks from the VST2 era).
+ pub fn clap_plugin_id_from(id: &str, sub_id: &Option<String>) -> Option<String> {
+     let usable = |id: &str| !id.is_empty() && !id.eq_ignore_ascii_case("unknown");
+     if usable(id) {
+         Some(id.to_string())
      }
-     else if let Some(sub_id) = scanned_plugin.sub_id.as_ref() {
-         if usable(sub_id.as_str()) {
+     else if let Some(sub_id) = sub_id {
+         if !sub_id.is_empty() {
              return Some(sub_id.clone());
          }
          None
@@ -294,7 +322,7 @@ pub fn create_vst3_audio_plugin(
     tempo: f64,
     time_signature_numerator: i32,
     time_signature_denominator: i32,
- ) -> (simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>) {
+ ) -> Result<(simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>), String> {
     let path = Path::new(audio_plugin_path);
 
     debug!("Loading {}...", path.to_str().unwrap());
@@ -314,11 +342,18 @@ pub fn create_vst3_audio_plugin(
                             libraries.get_mut(&plugin_identifier)
                         },
                         Err(error) => {
-                            debug!("{:?}", error);
-                            panic!()
+                            // never panic on the track background thread - a plugin that
+                            // cannot be loaded must not take the track (and via the jack
+                            // consumer, the whole master mix) down with it.
+                            let message = format!("Could not load CLAP plugin '{}': {:?}", audio_plugin_path, error);
+                            debug!("{}", message);
+                            return Err(message);
                         }
                     };
-                    plugin_library.unwrap()
+                    match plugin_library {
+                        Some(library) => library,
+                        None => return Err(format!("CLAP plugin library for '{}' is missing.", audio_plugin_path)),
+                    }
                 };
     
                 let (host_sender, host_receiver) = crossbeam_channel::unbounded();
@@ -327,8 +362,9 @@ pub fn create_vst3_audio_plugin(
                 let plugin = match plugin_library.create_plugin(clap_plugin_id.as_str(), host) {
                     Ok(plugin) => plugin,
                     Err(error) => {
-                        debug!("Couldn't create the CLAP plugin '{}' from '{}': {:?}", clap_plugin_id.as_str(), audio_plugin_path, error);
-                        panic!("Couldn't create the plugin '{}' from '{}'.", clap_plugin_id, audio_plugin_path);
+                        let message = format!("Couldn't create the CLAP plugin '{}' from '{}': {:?}", clap_plugin_id.as_str(), audio_plugin_path, error);
+                        debug!("{}", message);
+                        return Err(message);
                     }
                 };
             
@@ -340,10 +376,10 @@ pub fn create_vst3_audio_plugin(
                         config
                     }
                     else {
-                        panic!("Error while querying 'audio-ports' IO configuration");
+                        return Err("Error while querying 'audio-ports' IO configuration".to_string());
                     }
                     None => {
-                        panic!("No 'audio-ports' found");
+                        return Err("No 'audio-ports' found".to_string());
                     }
                 };
             
@@ -364,7 +400,7 @@ pub fn create_vst3_audio_plugin(
                     AudioBuffers::OutOfPlace(buffers)
                 }
                 else {
-                    panic!("Couldn't allocate audio buffers.");
+                    return Err("Couldn't allocate audio buffers.".to_string());
                 };
             
                 let _ = plugin.activate(sample_rate, 1, block_size as usize);
@@ -372,13 +408,13 @@ pub fn create_vst3_audio_plugin(
             
                 let process_data = ProcessData::new(audio_buffers, process_config);
             
-                return (plugin, process_data, host_receiver);
+                return Ok((plugin, process_data, host_receiver));
             }
             else {
-                panic!("No clap plugin id provided.");
+                Err(format!("No clap plugin id provided for '{}'.", audio_plugin_path))
             }
         }
-        Err(error) => panic!("Could not log clap_plugin_loaders: {}", error),
+        Err(error) => Err(format!("Could not lock clap_plugin_loaders: {}", error)),
     }
 }
 
@@ -562,12 +598,29 @@ mod tests {
     fn clap_id_falls_back_to_sub_id() {
         // older persisted tracks: uid may be empty/Unknown with the CLAP id in sub_id
         assert_eq!(clap_plugin_id(&scanned("Unknown", Some("com.u-he.ACE"))).as_deref(), Some("com.u-he.ACE"));
+        assert_eq!(clap_plugin_id(&scanned("unknown", Some("com.u-he.ACE"))).as_deref(), Some("com.u-he.ACE"));
         assert_eq!(clap_plugin_id(&scanned("", Some("com.u-he.ACE"))).as_deref(), Some("com.u-he.ACE"));
     }
 
     #[test]
     fn clap_id_none_when_nothing_usable() {
+        assert_eq!(clap_plugin_id(&scanned("unknown", Some(""))), None);
         assert_eq!(clap_plugin_id(&scanned("Unknown", Some(""))), None);
         assert_eq!(clap_plugin_id(&scanned("", None)), None);
+    }
+
+    #[test]
+    fn clap_id_from_matches_persisted_track_vs_scanned_plugin() {
+        // scanned CLAP plugins keep the factory id in `id` with no sub id, persisted
+        // tracks can have the factory id in `sub_plugin_id` with a placeholder uid -
+        // both must resolve to the same id so the ui/loader can match them up.
+        assert_eq!(
+            clap_plugin_id_from("Unknown", &Some("com.u-he.Hive".to_string())),
+            clap_plugin_id(&scanned("com.u-he.Hive", None))
+        );
+        assert_eq!(
+            clap_plugin_id_from("com.u-he.Hive", &None),
+            clap_plugin_id(&scanned("com.u-he.Hive", None))
+        );
     }
 }

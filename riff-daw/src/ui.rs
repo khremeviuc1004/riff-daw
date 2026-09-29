@@ -9095,10 +9095,14 @@ impl MainWindow {
                 if riff_grid_name_entry.text().len() > 0 {
                     let uuid = Uuid::new_v4();
                     let name = riff_grid_name_entry.text().to_string();
+                    // add the grid to the song before selecting it in the combo -
+                    // selecting it fires RiffGridSelected and that handler looks the
+                    // grid up in the song to populate the blade name field, so the
+                    // grid must exist by the time it is processed.
+                    let _ = tx_from_ui.send(DAWEvents::RiffGridAdd(uuid.to_string(), name.clone()));
                     grid_combobox.append(Some(uuid.to_string().as_str()), name.as_str());
                     grid_combobox.set_active_id(Some(uuid.to_string().as_str()));
                     riff_grid_name_entry.set_text("");
-                    let _ = tx_from_ui.send(DAWEvents::RiffGridAdd(uuid.to_string(), name));
                 }
                 else {
                     crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a grid name.", &["Close"]);

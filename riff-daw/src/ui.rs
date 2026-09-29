@@ -61,7 +61,6 @@ pub struct Ui {
     pub show_sub_panel_toggle_btn: ToggleButton,
     pub centre_split_pane: Paned,
     pub centre_panel_stack: Stack,
-    pub main_toolbar: Box,
 
     pub progress_dialogue: Window,
     pub dialogue_progress_bar: ProgressBar,
@@ -208,7 +207,6 @@ pub struct Ui {
     pub riff_grid_copy: Button,
     pub riff_grid_delete: Button,
     pub riff_grid_copy_to_track_view_btn: Button,
-    pub riff_grid_toolbar_box: Box,
     pub riff_grid_riff_set_combobox: DropDown,
     pub add_riff_grid_riff_set_btn: Button,
     pub riff_grid_riff_seq_combobox: DropDown,
@@ -752,7 +750,6 @@ gtk4_builder_from!(Ui {
     show_sub_panel_toggle_btn: ToggleButton,
     centre_split_pane: Paned,
     centre_panel_stack: Stack,
-    main_toolbar: Box,
     progress_dialogue: Window,
     dialogue_progress_bar: ProgressBar,
     riff_name_dialogue: Window,
@@ -869,7 +866,6 @@ gtk4_builder_from!(Ui {
     riff_grid_copy: Button,
     riff_grid_delete: Button,
     riff_grid_copy_to_track_view_btn: Button,
-    riff_grid_toolbar_box: Box,
     riff_grid_riff_set_combobox: DropDown,
     add_riff_grid_riff_set_btn: Button,
     riff_grid_riff_seq_combobox: DropDown,
@@ -1644,19 +1640,6 @@ impl MainWindow {
         // progress dialogue (shown via set_visible, not run()) centred too.
         crate::gtk4_compat::set_main_window(&wnd_main);
         crate::gtk4_compat::centre_dialog_on_parent(&ui.progress_dialogue, &wnd_main);
-
-        // keep the riff grid tool bar the same height as the main tool bar -
-        // GTK4 has no way to tie two widgets' heights together declaratively,
-        // so mirror the main tool bar's allocated height onto the tool bar.
-        {
-            let riff_grid_toolbar = ui.riff_grid_toolbar_box.clone();
-            ui.main_toolbar.connect_notify_local(Some("height"), move |tool_bar, _| {
-                let height = tool_bar.height();
-                if height > 0 {
-                    riff_grid_toolbar.set_size_request(-1, height);
-                }
-            });
-        }
 
         // GTK4 requires windows to be associated with an application only after
         // the application's startup signal has been emitted (i.e. during run()).

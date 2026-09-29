@@ -209,7 +209,7 @@ struct PluginXDisplay(*mut XDisplay);
 unsafe impl Send for PluginXDisplay {}
 unsafe impl Sync for PluginXDisplay {}
 
-fn x_display() -> *mut XDisplay {
+pub(crate) fn x_display() -> *mut XDisplay {
     static DISPLAY: OnceLock<PluginXDisplay> = OnceLock::new();
     DISPLAY.get_or_init(|| unsafe {
         // chain over whatever handler is installed (Xlib's aborts, GDK's logs): operations on

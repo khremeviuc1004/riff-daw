@@ -7997,6 +7997,52 @@ win.connect_close_request(|window| {
 
                 DAWUtils::copy_riff_sequence_to_position(uuid, edit_cursor_position_in_beats, state.clone());
             }
+            DAWEvents::RiffSetCopySelectedToRiffGridCursorPosition(uuid) => {
+                // get the current riff grid edit cursor position and convert it to beats
+                let edit_cursor_position_in_beats = match &gui.riff_grid {
+                    Some(riff_grid) => match riff_grid.lock() {
+                        Ok(grid) => grid.edit_cursor_time_in_beats(),
+                        Err(_) => 0.0
+                    },
+                    None => 0.0
+                };
+
+                let selected_riff_grid_uuid = match state.lock() {
+                    Ok(state) => state.selected_riff_grid_uuid().clone(),
+                    Err(_) => {
+                        debug!("Main - rx_ui processing loop - riff set copy to riff grid - could not get lock on state");
+                        None
+                    },
+                };
+
+                if let Some(selected_riff_grid_uuid) = selected_riff_grid_uuid {
+                    DAWUtils::copy_riff_set_to_riff_grid_position(uuid, selected_riff_grid_uuid, edit_cursor_position_in_beats, state.clone());
+                    gui.ui.riff_grid_drawing_area.queue_draw();
+                }
+            }
+            DAWEvents::RiffSequenceCopySelectedToRiffGridCursorPosition(uuid) => {
+                // get the current riff grid edit cursor position and convert it to beats
+                let edit_cursor_position_in_beats = match &gui.riff_grid {
+                    Some(riff_grid) => match riff_grid.lock() {
+                        Ok(grid) => grid.edit_cursor_time_in_beats(),
+                        Err(_) => 0.0
+                    },
+                    None => 0.0
+                };
+
+                let selected_riff_grid_uuid = match state.lock() {
+                    Ok(state) => state.selected_riff_grid_uuid().clone(),
+                    Err(_) => {
+                        debug!("Main - rx_ui processing loop - riff sequence copy to riff grid - could not get lock on state");
+                        None
+                    },
+                };
+
+                if let Some(selected_riff_grid_uuid) = selected_riff_grid_uuid {
+                    DAWUtils::copy_riff_sequence_to_riff_grid_position(uuid, selected_riff_grid_uuid, edit_cursor_position_in_beats, state.clone());
+                    gui.ui.riff_grid_drawing_area.queue_draw();
+                }
+            }
             DAWEvents::RiffSequenceRiffSetSelect(riff_sequence_uuid, riff_set_reference_uuid, selected) => {
                 debug!("Main - rx_ui processing loop - riff sequence={} riff set reference selected uuid={}, selected={}", riff_sequence_uuid.as_str(), riff_set_reference_uuid.as_str(), selected);
                 match state.lock() {

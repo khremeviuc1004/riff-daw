@@ -61,6 +61,7 @@ pub struct Ui {
     pub show_sub_panel_toggle_btn: ToggleButton,
     pub centre_split_pane: Paned,
     pub centre_panel_stack: Stack,
+    pub main_toolbar: Box,
 
     pub progress_dialogue: Window,
     pub dialogue_progress_bar: ProgressBar,
@@ -207,6 +208,7 @@ pub struct Ui {
     pub riff_grid_copy: Button,
     pub riff_grid_delete: Button,
     pub riff_grid_copy_to_track_view_btn: Button,
+    pub riff_grid_toolbar_box: Box,
     pub riff_grid_riff_set_combobox: DropDown,
     pub add_riff_grid_riff_set_btn: Button,
     pub riff_grid_riff_seq_combobox: DropDown,
@@ -750,6 +752,7 @@ gtk4_builder_from!(Ui {
     show_sub_panel_toggle_btn: ToggleButton,
     centre_split_pane: Paned,
     centre_panel_stack: Stack,
+    main_toolbar: Box,
     progress_dialogue: Window,
     dialogue_progress_bar: ProgressBar,
     riff_name_dialogue: Window,
@@ -866,6 +869,7 @@ gtk4_builder_from!(Ui {
     riff_grid_copy: Button,
     riff_grid_delete: Button,
     riff_grid_copy_to_track_view_btn: Button,
+    riff_grid_toolbar_box: Box,
     riff_grid_riff_set_combobox: DropDown,
     add_riff_grid_riff_set_btn: Button,
     riff_grid_riff_seq_combobox: DropDown,
@@ -1634,6 +1638,25 @@ impl MainWindow {
 
         let wnd_main: ApplicationWindow = ui.wnd_main.clone();
         wnd_main.maximize();
+
+        // remember the main window so dialogs opened without a window
+        // reference can be parented to - and centred over - it, and keep the
+        // progress dialogue (shown via set_visible, not run()) centred too.
+        crate::gtk4_compat::set_main_window(&wnd_main);
+        crate::gtk4_compat::centre_dialog_on_parent(&ui.progress_dialogue, &wnd_main);
+
+        // keep the riff grid tool bar the same height as the main tool bar -
+        // GTK4 has no way to tie two widgets' heights together declaratively,
+        // so mirror the main tool bar's allocated height onto the tool bar.
+        {
+            let riff_grid_toolbar = ui.riff_grid_toolbar_box.clone();
+            ui.main_toolbar.connect_notify_local(Some("height"), move |tool_bar, _| {
+                let height = tool_bar.height();
+                if height > 0 {
+                    riff_grid_toolbar.set_size_request(-1, height);
+                }
+            });
+        }
 
         // GTK4 requires windows to be associated with an application only after
         // the application's startup signal has been emitted (i.e. during run()).
@@ -3388,6 +3411,10 @@ impl MainWindow {
 
         let track_details_dialogue: TrackDetailsDialogue = TrackDetailsDialogue::from_string(track_details_dialogue_glade_src).unwrap();
         Self::populate_track_details_combos(&track_details_dialogue);
+
+        // the track details dialogue is shown via set_visible(), so centre it
+        // on the main window here rather than from run().
+        crate::gtk4_compat::centre_dialog_on_parent(&track_details_dialogue.track_details_dialogue, &self.ui.wnd_main);
 
         {
             // GTK4's GtkDropDown has no embedded entry, so the riff chooser
@@ -6118,6 +6145,28 @@ impl MainWindow {
                     if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
                         let _ = tx_from_ui.send(DAWEvents::RiffGridCopySelectedToTrackViewCursorPosition(selected_riff_grid_uuid.clone()));
                     }
+                }
+            });
+        }
+
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let riff_grid_riff_set_combobox = self.ui.riff_grid_riff_set_combobox.clone();
+            self.ui.add_riff_grid_riff_set_btn.connect_clicked(move |_| {
+                if let Some(riff_set_uuid) = riff_grid_riff_set_combobox.active_id() {
+                    let _ = tx_from_ui.send(DAWEvents::RiffSetCopySelectedToRiffGridCursorPosition(riff_set_uuid.to_string()));
+                }
+            });
+        }
+
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let riff_grid_riff_seq_combobox = self.ui.riff_grid_riff_seq_combobox.clone();
+            self.ui.add_riff_grid_riff_seq_btn.connect_clicked(move |_| {
+                if let Some(riff_sequence_uuid) = riff_grid_riff_seq_combobox.active_id() {
+                    let _ = tx_from_ui.send(DAWEvents::RiffSequenceCopySelectedToRiffGridCursorPosition(riff_sequence_uuid.to_string()));
                 }
             });
         }

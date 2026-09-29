@@ -382,6 +382,19 @@ pub trait GtkDialogRunCompat: gtk4::prelude::IsA<gtk4::Window> + gtk4::prelude::
         });
 
         self.set_modal(true);
+
+        // GTK3 positioned dialogs centred on their parent; GTK4 does not, so
+        // place (and keep centred on) the transient parent - defaulting to
+        // the application's main window when the dialog has no parent yet.
+        match self.transient_for() {
+            Some(parent) => centre_dialog_on_parent(self, &parent),
+            None => {
+                if let Some(parent) = main_window() {
+                    centre_dialog_on_parent(self, &parent);
+                }
+            }
+        }
+
         self.present();
         state.main_loop.run();
         state.response.get().unwrap_or(gtk4::ResponseType::DeleteEvent)
@@ -725,6 +738,114 @@ impl<T: gtk4::prelude::IsA<gtk4::Widget> + gtk4::prelude::Cast + 'static> GtkDro
 
 /// GTK3's `TreeModelExt::value` was renamed to `get_value` in GTK4, this
 /// compatibility trait restores the old name.
+
+/// GTK3 had `gtk_window_set_position(GTK_WIN_POS_CENTER_ON_PARENT)`; GTK4
+/// removed all window positioning (the compositor/WM decides) so dialogs no
+/// longer appear centred in the application window. On X11 the position can
+/// still be set with Xlib, so these helpers reimplement the GTK3 behaviour.
+
+struct SharedWindow(std::sync::OnceLock<gtk4::Window>);
+// Only ever written and read from the GTK main thread.
+unsafe impl Sync for SharedWindow {}
+
+static APP_MAIN_WINDOW: SharedWindow = SharedWindow(std::sync::OnceLock::new());
+
+/// Records the application's main window so dialogs opened without a window
+/// reference at hand (alert dialogs, `run()`ed dialog windows) can still be
+/// parented to - and centred over - it.
+pub fn set_main_window(window: &impl gtk4::prelude::IsA<gtk4::Window>) {
+    let _ = APP_MAIN_WINDOW.0.set(window.as_ref().clone());
+}
+
+fn main_window() -> Option<gtk4::Window> {
+    APP_MAIN_WINDOW.0.get().cloned()
+}
+
+/// Makes `dialog` a transient of `parent` and keeps it centred on the parent
+/// every time it is shown. Safe to call repeatedly; the map hook is installed
+/// once. No-op on non-X11 backends, where the compositor places the dialog.
+pub fn centre_dialog_on_parent(
+    dialog: &impl gtk4::prelude::IsA<gtk4::Window>,
+    parent: &impl gtk4::prelude::IsA<gtk4::Window>,
+) {
+    let dialog: &gtk4::Window = dialog.as_ref();
+    let parent: &gtk4::Window = parent.as_ref();
+
+    dialog.set_transient_for(Some(parent));
+
+    let already_hooked = unsafe { dialog.data::<u32>("riff_centred_dialog") }.is_some();
+    if already_hooked {
+        recenter_dialog_on_parent(dialog, parent);
+        return;
+    }
+    unsafe { dialog.set_data("riff_centred_dialog", 1u32); }
+
+    let parent_clone = parent.clone();
+    dialog.connect_map(move |dialog| recenter_dialog_on_parent(dialog, &parent_clone));
+
+    if dialog.is_mapped() {
+        recenter_dialog_on_parent(dialog, parent);
+    }
+}
+
+fn x11_xid(window: &gtk4::Window) -> Option<u64> {
+    let surface = window.surface()?;
+    let x11_surface = surface.downcast::<gdk4_x11::X11Surface>().ok()?;
+    Some(x11_surface.xid() as u64)
+}
+
+unsafe extern "C" {
+    fn XQueryTree(display: *mut std::ffi::c_void, w: u64, root_return: *mut u64, parent_return: *mut u64, children_return: *mut *mut u64, nchildren_return: *mut u32) -> i32;
+    fn XTranslateCoordinates(display: *mut std::ffi::c_void, src_w: u64, dst_w: u64, src_x: i32, src_y: i32, dest_x_return: *mut i32, dest_y_return: *mut i32, child_return: *mut u64) -> i32;
+    fn XMoveWindow(display: *mut std::ffi::c_void, w: u64, x: i32, y: i32) -> i32;
+    fn XFree(data: *mut std::ffi::c_void) -> i32;
+}
+
+fn recenter_dialog_on_parent(dialog: &gtk4::Window, parent: &gtk4::Window) {
+    let (Some(dialog_xid), Some(parent_xid)) = (x11_xid(dialog), x11_xid(parent)) else {
+        return;
+    };
+    let (Some(dialog_surface), Some(parent_surface)) = (dialog.surface(), parent.surface()) else {
+        return;
+    };
+    let (dialog_width, dialog_height) = (dialog_surface.width(), dialog_surface.height());
+    let (parent_width, parent_height) = (parent_surface.width(), parent_surface.height());
+    if dialog_width <= 0 || dialog_height <= 0 || parent_width <= 0 || parent_height <= 0 {
+        return;
+    }
+
+    let display = crate::xembed_host::x_display();
+    if display.is_null() {
+        return;
+    }
+
+    unsafe {
+        // Absolute position of the parent's content area on the screen (the
+        // coordinates are taken relative to the root window, so this follows
+        // the window manager frame rather than the raw client window).
+        let mut root: u64 = 0;
+        let mut reparented_parent: u64 = 0;
+        let mut children: *mut u64 = std::ptr::null_mut();
+        let mut n_children: u32 = 0;
+        if XQueryTree(display, parent_xid, &mut root, &mut reparented_parent, &mut children, &mut n_children) == 0 {
+            return;
+        }
+        if !children.is_null() {
+            XFree(children as *mut std::ffi::c_void);
+        }
+
+        let mut parent_x: i32 = 0;
+        let mut parent_y: i32 = 0;
+        let mut child_return: u64 = 0;
+        if XTranslateCoordinates(display, parent_xid, root, 0, 0, &mut parent_x, &mut parent_y, &mut child_return) == 0 {
+            return;
+        }
+
+        let x = parent_x + (parent_width - dialog_width) / 2;
+        let y = parent_y + (parent_height - dialog_height) / 2;
+        XMoveWindow(display, dialog_xid, x, y);
+    }
+}
 
 /// GTK4 replacement for the GTK3 `GtkFileChooserDialog`.
 ///
@@ -1085,7 +1206,14 @@ pub fn alert_dialog<P: gtk4::prelude::IsA<gtk4::Window> + Clone + 'static>(
     alert.set_message(text);
     alert.set_buttons(buttons);
 
-    match gtk4::glib::MainContext::default().block_on(alert.choose_future(parent)) {
+    // portal/native dialogs place themselves relative to their transient
+    // parent, so default to the application's main window when the call site
+    // has no window at hand.
+    let parent_window = parent
+        .map(|p| p.as_ref().clone())
+        .or_else(main_window);
+
+    match gtk4::glib::MainContext::default().block_on(alert.choose_future(parent_window.as_ref())) {
         Ok(index) if index >= 0 => Some(index as usize),
         _ => None,
     }

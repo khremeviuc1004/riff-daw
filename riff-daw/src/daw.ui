@@ -1115,7 +1115,7 @@
           </object>
         </child>
         <child>
-          <object class="GtkBox">
+          <object class="GtkBox" id="main_toolbar">
             <property name="visible">True</property>
             <property name="valign">start</property>
             <child>
@@ -13122,7 +13122,7 @@
                                             <property name="vscrollbar-policy">never</property>
                                             <property name="propagate-natural-height">True</property>
                                             <child>
-                                              <object class="GtkBox">
+                                              <object class="GtkBox" id="riff_grid_toolbar_box">
                                                 <property name="height-request">27</property>
                                                 <property name="visible">True</property>
                                                 <child>

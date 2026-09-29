@@ -923,6 +923,90 @@ impl DAWUtils {
         running_position_in_beats
     }
 
+    pub fn copy_riff_set_to_riff_grid_position(uuid: String, riff_grid_uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
+        match state.lock() {
+            Ok(mut state) => {
+                // find the riff set
+                let riff_set = match state.project().song().riff_sets().iter().find(|riff_set| riff_set.uuid() == uuid).cloned() {
+                    Some(riff_set) => riff_set,
+                    None => {
+                        debug!("Tried to copy a riff set into a riff grid but the riff set does not exist: {}", uuid.as_str());
+                        return 0.0;
+                    },
+                };
+
+                let mut riff_lengths = vec![];
+                for track_type in state.project().song().tracks().iter() {
+                    if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
+                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                            if riff.name() != "empty" {
+                                riff_lengths.push(riff.length() as i32);
+                            }
+                        }
+                    }
+                }
+                let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+                let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
+
+                // collect the riff grid riff references to add - (track uuid, riff uuid, position in beats)
+                let mut riff_grid_riff_references = vec![];
+                for track_type in state.project().song().tracks().iter() {
+                    if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
+                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                            let riff_length = riff.length();
+                            if riff.name() != "empty" {
+                                let repeats = lowest_common_factor_in_beats / riff_length as i32;
+                                for index in 0..repeats {
+                                    riff_grid_riff_references.push((
+                                        track_type.uuid().to_string(),
+                                        riff_ref.linked_to(),
+                                        position_in_beats + (riff_length * (index as f64)),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                match state.get_project().song_mut().riff_grid_mut(riff_grid_uuid.clone()) {
+                    Some(riff_grid) => {
+                        for (track_uuid, riff_uuid, riff_reference_position_in_beats) in riff_grid_riff_references.iter() {
+                            riff_grid.add_riff_reference_to_track(track_uuid.clone(), riff_uuid.clone(), *riff_reference_position_in_beats);
+                        }
+                    },
+                    None => {
+                        debug!("Tried to copy a riff set into a riff grid that does not exist: {}", riff_grid_uuid.as_str());
+                        return 0.0;
+                    },
+                }
+
+                position_in_beats + lowest_common_factor_in_beats as f64
+            }
+            Err(_) => 0.0
+        }
+    }
+
+    pub fn copy_riff_sequence_to_riff_grid_position(uuid: String, riff_grid_uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
+        let mut riff_set_references = vec![];
+        match state.lock() {
+            Ok(state) => {
+                if let Some(riff_sequence) = state.project().song().riff_sequence(uuid) {
+                    for riff_set_uuid in riff_sequence.riff_sets() {
+                        riff_set_references.push(riff_set_uuid.clone());
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+
+        let mut running_position_in_beats = position_in_beats;
+        for riff_set_reference in riff_set_references.iter() {
+            running_position_in_beats = DAWUtils::copy_riff_set_to_riff_grid_position(riff_set_reference.item_uuid().to_string(), riff_grid_uuid.clone(), running_position_in_beats, state.clone());
+        }
+
+        running_position_in_beats
+    }
+
     pub fn get_riff_grid_length(riff_grid: &RiffGrid, state: &DAWState) -> f64 {
         let mut riff_grid_actual_play_length = 0.0;
         for track_uuid in riff_grid.tracks() {
@@ -1144,6 +1228,47 @@ mod tests {
     use crate::domain::{Automation, AutomationEnvelope, DAWItemPosition, Measure, Note, NoteOff, NoteOn, PluginParameter, Riff, RiffReference, TrackEvent};
     use crate::event::TranslationEntityType::AudioPluginParameter;
     use crate::state::MidiPolyphonicExpressionNoteId;
+
+    #[test]
+    fn copy_riff_set_to_riff_grid_position_copies_set_references_into_the_grid() {
+        use crate::domain::{InstrumentTrack, RiffGrid, RiffSet, Track, TrackType};
+        use crate::state::DAWState;
+
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let state_arc = std::sync::Arc::new(std::sync::Mutex::new(DAWState::new(tx)));
+
+        let (track_uuid, riff_uuid, riff_set_uuid, riff_grid_uuid) = {
+            let mut state = state_arc.lock().unwrap();
+            let song = state.get_project().song_mut();
+
+            let mut track = InstrumentTrack::new();
+            let riff = Riff::new_with_name_and_length(Uuid::new_v4(), "test".to_string(), 4.0);
+            let riff_uuid = riff.uuid().to_string();
+            track.riffs_mut().push(riff);
+            let track_uuid = track.uuid().to_string();
+            song.add_track(TrackType::InstrumentTrack(track));
+
+            let mut riff_set = RiffSet::new();
+            riff_set.set_riff_ref_for_track(track_uuid.clone(), RiffReference::new(riff_uuid.clone(), 0.0));
+            let riff_set_uuid = riff_set.uuid();
+            song.add_riff_set(riff_set);
+
+            let riff_grid = RiffGrid::new();
+            let riff_grid_uuid = riff_grid.uuid();
+            song.add_riff_grid(riff_grid);
+
+            (track_uuid, riff_uuid, riff_set_uuid, riff_grid_uuid)
+        };
+
+        let end_position = DAWUtils::copy_riff_set_to_riff_grid_position(riff_set_uuid, riff_grid_uuid.clone(), 8.0, state_arc.clone());
+        assert_eq!(end_position, 12.0);
+
+        let state = state_arc.lock().unwrap();
+        let grid_riff_refs = state.project().song().riff_grid(riff_grid_uuid).unwrap().track_riff_references(track_uuid).unwrap().clone();
+        assert_eq!(grid_riff_refs.len(), 1);
+        assert_eq!(grid_riff_refs.get(0).unwrap().position(), 8.0);
+        assert_eq!(grid_riff_refs.get(0).unwrap().linked_to(), riff_uuid);
+    }
 
     #[test]
     fn riff_sequence_convert_to_vst_events_one_measure_gap_before_first_note() {

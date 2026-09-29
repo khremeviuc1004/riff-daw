@@ -392,6 +392,8 @@ pub enum DAWEvents {
     RiffGridChange(RiffGridChangeType, Option<String>), // change type, track uuid
     RiffGridNameChange(String),       // new name
     RiffGridCopySelectedToTrackViewCursorPosition(String), // riff grid uuid
+    RiffSetCopySelectedToRiffGridCursorPosition(String),      // riff set uuid - copied to the selected riff grid at the edit cursor position
+    RiffSequenceCopySelectedToRiffGridCursorPosition(String), // riff sequence uuid - copied to the selected riff grid at the edit cursor position
 
     RiffArrangementPlay(String),               // riff arrangement uuid
     RiffArrangementAdd(Uuid),                  // new riff arrangement uuid

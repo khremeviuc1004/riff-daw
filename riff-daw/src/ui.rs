@@ -222,6 +222,8 @@ pub struct Ui {
     pub scripting_component: Box,
 
     pub piano_roll_scrolled_window: ScrolledWindow,
+    pub piano_roll_bottom_controls_scrolled_window: ScrolledWindow,
+    pub piano_roll_keyboard_bottom_spacer: Box,
 
     pub piano_roll_piano_keyboard_drawing_area: DrawingArea,
     pub piano_roll_drawing_area: DrawingArea,
@@ -871,6 +873,8 @@ gtk4_builder_from!(Ui {
     mixer_component: Box,
     scripting_component: Box,
     piano_roll_scrolled_window: ScrolledWindow,
+    piano_roll_bottom_controls_scrolled_window: ScrolledWindow,
+    piano_roll_keyboard_bottom_spacer: Box,
     piano_roll_piano_keyboard_drawing_area: DrawingArea,
     piano_roll_drawing_area: DrawingArea,
     piano_roll_ruler_drawing_area: DrawingArea,
@@ -6889,6 +6893,18 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>
     ) -> Arc<Mutex<Piano>> {
         let tx_from_ui = tx_from_ui;
+
+        // Keep the bottom edge of the piano keyboard in step with the bottom
+        // edge of the viewable piano roll grid: the grid column ends with the
+        // horizontal scrollbar/zoom row, so the spacer under the keyboard is
+        // given that row's height whenever it changes.
+        {
+            let spacer = self.ui.piano_roll_keyboard_bottom_spacer.clone();
+            self.ui.piano_roll_bottom_controls_scrolled_window.connect_notify_local(Some("height"), move |controls, _pspec| {
+                spacer.set_size_request(-1, controls.height());
+            });
+        }
+
         let piano = Piano::new(1.0, self.ui.piano_roll_piano_keyboard_drawing_area.height_request() as f64 / 127.0, tx_from_ui);
         let piano_ref = Arc::new( Mutex::new(piano));
         {

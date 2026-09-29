@@ -17036,12 +17036,12 @@
                                 <property name="visible">True</property>
                                 <property name="position-set">True</property>
                                 <child>
-                                  <object class="GtkBox">
+                                  <object class="GtkBox" id="piano_roll_keyboard_column_box">
                                     <property name="visible">True</property>
                                     <property name="orientation">vertical</property>
                                     <child>
                                       <object class="GtkGrid">
-                                        <property name="height-request">35</property>
+                                        <property name="height-request">42</property>
                                         <property name="visible">True</property>
                                         <child>
                                           <object class="GtkLabel">
@@ -17115,6 +17115,12 @@
                                         </child>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="GtkBox" id="piano_roll_keyboard_bottom_spacer">
+                                        <property name="visible">True</property>
+                                        <property name="height-request">42</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                                 <child>
@@ -17172,7 +17178,7 @@
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkScrolledWindow">
+                                      <object class="GtkScrolledWindow" id="piano_roll_bottom_controls_scrolled_window">
                                         <property name="hscrollbar-policy">automatic</property>
                                         <property name="vscrollbar-policy">never</property>
                                         <property name="propagate-natural-height">True</property>

@@ -95,9 +95,81 @@ impl ComboItemObject {
     }
 }
 
+/// Maximum display width (in characters) for combo box items. Older songs can
+/// contain riff set names several hundred characters long; with GTK4's
+/// `GtkDropDown` the popup is a `GtkPopover` whose natural width follows its
+/// row labels. If that width exceeds the screen, `gtk_popover_native_layout`
+/// rejects the size and instantly pops the popup back down, so the list can
+/// never be opened at all. Ellipsizing the rows (with the full text available
+/// as a tooltip) keeps the popup inside the window and scrollable, restoring
+/// the truncation behaviour the old `GtkComboBoxText` popups had.
+///
+/// Minimum display width (in characters) for combo box items, set via the
+/// label's `width-chars` property (for ellipsizing labels this acts as the
+/// minimum width). Without it, rows ellipsize at the width of the drop down
+/// button (the riff set combos have a 100px width-request, roughly ten
+/// characters), so short prefixes like "1. My Riff S…" are all that is
+/// visible. This keeps at least twenty characters visible whenever the item
+/// text has them.
+const COMBO_ITEM_MIN_WIDTH_CHARS: i32 = 20;
+const COMBO_ITEM_MAX_WIDTH_CHARS: i32 = 60;
+
+/// Marker attached to the `SignalListItemFactory` this module installs, so it
+/// can be told apart from GTK's internal default factory (which `DropDown`
+/// creates at init time, meaning `factory()` is never `None`) and from any
+/// custom factory a call site sets explicitly.
+const COMPAT_FACTORY_KEY: &str = "riff-compat-ellipsized-factory";
+
+fn is_compat_factory(factory: &gtk4::SignalListItemFactory) -> bool {
+    unsafe { factory.data::<()>(COMPAT_FACTORY_KEY).is_some() }
+}
+
+fn mark_compat_factory(factory: &gtk4::SignalListItemFactory) {
+    unsafe { factory.set_data(COMPAT_FACTORY_KEY, ()) }
+}
+
+fn ensure_ellipsized_factory(drop_down: &gtk4::DropDown) {
+    if let Some(factory) = drop_down.factory().and_downcast::<gtk4::SignalListItemFactory>() {
+        if is_compat_factory(&factory) {
+            return;
+        }
+    }
+    // A custom popup factory (list_factory set alongside factory, as the
+    // track details riff chooser does for its arrow-only dropdown) means the
+    // call site is rendering items itself - leave it alone.
+    if drop_down.list_factory().is_some() {
+        return;
+    }
+    let factory = gtk4::SignalListItemFactory::new();
+    factory.connect_setup(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        let label = gtk4::Label::builder()
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .width_chars(COMBO_ITEM_MIN_WIDTH_CHARS)
+            .max_width_chars(COMBO_ITEM_MAX_WIDTH_CHARS)
+            .build();
+        list_item.set_child(Some(&label));
+    });
+    factory.connect_bind(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        if let (Some(label), Some(row)) = (
+            list_item.child().and_then(|w| w.downcast::<gtk4::Label>().ok()),
+            list_item.item().and_then(|i| i.downcast::<ComboItemObject>().ok()),
+        ) {
+            let text = row.text();
+            label.set_text(text.as_str());
+            label.set_tooltip_text(Some(text.as_str()));
+        }
+    });
+    mark_compat_factory(&factory);
+    drop_down.set_factory(Some(&factory));
+}
+
 fn list_store_for(drop_down: &gtk4::DropDown) -> gio::ListStore {
     if let Some(model) = drop_down.model() {
         if let Ok(store) = model.downcast::<gio::ListStore>() {
+            ensure_ellipsized_factory(drop_down);
             return store;
         }
     }
@@ -108,6 +180,7 @@ fn list_store_for(drop_down: &gtk4::DropDown) -> gio::ListStore {
         None::<gtk4::ConstantExpression>,
         "text",
     )));
+    ensure_ellipsized_factory(drop_down);
     store
 }
 
@@ -158,6 +231,7 @@ impl ComboBoxTextCompat for gtk4::DropDown {
             None::<gtk4::ConstantExpression>,
             "text",
         )));
+        ensure_ellipsized_factory(self);
     }
 
     fn remove(&self, position: i32) {

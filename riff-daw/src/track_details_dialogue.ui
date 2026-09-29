@@ -55,16 +55,19 @@
           <object class="GtkScrolledWindow">
             <property name="vexpand">True</property>
             <property name="visible">True</property>
+            <property name="vscrollbar-policy">never</property>
             <child>
               <object class="GtkViewport">
                 <property name="visible">True</property>
                 <child>
                   <object class="GtkBox">
                     <property name="visible">True</property>
+                    <property name="vexpand">True</property>
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkStack">
-                        <property name="vexpand">True</property>
+                        <property name="vexpand">False</property>
+                        <property name="valign">start</property>
                         <property name="visible">True</property>
                         <child>
                           <object class="GtkStackPage">
@@ -535,6 +538,8 @@
                     <child>
                       <object class="GtkScrolledWindow" id="track_effects_scroll_window">
                         <property name="visible">True</property>
+                        <property name="vexpand">True</property>
+                        <property name="min-content-height">150</property>
                         <child>
                           <object class="GtkViewport">
                             <property name="visible">True</property>

@@ -8689,6 +8689,14 @@ impl MainWindow {
             riff_sets_box.pack_start(&riff_set_box, false, false, 2);
         }
         else {
+            // Riff sequence view: the head is a small frame of buttons while the
+            // blade is a column of 69px track lanes, so pin both to the same
+            // width - otherwise the head strip drifts out of alignment with the
+            // blades across the sequence.
+            for child in riff_set_box.children().iter() {
+                child.set_width_request(69);
+            }
+            riff_set_blade_head.riff_set_blade.set_width_request(69);
             riff_set_heads_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);
             riff_sets_box.pack_start(&riff_set_blade.riff_set_box, false, false, 2);
         }

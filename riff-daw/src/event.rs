@@ -371,7 +371,7 @@ pub enum DAWEvents {
     RiffSetSelect(String, bool),                                  // riff set uuid, bool selected
 
     RiffSequencePlay(String),                     // riff sequence uuid
-    RiffSequenceAdd(Uuid),                        // new riff sequence uuid
+    RiffSequenceAdd(Uuid, String),              // new riff sequence uuid, name
     RiffSequenceCopy(String),                        // riff sequence uuid to copy
     RiffSequenceDelete(String),                   // riff sequence uuid
     RiffSequenceNameChange(String, String),       // riff sequence uuid, new name

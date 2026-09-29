@@ -207,6 +207,10 @@ pub struct Ui {
     pub riff_grid_copy: Button,
     pub riff_grid_delete: Button,
     pub riff_grid_copy_to_track_view_btn: Button,
+    pub riff_grid_riff_set_combobox: DropDown,
+    pub add_riff_grid_riff_set_btn: Button,
+    pub riff_grid_riff_seq_combobox: DropDown,
+    pub add_riff_grid_riff_seq_btn: Button,
 
     // pub riff_grid_tracks_panel_scrolled_window: ScrolledWindow,
 
@@ -862,6 +866,10 @@ gtk4_builder_from!(Ui {
     riff_grid_copy: Button,
     riff_grid_delete: Button,
     riff_grid_copy_to_track_view_btn: Button,
+    riff_grid_riff_set_combobox: DropDown,
+    add_riff_grid_riff_set_btn: Button,
+    riff_grid_riff_seq_combobox: DropDown,
+    add_riff_grid_riff_seq_btn: Button,
     riff_grid_tracks_panel_scrolled_window: ScrolledWindow,
     riff_grid_drawing_area: DrawingArea,
     riff_grid_ruler_drawing_area: DrawingArea,
@@ -8970,6 +8978,7 @@ impl MainWindow {
             self.ui.add_sequence_btn.connect_clicked(move |_| {
                 riff_sequences_box.children().iter_mut().for_each(|child| child.set_visible(false));
                 if riff_sequence_name_entry.text().len() > 0 {
+                    let riff_sequence_name = riff_sequence_name_entry.text().to_string();
                     let riff_sequence_blade = MainWindow::add_riff_sequence_blade(
                         riff_sequences_box.clone(),
                         tx_from_ui.clone(),
@@ -8978,14 +8987,15 @@ impl MainWindow {
                         None,
                         None,
                         true,
+                        Some(riff_sequence_name.clone()),
                         RiffSequenceType::RiffSequence,
                         selected_track_style_provider.clone(),
                         Some(&riff_sequence_vertical_adjustment),
                     );
                     if let Some(last_child) = riff_sequences_box.children().last() {
-                        sequence_combobox.append(Some(last_child.widget_name().as_str()), riff_sequence_name_entry.text().as_str());
+                        sequence_combobox.append(Some(last_child.widget_name().as_str()), riff_sequence_name.as_str());
                         sequence_combobox.set_active_id(Some(last_child.widget_name().as_str()));
-                        riff_sequence_blade.riff_sequence_name_entry.set_text(riff_sequence_name_entry.text().as_str());
+                        riff_sequence_blade.riff_sequence_name_entry.set_text(riff_sequence_name.as_str());
                         riff_sequence_name_entry.set_text("");
                     }
                 }
@@ -9060,6 +9070,7 @@ impl MainWindow {
         riff_sequence_uuid: Option<String>,
         item_uuid: Option<String>,
         send_riff_sequence_add_message: bool,
+        riff_sequence_name: Option<String>,
         riff_sequence_type: RiffSequenceType,
         selected_style_provider: CssProvider,
         riff_sequence_vertical_adjustment: Option<&Adjustment>,
@@ -9137,7 +9148,8 @@ impl MainWindow {
         }
 
         if send_riff_sequence_add_message {
-            match tx_from_ui.send(DAWEvents::RiffSequenceAdd(uuid)) {
+            let riff_sequence_name = riff_sequence_name.unwrap_or_else(|| "Unknown".to_string());
+            match tx_from_ui.send(DAWEvents::RiffSequenceAdd(uuid, riff_sequence_name)) {
                 Ok(_) => {}
                 Err(_) => {}
             }
@@ -10274,6 +10286,7 @@ impl MainWindow {
                 Some(riff_sequence_uuid.to_string()),
                 Some(item_uuid.to_string()),
                 false,
+                None,
                 RiffSequenceType::RiffArrangement(riff_arrangement_uuid.clone()),
                 selected_track_style_provider.clone(),
                 Some(&riff_arrangement_vertical_adjustment),
@@ -11063,6 +11076,7 @@ impl MainWindow {
                 Some(riff_sequence.uuid()),
                 None,
                 false,
+                None,
                 RiffSequenceType::RiffSequence,
                 self.selected_style_provider.clone(),
                 Some(&self.ui.riff_sequence_vertical_adjustment),
@@ -11136,6 +11150,40 @@ impl MainWindow {
             if let Some(riff_grid_name) = self.ui.grid_combobox.active_text() {
                 self.ui.selected_riff_grid_name_entry.set_text(riff_grid_name.as_str());
             }
+        }
+
+        // populate the riff grid view riff set and riff sequence comboboxes
+        let riff_sets: Vec<(String, String)> = state.project().song().riff_sets().iter().map(|riff_set| (riff_set.uuid(), riff_set.name().to_string())).collect();
+        self.update_riff_grid_view_riff_set_combobox(&riff_sets);
+        let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
+        self.update_riff_grid_view_riff_seq_combobox(&riff_sequences);
+    }
+
+    pub fn update_riff_grid_view_riff_set_combobox(&mut self, riff_sets: &Vec<(String, String)>) {
+        let selected_riff_set_uuid = self.ui.riff_grid_riff_set_combobox.active_id().map(|uuid| uuid.to_string());
+        self.ui.riff_grid_riff_set_combobox.remove_all();
+        for (index, (riff_set_uuid, riff_set_name)) in riff_sets.iter().enumerate() {
+            self.ui.riff_grid_riff_set_combobox.append(Some(riff_set_uuid.as_str()), format!("{}. {}", index + 1, riff_set_name.as_str()).as_str());
+        }
+        if let Some(selected_riff_set_uuid) = selected_riff_set_uuid {
+            self.ui.riff_grid_riff_set_combobox.set_active_id(Some(selected_riff_set_uuid.as_str()));
+        }
+        else if self.ui.riff_grid_riff_set_combobox.len() > 0 {
+            self.ui.riff_grid_riff_set_combobox.set_active(Some(0));
+        }
+    }
+
+    pub fn update_riff_grid_view_riff_seq_combobox(&mut self, riff_sequences: &Vec<(String, String)>) {
+        let selected_riff_sequence_uuid = self.ui.riff_grid_riff_seq_combobox.active_id().map(|uuid| uuid.to_string());
+        self.ui.riff_grid_riff_seq_combobox.remove_all();
+        for (index, (riff_sequence_uuid, riff_sequence_name)) in riff_sequences.iter().enumerate() {
+            self.ui.riff_grid_riff_seq_combobox.append(Some(riff_sequence_uuid.as_str()), format!("{}. {}", index + 1, riff_sequence_name.as_str()).as_str());
+        }
+        if let Some(selected_riff_sequence_uuid) = selected_riff_sequence_uuid {
+            self.ui.riff_grid_riff_seq_combobox.set_active_id(Some(selected_riff_sequence_uuid.as_str()));
+        }
+        else if self.ui.riff_grid_riff_seq_combobox.len() > 0 {
+            self.ui.riff_grid_riff_seq_combobox.set_active(Some(0));
         }
     }
 
@@ -11443,6 +11491,9 @@ impl MainWindow {
 
         // update the riff arrangement blades
         self.update_available_riff_sets_in_riff_arrangement_blades(state, &riff_sets);
+
+        // update the riff grid view riff set combobox
+        self.update_riff_grid_view_riff_set_combobox(&riff_sets);
     }
 
     pub fn update_available_riff_sets_in_riff_seq_blades(
@@ -11537,6 +11588,9 @@ impl MainWindow {
         // get the available riff sequences
         let riff_sequences: Vec<(String, String)> = state.project().song().riff_sequences().iter().map(|riff_sequence| (riff_sequence.uuid(), riff_sequence.name().to_string())).collect();
 
+        // update the riff grid view riff sequence combobox
+        self.update_riff_grid_view_riff_seq_combobox(&riff_sequences);
+
         // update the riff arrangement blades
         for riff_arr_box_child in self.ui.riff_arrangement_box.children().iter() {
             if let Some(blade) = riff_arr_box_child.dynamic_cast_ref::<Frame>() {
@@ -11626,6 +11680,7 @@ impl MainWindow {
                         Some(riff_sequence_uuid.to_string()),
                         Some(item.uuid()),
                         false,
+                        None,
                         RiffSequenceType::RiffArrangement(riff_arrangement.uuid()),
                         selected_track_style_provider.clone(),
                         Some(&ui.riff_arrangement_vertical_adjustment),
@@ -12793,6 +12848,7 @@ mod riff_sequence_blade_combobox_tests {
             None,
             None,
             true,
+            None,
             RiffSequenceType::RiffSequence,
             CssProvider::new(),
             None,
@@ -12843,6 +12899,7 @@ mod riff_sequence_blade_combobox_tests {
             None,
             None,
             true,
+            None,
             RiffSequenceType::RiffSequence,
             CssProvider::new(),
             None,
@@ -12861,6 +12918,49 @@ mod riff_sequence_blade_combobox_tests {
 
         refresh_blade_combobox(&blade.riff_sequence_blade, &items, "riff_seq_riff_set_combo");
         assert_eq!(blade.riff_set_combobox.len(), 3);
+    }
+
+    #[gtk4::test]
+    fn adding_a_new_sequence_sends_its_name() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let state_arc = state_with_riff_sets(0);
+        let riff_sequences_box = Box::new(Orientation::Vertical, 0);
+        let _blade = MainWindow::add_riff_sequence_blade(
+            riff_sequences_box.clone(),
+            tx.clone(),
+            state_arc.clone(),
+            None,
+            None,
+            None,
+            true,
+            Some("My Sequence".to_string()),
+            RiffSequenceType::RiffSequence,
+            CssProvider::new(),
+            None,
+        );
+        match rx.try_recv() {
+            Ok(DAWEvents::RiffSequenceAdd(_, name)) => assert_eq!(name, "My Sequence"),
+            Ok(_) => panic!("expected RiffSequenceAdd event"),
+            Err(error) => panic!("no event sent: {error}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod riff_grid_view_combobox_tests {
+    use super::*;
+
+    #[gtk4::test]
+    fn daw_ui_exposes_riff_grid_view_riff_set_and_seq_comboboxes() {
+        let glade_src = include_str!("daw.ui");
+        let ui = Ui::from_string(glade_src).expect("daw.ui should load with the riff grid view combobox fields");
+
+        ui.riff_grid_riff_set_combobox.append(Some("riff-set-uuid-1"), "1. Riff Set 1");
+        ui.riff_grid_riff_set_combobox.append(Some("riff-set-uuid-2"), "2. Riff Set 2");
+        assert_eq!(ui.riff_grid_riff_set_combobox.len(), 2);
+
+        ui.riff_grid_riff_seq_combobox.append(Some("riff-seq-uuid-1"), "1. Riff Sequence 1");
+        assert_eq!(ui.riff_grid_riff_seq_combobox.len(), 1);
     }
 }
 

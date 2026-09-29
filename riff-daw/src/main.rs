@@ -6597,10 +6597,12 @@ win.connect_close_request(|window| {
                 };
                 gui.ui.riff_sequences_box.queue_draw();
             }
-            DAWEvents::RiffSequenceAdd(riff_sequence_uuid) => {
+            DAWEvents::RiffSequenceAdd(riff_sequence_uuid, name) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        state.get_project().song_mut().add_riff_sequence(RiffSequence::new_with_uuid(riff_sequence_uuid));
+                        let mut riff_sequence = RiffSequence::new_with_uuid(riff_sequence_uuid);
+                        riff_sequence.set_name(name);
+                        state.get_project().song_mut().add_riff_sequence(riff_sequence);
                         gui.update_available_riff_sequences_in_riff_arrangement_blades(&state);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence add - could not get lock on state"),

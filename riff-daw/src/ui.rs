@@ -6838,7 +6838,18 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
-            self.ui.automation_grid_mode_point.connect_clicked(move |_|{
+            let mode_line = self.ui.automation_grid_mode_line.clone();
+            let mode_curve = self.ui.automation_grid_mode_curve.clone();
+            self.ui.automation_grid_mode_point.connect_clicked(move |btn| {
+                // GTK4 ToggleButtons have no group support, so the point/line/curve
+                // buttons are kept mutually exclusive here and the active mode can
+                // never be toggled off.
+                if !btn.is_active() {
+                    btn.set_active(true);
+                    return;
+                }
+                mode_line.set_active(false);
+                mode_curve.set_active(false);
                 if let Ok(mut grid) = automation_grid.lock() {
                     grid.turn_on_draw_point_mode();
                 }
@@ -6847,7 +6858,15 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
-            self.ui.automation_grid_mode_line.connect_clicked(move |_|{
+            let mode_point = self.ui.automation_grid_mode_point.clone();
+            let mode_curve = self.ui.automation_grid_mode_curve.clone();
+            self.ui.automation_grid_mode_line.connect_clicked(move |btn| {
+                if !btn.is_active() {
+                    btn.set_active(true);
+                    return;
+                }
+                mode_point.set_active(false);
+                mode_curve.set_active(false);
                 if let Ok(mut grid) = automation_grid.lock() {
                     grid.turn_on_draw_line_mode();
                 }
@@ -6856,7 +6875,15 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
-            self.ui.automation_grid_mode_curve.connect_clicked(move |_|{
+            let mode_point = self.ui.automation_grid_mode_point.clone();
+            let mode_line = self.ui.automation_grid_mode_line.clone();
+            self.ui.automation_grid_mode_curve.connect_clicked(move |btn| {
+                if !btn.is_active() {
+                    btn.set_active(true);
+                    return;
+                }
+                mode_point.set_active(false);
+                mode_line.set_active(false);
                 if let Ok(mut grid) = automation_grid.lock() {
                     grid.turn_on_draw_curve_mode();
                 }

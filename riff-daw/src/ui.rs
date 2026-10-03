@@ -9,11 +9,13 @@ use cairo::glib::{BindingFlags, SignalHandlerId};
 use crossbeam_channel::Sender;
 use gdk4::{EventType, ScrollDirection};
 use gtk4::{ResponseType, PolicyType};
-use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorDialogButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer , FileChooserAction, FileFilter, Frame, glib, Grid, Label, ListView, MenuButton, Orientation, Paned, prelude::*, prelude::Cast, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, Viewport, Widget, Window};
+use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorDialogButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer , FileChooserAction, FileFilter, Frame, glib, Grid, Label, ListView, Orientation, Paned, prelude::*, prelude::Cast, PopoverMenuBar, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, Viewport, Widget, Window};
 
 use crate::combo_box_text_compat::{ComboItemObject, ComboBoxTextCompat};
 use crate::gladis4::FromGtk4Builder;
-use crate::gtk4_compat::{DestDefaults, FileChooserDialog, EmbeddedFileChooser, EmbeddedFileChooserCompat, FileChooserWidgetCompat, GdkEventCompat, GtkBoxCompat, GtkContainerCompat, GtkDialogRunCompat, GtkDragSourceCompat, GtkDropDestCompat, RecentChooserMenuCompat, TargetEntry, TargetFlags, WidgetEventCompat};
+use crate::gtk4_compat::{DestDefaults, FileChooserDialog, EmbeddedFileChooser, EmbeddedFileChooserCompat, FileChooserWidgetCompat, GdkEventCompat, GtkBoxCompat, GtkContainerCompat, GtkDialogRunCompat, GtkDragSourceCompat, GtkDropDestCompat, TargetEntry, TargetFlags, WidgetEventCompat};
+use gio::prelude::ActionMapExt;
+use gtk4::glib::prelude::ToVariant;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use log::*;
@@ -82,34 +84,8 @@ pub struct Ui {
 
     pub about_dialogue: AboutDialog,
 
-    pub recent_chooser_menu: MenuButton,
-
-    // file menu
-    pub menu_item_new: Button,
-    pub menu_item_open: Button,
-    pub menu_item_save: Button,
-    pub menu_item_save_as: Button,
-    pub menu_item_import_midi: Button,
-    pub menu_item_import_dawproject: Button,
-    pub menu_item_export_midi: Button,
-    pub menu_item_export_midi_riffs: Button,
-    pub menu_item_export_midi_riffs_separate: Button,
-    pub menu_item_export_dawproject: Button,
-    pub menu_item_export_wave: Button,
-    pub menu_item_quit: Button,
-
-    // edit menu
-    pub menu_item_cut: Button,
-    pub menu_item_copy: Button,
-    pub menu_item_paste: Button,
-    pub menu_item_regenerate_riff_ref_ids: Button,
-    pub menu_item_preferences: Button,
-
-    // util menu item
-    pub menu_item_scan_plugins: Button,
-
-    // help menu
-    pub menu_item_about: Button,
+    // The menu bar widget the Gio menu model built in setup_menus is attached to.
+    pub main_menu_bar: PopoverMenuBar,
 
     pub toolbar_add_track_combobox: DropDown,
     pub toolbar_add_track: Button,
@@ -767,26 +743,7 @@ gtk4_builder_from!(Ui {
     vst3_plugin_paths_entry: Entry,
     add_vst3_path_button: Button,
     about_dialogue: AboutDialog,
-    recent_chooser_menu: MenuButton,
-    menu_item_new: Button,
-    menu_item_open: Button,
-    menu_item_save: Button,
-    menu_item_save_as: Button,
-    menu_item_import_midi: Button,
-    menu_item_import_dawproject: Button,
-    menu_item_export_midi: Button,
-    menu_item_export_midi_riffs: Button,
-    menu_item_export_midi_riffs_separate: Button,
-    menu_item_export_dawproject: Button,
-    menu_item_export_wave: Button,
-    menu_item_quit: Button,
-    menu_item_cut: Button,
-    menu_item_copy: Button,
-    menu_item_paste: Button,
-    menu_item_regenerate_riff_ref_ids: Button,
-    menu_item_preferences: Button,
-    menu_item_scan_plugins: Button,
-    menu_item_about: Button,
+    main_menu_bar: PopoverMenuBar,
     toolbar_add_track_combobox: DropDown,
     toolbar_add_track: Button,
     toolbar_undo: Button,
@@ -1909,32 +1866,6 @@ impl MainWindow {
                             Err(_) => {}
                         }
                     });
-                }
-            });
-        }
-
-        {
-            let tx_from_ui = tx_from_ui.clone();
-            let recent_chooser_menu: MenuButton = ui.recent_chooser_menu.clone();
-            let window = ui.wnd_main.clone();
-            ui.recent_chooser_menu.connect_item_activated(move |_xxx| {
-                {
-                    let recent_info = recent_chooser_menu.current_item();
-                    if let Some(recent_info) = recent_info {
-                        let mut path = std::path::PathBuf::new();
-                        if let Some(file_name) = recent_info.uri_display() {
-                            window.set_title(Some(format!("DAW - {}", file_name.as_str()).as_str()));
-                            path.set_file_name(&file_name);
-                            {
-                                let tx_from_ui = tx_from_ui.clone();
-                                let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
-                                    if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
-                                        debug!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
-                                    }
-                                });
-                            }
-                        }
-                    }
                 }
             });
         }
@@ -4210,21 +4141,32 @@ impl MainWindow {
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         state: Arc<Mutex<DAWState>>,
     ) {
+        // GtkMenuBar was removed from GTK4 - the old File/Edit/Util/Help menu
+        // structure is rebuilt as a GtkPopoverMenuBar driven by a Gio menu model.
+        // Every item targets a "win." action registered on the main window whose
+        // activate handler carries the same body the removed buttons were wired to.
+        let window = self.ui.wnd_main.clone();
+        // a separate handle used only to register actions - the per-item `window`
+        // clones get moved into their activate closures.
+        let action_window = window.clone();
+
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.wnd_main.clone();
-            self.ui.menu_item_new.connect_button_press_event(move |_, _| {
+            let window = window.clone();
+            let action = gio::SimpleAction::new("new", None);
+            action.connect_activate(move |_, _| {
                 window.set_title(Some("DAW - New"));
                 let _ = tx_from_ui.send(DAWEvents::NewFile);
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_open.connect_button_press_event(move |_, _|{
-                let dialog = FileChooserDialog::new(Some("DAW project file"),     Some(&window), FileChooserAction::Open);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("open", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("DAW project file"), Some(&window), FileChooserAction::Open);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/json");
                 filter.set_name(Some("DAW project file"));
@@ -4244,26 +4186,27 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_save.connect_button_press_event(move |_, _| {
+            let action = gio::SimpleAction::new("save", None);
+            action.connect_activate(move |_, _| {
                 debug!("Menu item save clicked!");
                 let _ = tx_from_ui.send(DAWEvents::Save);
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_save_as.connect_button_press_event(move |_menu_item, _btn| {
+            let window = window.clone();
+            let action = gio::SimpleAction::new("save-as", None);
+            action.connect_activate(move |_, _| {
                 debug!("Menu item save as clicked!");
-                let dialog = FileChooserDialog::new(Some("DAW save as project file"),     Some(&window), FileChooserAction::Save);
+                let dialog = FileChooserDialog::new(Some("DAW save as project file"), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/json");
                 filter.set_name(Some("DAW project file"));
@@ -4283,17 +4226,17 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
             let dialog = self.midi_file_import_file_chooser.clone();
-            self.ui.menu_item_import_midi.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("import-midi", None);
+            action.connect_activate(move |_, _| {
                 let tx_from_ui = tx_from_ui.clone();
-                
+
                 dialog.run_with(move |result, dialog| {
                     if result == gtk4::ResponseType::Ok {
                         let filename = dialog.filename();
@@ -4308,16 +4251,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_import_dawproject.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Import dawproject file..."),     Some(&window), FileChooserAction::Open);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("import-dawproject", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Import dawproject file..."), Some(&window), FileChooserAction::Open);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/zip");
                 filter.set_name(Some("DAW project file"));
@@ -4337,16 +4280,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_export_dawproject.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Export song to dawproject..."),     Some(&window), FileChooserAction::Save);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("export-dawproject", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Export song to dawproject..."), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("application/zip");
                 filter.set_name(Some("DAW project file"));
@@ -4362,16 +4305,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_export_midi.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Export to midi file..."),     Some(&window), FileChooserAction::Save);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("export-midi", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Export to midi file..."), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("audio/midi");
                 filter.set_name(Some("Midi file"));
@@ -4387,16 +4330,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_export_midi_riffs.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Export riffs to midi file..."),     Some(&window), FileChooserAction::Save);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("export-riffs-midi", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Export riffs to midi file..."), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("audio/midi");
                 filter.set_name(Some("Midi file"));
@@ -4412,16 +4355,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_export_midi_riffs_separate.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."),     Some(&window), FileChooserAction::SelectFolder);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("export-riffs-separate-midi", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Export riffs to separate midi files in directory..."), Some(&window), FileChooserAction::SelectFolder);
                 dialog.add_button("Cancel", gtk4::ResponseType::Cancel);
                 dialog.add_button("Ok", gtk4::ResponseType::Ok);
                 let tx_from_ui = tx_from_ui.clone();
@@ -4432,16 +4375,16 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_export_wave.connect_button_press_event(move |_menu_item, _btn|{
-                let dialog = FileChooserDialog::new(Some("Export to wave file..."),     Some(&window), FileChooserAction::Save);
+            let window = window.clone();
+            let action = gio::SimpleAction::new("export-wave", None);
+            action.connect_activate(move |_, _| {
+                let dialog = FileChooserDialog::new(Some("Export to wave file..."), Some(&window), FileChooserAction::Save);
                 let filter = FileFilter::new();
                 filter.add_mime_type("audio/vnd.wav");
                 filter.set_name(Some("Wave file"));
@@ -4457,28 +4400,27 @@ impl MainWindow {
                         }
                     }
                 });
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
-            let window = self.ui.get_wnd_main().clone();
-            self.ui.menu_item_quit.connect_button_press_event(move |_menu_item, _btn|{
+            let window = window.clone();
+            let action = gio::SimpleAction::new("quit", None);
+            action.connect_activate(move |_, _| {
                 window.close();
-
-                false
             });
+            action_window.add_action(&action);
         }
 
         {
             let about_dialogue = self.ui.about_dialogue.clone();
-            self.ui.menu_item_about.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("about", None);
+            action.connect_activate(move |_, _| {
                 about_dialogue.run();
                 about_dialogue.set_visible(false);
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
@@ -4490,7 +4432,8 @@ impl MainWindow {
             let vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
             let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
             let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
-            self.ui.menu_item_preferences.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("preferences", None);
+            action.connect_activate(move |_, _| {
                 if let Ok(state) = state.lock() {
                     sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
                     block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
@@ -4526,132 +4469,168 @@ impl MainWindow {
                     }
                 }
                 configuration_dialogue.set_visible(false);
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_scan_plugins.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("scan-plugins", None);
+            action.connect_activate(move |_, _| {
                 let _ = tx_from_ui.send(DAWEvents::ScanPlugins);
-
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
-            let vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
-            let window = self.ui.get_wnd_main().clone();
-            let add_vst24_path_chooser = FileChooserDialog::new(Some("Add VST 2.4 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_vst24_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
-            add_vst24_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
-            self.ui.add_vst24_path_button.connect_clicked(move |_| {
-                let chooser = add_vst24_path_chooser.clone();
-                let entry = vst24_plugin_paths_entry.clone();
-                chooser.run_with(move |result, chooser| {
-                    if result == ResponseType::Ok {
-                        if let Some(directory) = chooser.current_folder() {
-                            let mut current_paths = entry.text().to_string();
-                            if let Some(directory) = directory.to_str() {
-                                if directory.chars().count() > 0 {
-                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                                }
-                                current_paths.push_str(directory);
-
-                                entry.set_text(current_paths.as_str());
-                            }
-                        }
-                    }
-                });
-            });
-        }
-
-        {
-            let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
-            let window = self.ui.get_wnd_main().clone();
-            let add_clap_path_chooser = FileChooserDialog::new(Some("Add Clap plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_clap_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
-            add_clap_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
-            self.ui.add_clap_path_button.connect_clicked(move |_| {
-                let chooser = add_clap_path_chooser.clone();
-                let entry = clap_plugin_paths_entry.clone();
-                chooser.run_with(move |result, chooser| {
-                    if result == ResponseType::Ok {
-                        if let Some(directory) = chooser.current_folder() {
-                            let mut current_paths = entry.text().to_string();
-                            if let Some(directory) = directory.to_str() {
-                                if directory.chars().count() > 0 {
-                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                                }
-                                current_paths.push_str(directory);
-
-                                entry.set_text(current_paths.as_str());
-                            }
-                        }
-                    }
-                });
-            });
-        }
-
-        {
-            let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
-            let window = self.ui.get_wnd_main().clone();
-            let add_vst3_path_chooser = FileChooserDialog::new(Some("Add VST 3 plugin path..."), Some(&window), FileChooserAction::SelectFolder);
-            add_vst3_path_chooser.add_button("Cancel", gtk4::ResponseType::Cancel);
-            add_vst3_path_chooser.add_button("Ok", gtk4::ResponseType::Ok);
-            self.ui.add_vst3_path_button.connect_clicked(move |_| {
-                let chooser = add_vst3_path_chooser.clone();
-                let entry = vst3_plugin_paths_entry.clone();
-                chooser.run_with(move |result, chooser| {
-                    if result == ResponseType::Ok {
-                        if let Some(directory) = chooser.current_folder() {
-                            let mut current_paths = entry.text().to_string();
-                            if let Some(directory) = directory.to_str() {
-                                if directory.chars().count() > 0 {
-                                    current_paths.push_str(PLUGIN_PATHS_SEPARATOR);
-                                }
-                                current_paths.push_str(directory);
-
-                                entry.set_text(current_paths.as_str());
-                            }
-                        }
-                    }
-                });
-            });
-        }
-
-        {
-            let _tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_cut.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("cut", None);
+            action.connect_activate(move |_, _| {
                 // TODO implement
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
-            let _tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_copy.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("copy", None);
+            action.connect_activate(move |_, _| {
                 // TODO implement
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
-            let _tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_paste.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("paste", None);
+            action.connect_activate(move |_, _| {
                 // TODO implement
-                true
             });
+            action_window.add_action(&action);
         }
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.ui.menu_item_regenerate_riff_ref_ids.connect_button_press_event(move |_menu_item, _btn|{
+            let action = gio::SimpleAction::new("regenerate-riff-ref-ids", None);
+            action.connect_activate(move |_, _| {
                 let _ = tx_from_ui.send(DAWEvents::RiffReferenceRegenerateIds);
-                true
             });
+            action_window.add_action(&action);
         }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let window = window.clone();
+            let action = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+            action.connect_activate(move |_, parameter| {
+                if let Some(parameter) = parameter {
+                    if let Some(uri) = parameter.str() {
+                        let file = gio::File::for_uri(uri);
+                        if let Some(path) = file.path() {
+                            window.set_title(Some(format!("DAW - {}", path.to_string_lossy()).as_str()));
+                            let tx_from_ui = tx_from_ui.clone();
+                            let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
+                                if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
+                                    debug!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
+                                }
+                            });
+                        }
+                        else {
+                            debug!("Recent chooser item is not a local file: {:?}", uri);
+                        }
+                    }
+                }
+            });
+            action_window.add_action(&action);
+        }
+
+        // ----- the menu model: same structure as the old GtkMenuBar -----
+
+        let menu_bar_model = gio::Menu::new();
+
+        let file_menu = gio::Menu::new();
+        let file_io_section = gio::Menu::new();
+        file_io_section.append(Some("New"), Some("win.new"));
+        file_io_section.append(Some("Open"), Some("win.open"));
+        file_io_section.append(Some("Save"), Some("win.save"));
+        file_io_section.append(Some("Save As"), Some("win.save-as"));
+        file_menu.append_section(None, &file_io_section);
+
+        let recent_menu = gio::Menu::new();
+        let recent_files = crate::gtk4_compat::recent_files_from_settings();
+        for (uri, display) in &recent_files {
+            let label = match display {
+                Some(display) => display.clone(),
+                None => uri.rsplit('/').next().filter(|name| !name.is_empty()).unwrap_or(uri.as_str()).to_string(),
+            };
+            let item = gio::MenuItem::new(Some(label.as_str()), None);
+            item.set_action_and_target_value(Some("win.open-recent"), Some(&uri.to_variant()));
+            recent_menu.append_item(&item);
+        }
+        if recent_files.is_empty() {
+            recent_menu.append(Some("(no recent files)"), None);
+        }
+        file_menu.append_submenu(Some("Recent"), &recent_menu);
+
+        let file_transfer_section = gio::Menu::new();
+        file_transfer_section.append(Some("Import midi file"), Some("win.import-midi"));
+        file_transfer_section.append(Some("Import dawproject file"), Some("win.import-dawproject"));
+        file_transfer_section.append(Some("Export song to midi"), Some("win.export-midi"));
+        file_transfer_section.append(Some("Export riffs to midi"), Some("win.export-riffs-midi"));
+        file_transfer_section.append(Some("Export riffs to separate midi files"), Some("win.export-riffs-separate-midi"));
+        file_transfer_section.append(Some("Export song to dawproject"), Some("win.export-dawproject"));
+        file_menu.append_section(None, &file_transfer_section);
+
+        let file_export_section = gio::Menu::new();
+        file_export_section.append(Some("Export to wave file"), Some("win.export-wave"));
+        file_menu.append_section(None, &file_export_section);
+
+        let file_quit_section = gio::Menu::new();
+        file_quit_section.append(Some("Quit"), Some("win.quit"));
+        file_menu.append_section(None, &file_quit_section);
+        // mnemonic (_-underline) labels need the use-underline model attribute set.
+        let file_item = gio::MenuItem::new(Some("_File"), None);
+        file_item.set_submenu(Some(&file_menu));
+        file_item.set_attribute_value("use-underline", Some(&true.to_variant()));
+        menu_bar_model.append_item(&file_item);
+
+        let edit_menu = gio::Menu::new();
+        let edit_clipboard_section = gio::Menu::new();
+        edit_clipboard_section.append(Some("Cut"), Some("win.cut"));
+        edit_clipboard_section.append(Some("Copy"), Some("win.copy"));
+        edit_clipboard_section.append(Some("Paste"), Some("win.paste"));
+        edit_menu.append_section(None, &edit_clipboard_section);
+
+        let edit_riff_section = gio::Menu::new();
+        edit_riff_section.append(Some("Regenerate riff ref ids"), Some("win.regenerate-riff-ref-ids"));
+        edit_menu.append_section(None, &edit_riff_section);
+
+        let edit_preferences_section = gio::Menu::new();
+        edit_preferences_section.append(Some("Preferences"), Some("win.preferences"));
+        edit_menu.append_section(None, &edit_preferences_section);
+        let edit_item = gio::MenuItem::new(Some("_Edit"), None);
+        edit_item.set_submenu(Some(&edit_menu));
+        edit_item.set_attribute_value("use-underline", Some(&true.to_variant()));
+        menu_bar_model.append_item(&edit_item);
+
+        // the old menu bar carried an empty View entry - reproduced as a disabled
+        // placeholder so the bar reads File/Edit/View/Util/Help as before.
+        let view_item = gio::MenuItem::new(Some("_View"), None::<&str>);
+        view_item.set_attribute_value("use-underline", Some(&true.to_variant()));
+        menu_bar_model.append_item(&view_item);
+
+        let util_menu = gio::Menu::new();
+        util_menu.append(Some("Scan plugins"), Some("win.scan-plugins"));
+        let util_item = gio::MenuItem::new(Some("_Util"), None);
+        util_item.set_submenu(Some(&util_menu));
+        util_item.set_attribute_value("use-underline", Some(&true.to_variant()));
+        menu_bar_model.append_item(&util_item);
+
+        let help_menu = gio::Menu::new();
+        help_menu.append(Some("About"), Some("win.about"));
+        let help_item = gio::MenuItem::new(Some("_Help"), None);
+        help_item.set_submenu(Some(&help_menu));
+        help_item.set_attribute_value("use-underline", Some(&true.to_variant()));
+        menu_bar_model.append_item(&help_item);
+
+        self.ui.main_menu_bar.set_menu_model(Some(&menu_bar_model));
     }
 
     pub fn setup_main_tool_bar(

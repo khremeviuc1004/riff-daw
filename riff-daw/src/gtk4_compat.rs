@@ -1063,7 +1063,7 @@ fn variant_uri_and_display(variant: &glib::Variant) -> Option<(String, Option<St
     None
 }
 
-fn recent_files_from_settings() -> Vec<(String, Option<String>)> {
+pub fn recent_files_from_settings() -> Vec<(String, Option<String>)> {
     let mut recent = Vec::new();
     if let Some(schema_source) = gio::SettingsSchemaSource::default() {
         if schema_source.lookup("org.gtk.recent-files", true).is_none() {

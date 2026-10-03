@@ -15331,16 +15331,35 @@ fn create_jack_time_critical_event_processing_thread(
                 let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new() ;
 
                 loop {
-                    match jack_time_critical_midi_receiver.try_recv() {
-                        Ok(audio_layer_outward_event) => {
+                    // Block on the receiver instead of polling - the old pattern did a
+                    // single try_recv per iteration followed by an unconditional 10ms
+                    // sleep, so every live note waited up to 10ms and chords or fast
+                    // runs chained another 10ms behind each queued event.
+                    let mut maybe_event = match jack_time_critical_midi_receiver.recv() {
+                        Ok(audio_layer_outward_event) => Some(audio_layer_outward_event),
+                        Err(_) => {
+                            thread::sleep(Duration::from_millis(10));
+                            None
+                        }
+                    };
+                    while let Some(audio_layer_outward_event) = maybe_event {
+                        {
                             match audio_layer_outward_event {
                                 AudioLayerTimeCriticalOutwardEvent::MidiEvent(jack_midi_event) => {
                                     let midi_msg_type = jack_midi_event.data[0] as i32;
 
+                                    let mut selected_riff_uuid = None;
+                                    let mut selected_riff_track_uuid = None;
+                                    // routing and the record riff lookup need the same
+                                    // information - lock the shared state once per event
+                                    // (the old path locked three times per event, each
+                                    // lock a chance to stall behind the UI pump).
                                     match state.lock() {
                                         Ok(state) => {
                                             match state.selected_track() {
                                                 Some(track_uuid) => {
+                                                    selected_riff_track_uuid = Some(track_uuid.clone());
+                                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
                                                     match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
                                                         Some(track) => {
                                                             let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
@@ -15371,22 +15390,6 @@ fn create_jack_time_critical_event_processing_thread(
                                             }
                                         },
                                         Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - play note immediate - could not get lock on state"),
-                                    }
-                                    let mut selected_riff_uuid = None;
-                                    let mut selected_riff_track_uuid = None;
-                                    match state.lock() {
-                                        Ok(state) => {
-                                            selected_riff_track_uuid = state.selected_track();
-
-                                            match selected_riff_track_uuid {
-                                                Some(track_uuid) => {
-                                                    selected_riff_uuid = state.selected_riff_uuid(track_uuid.clone());
-                                                    selected_riff_track_uuid = Some(track_uuid);
-                                                },
-                                                None => (),
-                                            }
-                                        },
-                                        Err(_) => debug!("Main - jack_event_prcessing_thread processing loop - Record - could not get lock on state"),
                                     }
                                     match state.lock() {
                                         Ok(mut state) => {
@@ -15626,10 +15629,10 @@ fn create_jack_time_critical_event_processing_thread(
                                 }
                             }
                         }
-                        Err(_) => (),
+                        // drain everything that queued up behind the event we just
+                        // handled before waiting for the next one.
+                        maybe_event = jack_time_critical_midi_receiver.try_recv().ok();
                     }
-
-                    thread::sleep(Duration::from_millis(10));
                 }
             });
 }

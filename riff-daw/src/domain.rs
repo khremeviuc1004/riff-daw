@@ -5511,7 +5511,12 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 let track_render_audio_consumer_details =
                     AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), render_consumer_block);
 
-                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(2);
+                // Live monitoring ring: the producer free-runs and keeps this ring full,
+                // so every slot is one audio block of pure latency on the jack output
+                // (up to ~46ms per slot at 2048/44.1k). A single slot still hand-offs the
+                // block one cycle ahead of the jack consumption; a producer that is late
+                // only misses its own block (the mixer tolerates an empty read).
+                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(1);
                 let producer_ring_buffer_block = ring_buffer_block.producer();
                 let consumer_ring_buffer_block = ring_buffer_block.consumer();
                 let audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), consumer_ring_buffer_block);

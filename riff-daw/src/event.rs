@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 use jack::{MidiOut, Port};
 use rb::{Consumer, Producer, SpscRb};
@@ -484,7 +485,10 @@ pub enum TrackBackgroundProcessorInwardEvent {
     SetInstrumentParameter(i32, f32), // parameter index, value
 
     SetPresetData(String, Vec<String>), // instrument preset data, vector of effect preset data
-    RequestPresetData,
+    // The response travels on its own dedicated channel (not the multiplexed
+    // outward event channel) so a save can never pick up an unrelated queued
+    // event instead of the preset data it asked for.
+    RequestPresetData(Sender<TrackPluginPresetResponse>),
 
     PlayNoteImmediate(i32, i32), // note number, midi channel number
     StopNoteImmediate(i32, i32), // note number, midi channel number
@@ -518,11 +522,19 @@ pub enum TrackBackgroundProcessorInwardEvent {
     RemoveAudioReceiveRouting(String), // route uuid
 }
 
+// Preset state captured from the live plugin instances on a track background thread.
+// Returned on a dedicated one-shot channel carried inside RequestPresetData so the
+// save path never races the multiplexed UI event stream.
+pub struct TrackPluginPresetResponse {
+    pub track_uuid: String,
+    pub instrument_preset_data: String,
+    pub effect_presets: Vec<(String, String)>, // effect plugin uuid, base64 preset data
+}
+
 pub enum TrackBackgroundProcessorOutwardEvent {
     InstrumentParameters(Vec<(i32, String, Uuid, String, String, f32, String)>), // param index, track uuid, instrument uuid, param name, param label, param value, param text
     InstrumentName(String),
     EffectParameters(Vec<(String, i32, String, String, f32, String)>), // vector of plugin uuid, param index, param name, param label, param value, param text
-    GetPresetData(String, Vec<String>),
     InstrumentPluginWindowSize(String, i32, i32), // track uuid, width, height
     EffectPluginWindowSize(String, String, i32, i32), // track uuid, plugin uuid, width, height
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0

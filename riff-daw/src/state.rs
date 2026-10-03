@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
+use std::time::Duration;
 
 use apres::MIDI;
 use apres::MIDIEvent::{InstrumentName, TrackName};
@@ -19,7 +20,7 @@ use uuid::Uuid;
 use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
-use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
+use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
 use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
@@ -456,8 +457,12 @@ impl DAWState {
                         None
                     }
                 };
-                if let Some(preset_data) = preset {
-                    match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::SetPresetData(String::from(preset_data), effect_presets)) {
+                // restore presets whenever there is anything to restore - the old
+                // code gated effect presets on the instrument preset being non-empty,
+                // so a chunkless/failed instrument silently dropped every effect
+                // preset as well. Empty parts are skipped by the track thread.
+                if preset.is_some() || !effect_presets.is_empty() {
+                    match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::SetPresetData(preset.map(String::from).unwrap_or_default(), effect_presets)) {
                         Ok(_) => (),
                         Err(error) => debug!("Couldn't send instrument preset data: {:?}", error),
                     }
@@ -597,6 +602,10 @@ impl DAWState {
                         instrument.set_uid(scanned_plugin.id.clone());
                         instrument.set_sub_plugin_id(scanned_plugin.sub_id.clone());
                         instrument.set_plugin_type(scanned_plugin.audio_plugin_stack.to_string());
+                        // the freshly loaded plugin must not inherit the previous
+                        // plugin's preset chunk - it would be persisted against the
+                        // new plugin and corrupt the project on the next load.
+                        instrument.set_preset_data(String::new());
 
                         if scanned_plugin.path.contains(".so") || scanned_plugin.path.contains(".clap") || scanned_plugin.path.contains(".vst3") {
                             // instrument.load(vst_plugin_loaders, track_uuid.clone(), instrument_details, tx_audio.clone(), rx_vst, tx_from_vst, track_audio_coast);
@@ -693,12 +702,17 @@ impl DAWState {
         );
     }
 
-    fn request_presets_from_all_tracks(&mut self) {
+    // Requests the live plugin preset state from every track background thread.
+    // Each request carries a one-shot response channel, so the responses never
+    // share the multiplexed track->UI event channel (where the save path used
+    // to pick up unrelated queued events - level meters, automation, even a
+    // previous save's stale response - instead of the preset data it asked
+    // for, silently persisting outdated presets).
+    fn request_presets_from_all_tracks(&mut self) -> Vec<(String, Receiver<TrackPluginPresetResponse>)> {
         debug!("Entering request_presets_from_all_tracks...");
         let mut uuids = vec![];
         {
-            for track_type in self.get_project().song_mut().tracks_mut() {
-                debug!("Found track");
+            for track_type in self.get_project().song().tracks() {
                 match track_type {
                     TrackType::InstrumentTrack(track) => {
                         debug!("Adding instrument track uuid to vector: {}", track.uuid());
@@ -713,14 +727,16 @@ impl DAWState {
             }
         }
 
+        let mut response_receivers = vec![];
         {
             for uuid in uuids {
                 debug!("Found uuid in vector: {}", &uuid);
                 match self.instrument_track_senders_mut().get(&uuid) {
                     Some(sender) => {
                         debug!("State: requesting preset data from track with uuid: {}", uuid.clone());
-                        match sender.send(TrackBackgroundProcessorInwardEvent::RequestPresetData) {
-                            Ok(_) => (),
+                        let (response_sender, response_receiver) = channel::<TrackPluginPresetResponse>();
+                        match sender.send(TrackBackgroundProcessorInwardEvent::RequestPresetData(response_sender)) {
+                            Ok(_) => response_receivers.push((uuid, response_receiver)),
                             Err(error) => debug!("Problem requesting vst preset data for track: {}", error),
                         }
                     }
@@ -729,94 +745,80 @@ impl DAWState {
             }
         }
         debug!("Exiting request_presets_from_all_tracks.");
+        response_receivers
     }
 
-    fn save_presets_for_all_tracks(&mut self) {
+    fn save_presets_for_all_tracks(&mut self, preset_responses: Vec<(String, Receiver<TrackPluginPresetResponse>)>) {
         debug!("Entering save_presets_for_all_tracks...");
-        let mut presets = HashMap::new();
+        for (track_uuid, response_receiver) in preset_responses {
+            // all requests were dispatched before collecting, so these waits
+            // overlap rather than stack up; the timeout means a wedged or dead
+            // plugin thread can never freeze the save (and the state mutex)
+            // forever, and the previously stored presets are kept untouched.
+            let response = match response_receiver.recv_timeout(Duration::from_millis(1500)) {
+                Ok(response) => response,
+                Err(error) => {
+                    debug!("No preset data received for track {} ({}) - keeping previously stored presets.", track_uuid, error);
+                    continue;
+                }
+            };
 
-        {
-            let track_data = self.get_project().song_mut().tracks_mut().iter_mut().map(|track| (track.uuid().to_string(), match track {
-                TrackType::InstrumentTrack(_) => GeneralTrackType::InstrumentTrack,
-                TrackType::AudioTrack(_) => GeneralTrackType::AudioTrack,
-                TrackType::MidiTrack(_) => GeneralTrackType::MidiTrack,
-            })).collect_vec();
-            for (track_uuid, track_type) in track_data.iter() {
+            for track_type in self.get_project().song_mut().tracks_mut() {
                 match track_type {
-                    GeneralTrackType::InstrumentTrack => {
-                        if let Some((uuid, track_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
-                            match track_outward_receiver.recv() {
-                                Ok(preset_data) => {
-                                    debug!("Instrument track preset data received: {}", uuid.clone());
-                                    presets.insert(String::from(uuid.as_str()), preset_data);
-                                },
-                                Err(error) => debug!("Problem receiving instrument track thread plugin preset data for track uuid: {} {}", uuid.clone(), error),
-                            }
+                    TrackType::InstrumentTrack(track) => {
+                        if track.uuid().to_string() != response.track_uuid {
+                            continue;
                         }
-                    },
-                    GeneralTrackType::AudioTrack => {
-                        if let Some((uuid, track_outward_receiver)) = self.instrument_track_receivers_mut().iter_mut().find(|(uuid, _)| *track_uuid == **uuid) {
-                            match track_outward_receiver.recv() {
-                                Ok(preset_data) => {
-                                    debug!("Audio track preset data received: {}", uuid.clone());
-                                    presets.insert(String::from(uuid.as_str()), preset_data);
-                                },
-                                Err(error) => debug!("Problem receiving audio track thread plugin preset data for track uuid: {} {}", uuid.clone(), error),
-                            }
+                        // an empty capture means the plugin could not deliver its
+                        // state (e.g. a chunkless plugin) - never let that wipe a
+                        // good preset out of the project.
+                        if !response.instrument_preset_data.is_empty() {
+                            track.instrument_mut().set_preset_data(response.instrument_preset_data.clone());
                         }
+                        else {
+                            debug!("Empty instrument preset captured for track {} - keeping previously stored preset.", track_uuid);
+                        }
+                        Self::apply_captured_effect_presets(track.effects_mut(), &response.effect_presets);
+                        break;
                     },
-                    _ => (),
-                }
-            }
-        }
-
-        {
-            for (uuid, preset_data) in presets {
-                for track_type in self.get_project().song_mut().tracks_mut() {
-                    match track_type {
-                        TrackType::InstrumentTrack(track) => {
-                            if track.uuid().to_string().as_str() == uuid.as_str() {
-                                if let TrackBackgroundProcessorOutwardEvent::GetPresetData(instrument_preset, effect_presets)  = preset_data {
-                                    track.instrument_mut().set_preset_data(instrument_preset);
-                                    let mut index = 0;
-                                    for effect_preset in effect_presets {
-                                        match track.effects_mut().get_mut(index) {
-                                            Some(effect) => effect.set_preset_data(effect_preset),
-                                            None => debug!("Effect could not be found for effect preset data at index: {}", index),
-                                        }
-                                        index += 1;
-                                    }
-                                }
-                                break;
-                            }
-                        },
-                        TrackType::AudioTrack(track) => {
-                            if track.uuid().to_string().as_str() == uuid.as_str() {
-                                if let TrackBackgroundProcessorOutwardEvent::GetPresetData(_instrument_preset, effect_presets)  = preset_data {
-                                    let mut index = 0;
-                                    for effect_preset in effect_presets {
-                                        match track.effects_mut().get_mut(index) {
-                                            Some(effect) => effect.set_preset_data(effect_preset),
-                                            None => debug!("Effect could not be found for effect preset data at index: {}", index),
-                                        }
-                                        index += 1;
-                                    }
-                                }
-                                break;
-                            }
-                        },
-                        TrackType::MidiTrack(_) => (),
-                    }
-                }
+                    TrackType::AudioTrack(track) => {
+                        if track.uuid().to_string() != response.track_uuid {
+                            continue;
+                        }
+                        Self::apply_captured_effect_presets(track.effects_mut(), &response.effect_presets);
+                        break;
+                    },
+                    TrackType::MidiTrack(_) => (),
+                };
             }
         }
         debug!("Exiting save_presets_for_all_tracks...");
     }
 
+    fn apply_captured_effect_presets(effects: &mut Vec<AudioPlugin>, captured_presets: &Vec<(String, String)>) {
+        for effect in effects.iter_mut() {
+            let effect_uuid = effect.uuid().to_string();
+            // matched by plugin uuid, not position: a failed/removed effect
+            // instance used to shift every later preset onto the wrong plugin.
+            match captured_presets.iter().find(|(captured_uuid, _)| *captured_uuid == effect_uuid) {
+                Some((_, preset_data)) if !preset_data.is_empty() => effect.set_preset_data(preset_data.clone()),
+                Some(_) => debug!("No captured preset state for effect {} - keeping previously stored preset.", effect_uuid),
+                None => debug!("Effect {} is not live on the track thread - keeping previously stored preset.", effect_uuid),
+            }
+        }
+    }
+
+    // Pulls the live plugin state into the domain model before the project is
+    // serialised (save / save-as / autosave / export) so what goes to disk
+    // matches what the plugins are actually playing.
+    pub fn capture_plugin_presets(&mut self) {
+        let preset_responses = self.request_presets_from_all_tracks();
+        self.save_presets_for_all_tracks(preset_responses);
+    }
+
     pub fn save(&mut self) {
         debug!("Entering save...");
-        self.request_presets_from_all_tracks();
-        self.save_presets_for_all_tracks();
+        self.capture_plugin_presets();
 
         self.get_project().song_mut().recalculate_song_length();
 
@@ -846,8 +848,7 @@ impl DAWState {
 
     pub fn autosave(&mut self) {
         debug!("Entering autosave...");
-        self.request_presets_from_all_tracks();
-        self.save_presets_for_all_tracks();
+        self.capture_plugin_presets();
 
         self.get_project().song_mut().recalculate_song_length();
 
@@ -882,8 +883,7 @@ impl DAWState {
     }
 
     pub fn save_as(&mut self, path: &str) {
-        self.request_presets_from_all_tracks();
-        self.save_presets_for_all_tracks();
+        self.capture_plugin_presets();
 
         self.current_file_path = Some(path.to_string());
         match serde_json::to_string_pretty(self.get_project()) {

@@ -55,16 +55,28 @@ public:
     }
     Steinberg::tresult PLUGIN_API write (void* buffer, Steinberg::int32 numBytes, Steinberg::int32* numBytesWritten = nullptr) override
     {
-        std::cout << "PresetStream::write called: numBytes=" << numBytes << std::endl;
+        // std::cout << "PresetStream::write called: numBytes=" << numBytes << std::endl;
         uint8_t* read_buffer = static_cast<uint8_t*>(buffer);
+        Steinberg::int32 spaceAvailable = data.length() - bytesWritten;
+        if (numBytes > spaceAvailable)
+        {
+            // the state does not fit the caller's buffer - keep what fits but flag
+            // the capture as invalid so vst3_plugin_get_preset discards it rather
+            // than persisting a corrupted preset.
+            std::cout << "PresetStream::write: state exceeds the " << data.length()
+                      << " byte buffer - discarding capture." << std::endl;
+            truncated = true;
+            numBytes = spaceAvailable > 0 ? spaceAvailable : 0;
+        }
         for (auto index = 0; index < numBytes; index++)
         {
-            data[index] = read_buffer[index];
+            // append at the current write offset - the old code always wrote from
+            // byte 0, so every write of a multi-write getState() call overwrote the
+            // start of the buffer and the captured state was garbage.
+            data[bytesWritten + index] = read_buffer[index];
         }
         bytesWritten += numBytes;
-        std::cout << std::endl;
-
-        std::cout << "PresetStream::write called: data.size()=" << data.size() << ", data.length()=" << data.length() << std::endl;
+        streamPosition = bytesWritten;
 
         if (numBytesWritten != nullptr)
         {
@@ -74,20 +86,51 @@ public:
     }
     Steinberg::tresult PLUGIN_API seek (Steinberg::int64 pos, Steinberg::int32 mode, Steinberg::int64* result = nullptr) override
     {
-        std::cout << "PresetStream::seek called." << std::endl;
+        Steinberg::int64 length = isWriting() ? bytesWritten : data.length();
+        Steinberg::int64 newPosition = streamPosition;
+        switch (mode)
+        {
+            case kIBSeekSet:
+                newPosition = pos;
+                break;
+            case kIBSeekCur:
+                newPosition = streamPosition + pos;
+                break;
+            case kIBSeekEnd:
+                newPosition = length + pos;
+                break;
+            default:
+                return Steinberg::kResultFalse;
+        }
+        if (newPosition < 0)
+        {
+            return Steinberg::kResultFalse;
+        }
+        streamPosition = static_cast<Steinberg::int32>(newPosition);
+        if (result != nullptr)
+        {
+            *result = newPosition;
+        }
         return Steinberg::kResultOk;
     }
     Steinberg::tresult PLUGIN_API tell (Steinberg::int64* pos) override
     {
-        std::cout << "PresetStream::tell called." << std::endl;
+        if (pos != nullptr)
+        {
+            *pos = streamPosition;
+        }
         return Steinberg::kResultOk;
     }
 
     int getBytesWritten() {return bytesWritten;}
+    bool wasTruncated() {return truncated;}
 
 private:
+    bool isWriting() {return bytesWritten > 0;}
+
     rust::Slice<uint8_t> data;
     int bytesWritten = 0;
+    bool truncated = false;
     Steinberg::int32 streamPosition = 0;
 };
 
@@ -1255,7 +1298,16 @@ int32_t vst3_plugin_get_preset(rust::String riff_daw_plugin_uuid, rust::Slice<ui
         Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
         PresetStream presetStream(preset_buffer);
         Steinberg::Vst::IComponent* component = vst3PluginHandler.getComponentPtr();
-        component->getState(&presetStream);
+        Steinberg::tresult result = component->getState(&presetStream);
+
+        // only hand back a complete, successful capture - returning a partial or
+        // failed state would persist a corrupt preset that breaks the next load.
+        if (result != Steinberg::kResultOk || presetStream.wasTruncated())
+        {
+            std::cout << "vst3_plugin_get_preset: state capture failed (result=" << result
+                      << ", truncated=" << presetStream.wasTruncated() << ")." << std::endl;
+            return 0;
+        }
 
         return presetStream.getBytesWritten();
     }
@@ -1274,7 +1326,15 @@ void vst3_plugin_set_preset(rust::String riff_daw_plugin_uuid, rust::Slice<uint8
         Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
         PresetStream presetStream(preset_buffer);
         Steinberg::Vst::IComponent* component = vst3PluginHandler.getComponentPtr();
-        component->setState(&presetStream);
+        // VST3 state may only be changed while the component is suspended -
+        // many plugins ignore (or corrupt state with) setState during processing.
+        vst3PluginHandler.setProcessing(false);
+        Steinberg::tresult result = component->setState(&presetStream);
+        if (result != Steinberg::kResultOk)
+        {
+            std::cout << "vst3_plugin_set_preset: setState failed (result=" << result << ")." << std::endl;
+        }
+        vst3PluginHandler.setProcessing(true);
     }
     catch(const std::out_of_range& ex)
     {

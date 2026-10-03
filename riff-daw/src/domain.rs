@@ -24,7 +24,7 @@ use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
 use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGestureBegin, ParamGestureEnd, ParamValue};
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
-use crate::{audio_plugin_util::*, constants::CONFIGURATION_FILE_NAME, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent}, GeneralTrackType};
+use crate::{audio_plugin_util::*, constants::CONFIGURATION_FILE_NAME, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse}, GeneralTrackType};
 use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::EventProcessorType;
 use crate::state::MidiPolyphonicExpressionNoteId;
@@ -3854,7 +3854,7 @@ pub struct TrackBackgroundProcessorHelper {
     pub midi_sender: SendEventBuffer,
     pub instrument_plugin_initial_delay: i32,
     pub instrument_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
-    pub request_preset_data: bool,
+    pub pending_preset_response_sender: Option<Sender<TrackPluginPresetResponse>>,
     pub effect_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
     pub vst_editor: Option<Box<dyn Editor>>,
     pub vst_effect_editors: HashMap<String, Box<dyn Editor>>,
@@ -3920,7 +3920,7 @@ impl TrackBackgroundProcessorHelper {
             midi_sender: SendEventBuffer::new(EVENT_BUFFER_SIZE),
             instrument_plugin_initial_delay: 0,
             instrument_plugin_instances: vec![],
-            request_preset_data: false,
+            pending_preset_response_sender: None,
             effect_plugin_instances: vec![],
             vst_editor: None,
             vst_effect_editors: HashMap::new(),
@@ -4251,22 +4251,31 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 TrackBackgroundProcessorInwardEvent::SetPresetData(instrument_preset_data, effect_presets) => {
-                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
-                        instrument_plugin.set_preset_data(instrument_preset_data);
+                    // an empty string means "no captured state" (e.g. a chunkless plugin
+                    // or a failed capture) - applying it would reset the plugin.
+                    if !instrument_preset_data.is_empty() {
+                        if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                            instrument_plugin.set_preset_data(instrument_preset_data);
+                        }
                     }
                     let mut index = 0;
                     for effect in self.effect_plugin_instances.iter_mut() {
                         match effect_presets.get(index) {
                             Some(effect_preset_data) => {
-                                effect.set_preset_data(effect_preset_data.clone());
+                                if !effect_preset_data.is_empty() {
+                                    effect.set_preset_data(effect_preset_data.clone());
+                                }
                             },
                             None => debug!("Could not set preset for effect at index: {}", index),
                         }
                         index += 1;
                     }
                 },
-                TrackBackgroundProcessorInwardEvent::RequestPresetData => {
-                    self.request_preset_data = true;
+                TrackBackgroundProcessorInwardEvent::RequestPresetData(response_sender) => {
+                    // keep only the newest request - one response satisfies it and any
+                    // earlier (superseded) request's receiver will simply be dropped,
+                    // letting its waiter fail cleanly instead of getting stale data.
+                    self.pending_preset_response_sender = Some(response_sender);
                     debug!("Track audio - Received RequestPresetData for track: {}", self.track_uuid.clone());
                 },
                 TrackBackgroundProcessorInwardEvent::Mute => {
@@ -4840,7 +4849,7 @@ impl TrackBackgroundProcessorHelper {
     }
 
     pub fn handle_request_plugin_preset_data(&mut self) {
-        if self.request_preset_data {
+        if let Some(response_sender) = self.pending_preset_response_sender.take() {
             let mut effect_presets = vec![];
 
             let instrument_preset = if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
@@ -4851,17 +4860,22 @@ impl TrackBackgroundProcessorHelper {
             };
 
             for effect in self.effect_plugin_instances.iter_mut() {
-                effect_presets.push(
-                    effect.preset_data()
-                );
+                // uuid keyed so the save path can match presets to effects by identity
+                // rather than position (a failed/removed effect used to shift every
+                // later preset onto the wrong plugin).
+                effect_presets.push((effect.uuid().to_string(), effect.preset_data()));
             }
 
-            match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::GetPresetData(instrument_preset, effect_presets)) {
+            let response = TrackPluginPresetResponse {
+                track_uuid: self.track_uuid.clone(),
+                instrument_preset_data: instrument_preset,
+                effect_presets,
+            };
+
+            match response_sender.send(response) {
                 Ok(_) => debug!("Preset data sent for track uuid: {}", self.track_uuid.clone()),
-                Err(error) => debug!("Problem sending preset data from VST thread to state: {}", error),
+                Err(error) => debug!("Problem sending preset data from VST thread to state: {:?}", error),
             }
-
-            self.request_preset_data = false;
         }
     }
 

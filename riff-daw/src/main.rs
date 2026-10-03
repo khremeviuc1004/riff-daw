@@ -1022,13 +1022,17 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let tx_from_ui = tx_from_ui;
                     let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
                         match state.lock() {
-                            Ok(state) => {
+                            Ok(mut state) => {
                                 debug!("Main - rx_ui processing loop - Export Dawproject File - attempting to export.");
+                                // pull the live plugin state first - the export writes
+                                // whatever the domain model holds, which without this
+                                // could be a stale preset from the last manual save.
+                                state.capture_plugin_presets();
                                 if let Err(error) = dawproject_parser::write_dawproject(state.project(), path.to_str().unwrap()) {
                                     let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, format!("Could not export dawproject file: {}", error)));
                                 }
                             }
-                            Err(_) => debug!("Main - rx_ui processing loop - Export Dawproject File - could not get lock on state"),
+                            Err(_) => debug!("Main - rx_ui processing loop - Export Dawproject File - could not lock on state"),
                         }
                         let _ = tx_from_ui.send(DAWEvents::HideProgressDialogue);
                     }));
@@ -15936,7 +15940,6 @@ fn process_track_background_processor_events(
                             });
                             plugins_to_plugin_params_map.insert(plugin_uuid, parameter_details);
                         },
-                        TrackBackgroundProcessorOutwardEvent::GetPresetData(_, _) => (),
                         TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(track_uuid, plugin_window_width, plugin_window_height) => {
                             state.project().song().tracks().iter().for_each(|track_type| {
                                 match track_type {

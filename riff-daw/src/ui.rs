@@ -1840,25 +1840,11 @@ impl MainWindow {
         // propagate-natural-height on the strip in daw.ui), so no head is ever
         // clipped vertically. mirror the same height onto the "new riff set" strip
         // above the track detail panels in the left column so both columns start
-        // their track panels/blade rows at the same vertical position.
-        {
-            let heads_box = ui.riff_set_heads_box.clone();
-            let track_panels_scrolled_window = ui.riff_sets_track_panel_scrolled_window.clone();
-            let sync_heads_box = heads_box.clone();
-            let sync_strip_heights = move || {
-                let (_, natural_height, _, _) = sync_heads_box.measure(Orientation::Vertical, -1);
-                if let Some(new_riff_set_strip) = track_panels_scrolled_window.prev_sibling() {
-                    if natural_height > 0 {
-                        new_riff_set_strip.set_height_request(natural_height);
-                    }
-                }
-            };
-            sync_strip_heights();
-            let notify_sync_strip_heights = sync_strip_heights.clone();
-            heads_box.connect_notify_local(Some("children"), move |_heads_box, _param_spec| {
-                notify_sync_strip_heights();
-            });
-        }
+        // their track panels/blade rows at the same vertical position. the sync is
+        // also called wherever heads are added (update_riff_sets and the add riff
+        // set button) - GTK4 does not notify when a GtkBox's children change, so
+        // there is no signal to hook.
+        MainWindow::sync_riff_set_strip_heights(&ui.riff_sets_view_port, &ui.riff_sets_track_panel_scrolled_window);
         main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new());
         MainWindow::setup_riff_set_drag_and_drop(ui.riff_set_heads_box.clone(), ui.riff_sets_box.clone(), ui.riff_set_horizontal_adjustment.clone(), ui.riff_sets_view_port.clone(), RiffSetType::RiffSet, tx_from_ui.clone());
 
@@ -2175,6 +2161,10 @@ impl MainWindow {
         // reset loops
         self.ui.loop_combobox_text.remove_all();
         self.ui.loop_combobox_text_entry.set_text("");
+
+        // the heads have been removed, re-mirror the (now minimal) head strip
+        // height onto the "new riff set" strip above the track panels
+        MainWindow::sync_riff_set_strip_heights(&self.ui.riff_sets_view_port, &self.ui.riff_sets_track_panel_scrolled_window);
     }
 
     pub fn change_track_name(&mut self, track_uuid: String, track_name: String) {
@@ -8573,6 +8563,8 @@ impl MainWindow {
             let state_arc = state_arc;
             let selected_track_style_provider = self.selected_style_provider.clone();
             let riff_set_view_riff_set_beat_grids = self.riff_set_view_riff_set_beat_grids.clone();
+            let riff_sets_view_port = self.ui.riff_sets_view_port.clone();
+            let riff_sets_track_panel_scrolled_window = self.ui.riff_sets_track_panel_scrolled_window.clone();
             self.ui.add_riff_set_btn.connect_clicked(move |_| {
                 if new_riff_set_name_entry.text().len() > 0 {
                     let riff_set_uuid = Uuid::new_v4();
@@ -8628,6 +8620,10 @@ impl MainWindow {
                     riff_set_blade_head.riff_set_name_entry.set_text(new_riff_set_name_entry.text().as_str());
                     riff_set_blade_head.riff_set_name_entry.set_tooltip_text(Some(new_riff_set_name_entry.text().as_str()));
                     new_riff_set_name_entry.set_text("");
+
+                    // the new head may be the first one, re-mirror the head strip's
+                    // height onto the "new riff set" strip above the track panels
+                    MainWindow::sync_riff_set_strip_heights(&riff_sets_view_port, &riff_sets_track_panel_scrolled_window);
                 }
                 else {
                     crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a riff set name.", &["Close"]);
@@ -11280,6 +11276,26 @@ impl MainWindow {
         }
     }
 
+    /// Mirror the natural height of the riff set view's blade head strip (the
+    /// scrolled window holding `heads_viewport`'s heads box) onto the "new riff
+    /// set" strip above the track panels in the left column so both columns
+    /// start their track panels/blade rows at the same vertical position. The
+    /// head strip's scrolled window itself is measured (rather than the heads
+    /// box) so its frame border counts on both sides. Called explicitly after
+    /// heads are added because GTK4 does not notify when a GtkBox's children
+    /// change (the old notify::children handler never fired, leaving the strip
+    /// at its grid's height request and visibly shorter than the heads).
+    pub fn sync_riff_set_strip_heights(heads_viewport: &Viewport, track_panels_scrolled_window: &ScrolledWindow) {
+        let Some(head_strip) = heads_viewport
+            .ancestor(ScrolledWindow::static_type())
+            .and_then(|ancestor| ancestor.downcast::<ScrolledWindow>().ok()) else { return };
+        let Some(new_riff_set_strip) = track_panels_scrolled_window.prev_sibling() else { return };
+        let (_, natural_height, _, _) = head_strip.measure(Orientation::Vertical, -1);
+        if natural_height > 0 {
+            new_riff_set_strip.set_height_request(natural_height);
+        }
+    }
+
     pub fn update_riff_sets(&mut self, tx_from_ui: &Sender<DAWEvents>, state: &mut DAWState, state_arc: &Arc<Mutex<DAWState>>, track_uuids: &mut Vec<String>) {
         // remove the current riff sets
         for widget in self.ui.riff_sets_box.children().iter() {
@@ -11307,6 +11323,10 @@ impl MainWindow {
                 None,
             );
         }
+
+        // re-mirror the head strip's height (now that it holds heads) onto the
+        // "new riff set" strip above the track panels
+        MainWindow::sync_riff_set_strip_heights(&self.ui.riff_sets_view_port, &self.ui.riff_sets_track_panel_scrolled_window);
     }
 
     pub fn update_track_details_dialogue(

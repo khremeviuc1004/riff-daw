@@ -635,6 +635,10 @@ pub struct BeatGrid {
     pub draw_play_cursor: bool,
 
     pub drawing_area_type: Option<DrawingAreaType>,
+
+    // themed cursors aren't Send so they can't live in a static; create the
+    // crosshair once per grid instead of on every paint
+    crosshair_cursor: Option<gdk4::Cursor>,
 }
 
 impl BeatGrid {
@@ -727,6 +731,7 @@ impl BeatGrid {
             draw_play_cursor: true,
 
             drawing_area_type,
+            crosshair_cursor: None,
         }
     }
 
@@ -831,6 +836,7 @@ impl BeatGrid {
             draw_play_cursor: true,
 
             drawing_area_type,
+            crosshair_cursor: None,
         }
     }
 
@@ -937,6 +943,7 @@ impl BeatGrid {
             draw_play_cursor: true,
 
             drawing_area_type,
+            crosshair_cursor: None,
         }
     }
 
@@ -1646,7 +1653,14 @@ impl Grid for BeatGrid {
         let width = drawing_area.size(gtk4::Orientation::Horizontal) as f64;
 
         if let Some(window) = drawing_area.native().and_then(|native| native.surface()) {
-            window.set_cursor(gdk4::Cursor::from_name("crosshair", None).as_ref());
+            // cache the themed cursor - gdk4::Cursor isn't Send so it can't
+            // live in a static, but creating it on every paint turned a scroll
+            // (which repaints every blade area) into hundreds of cursor theme
+            // lookups per frame
+            if self.crosshair_cursor.is_none() {
+                self.crosshair_cursor = gdk4::Cursor::from_name("crosshair", None);
+            }
+            window.set_cursor(self.crosshair_cursor.as_ref());
         }
 
         self.paint_vertical_scale(context, height, width, drawing_area);

@@ -1300,6 +1300,13 @@ impl MainWindow {
     /// into the area's snapshot and would stay blank until the next scroll or
     /// mouse motion happened to trigger a redraw (same effect that
     /// `connect_scroll_repaint` works around for scrolling).
+    ///
+    /// A loaded project puts a drawing area per track in every blade, so the
+    /// subtree holds thousands of areas. Queueing all of them on every
+    /// adjustment event repaints the entire scrollback (each area re-running
+    /// its draw func and locking its grid) on every scroll tick and stuttering
+    /// badly, so redraws are limited to the areas intersecting the visible
+    /// viewport and coalesced to one pass per idle cycle.
     fn connect_resize_repaint(&self) {
         fn collect_drawing_areas(widget: &Widget, areas: &mut Vec<DrawingArea>) {
             if let Some(area) = widget.downcast_ref::<DrawingArea>() {
@@ -1312,21 +1319,57 @@ impl MainWindow {
             }
         }
 
-        fn repaint_drawing_areas(widget: &Widget) {
+        // only queue areas that intersect the viewport's visible rectangle -
+        // areas fully scrolled out of view cannot change on screen and
+        // queueing them makes GTK4 re-snapshot them for no visible effect
+        fn repaint_visible_drawing_areas(root: &Widget, viewport: &Viewport) {
             let mut areas = vec![];
-            collect_drawing_areas(widget, &mut areas);
+            collect_drawing_areas(root, &mut areas);
+            let viewport_width = viewport.width() as f32;
+            let viewport_height = viewport.height() as f32;
             for area in areas.iter() {
-                area.queue_draw();
+                if let Some(bounds) = area.compute_bounds(viewport) {
+                    if bounds.x() + bounds.width() > 0.0
+                        && bounds.y() + bounds.height() > 0.0
+                        && bounds.x() < viewport_width
+                        && bounds.y() < viewport_height
+                    {
+                        area.queue_draw();
+                    }
+                }
             }
         }
 
-        let blade_bodies = self.ui.riff_sets_scrolled_window.clone();
-        let blade_heads = self.ui.riff_sets_view_port.clone();
-        let track_panels = self.ui.riff_sets_track_panel_scrolled_window.clone();
+        fn find_viewport(root: &Widget) -> Option<Viewport> {
+            if let Some(viewport) = root.downcast_ref::<Viewport>() {
+                return Some(viewport.clone());
+            }
+            let scrolled_window = root.downcast_ref::<ScrolledWindow>()?;
+            scrolled_window.child()?.downcast::<Viewport>().ok()
+        }
+
+        let roots: Vec<(Widget, Viewport)> = [
+            self.ui.riff_sets_scrolled_window.clone().upcast(),
+            self.ui.riff_sets_view_port.clone().upcast(),
+            self.ui.riff_sets_track_panel_scrolled_window.clone().upcast(),
+        ]
+            .into_iter()
+            .filter_map(|root| find_viewport(&root).map(|viewport| (root, viewport)))
+            .collect();
+
+        let repaint_pending = std::rc::Rc::new(std::cell::Cell::new(false));
         let repaint_all = move || {
-            repaint_drawing_areas(blade_bodies.upcast_ref());
-            repaint_drawing_areas(blade_heads.upcast_ref());
-            repaint_drawing_areas(track_panels.upcast_ref());
+            if repaint_pending.replace(true) {
+                return;
+            }
+            let repaint_pending = repaint_pending.clone();
+            let roots = roots.clone();
+            glib::idle_add_local_once(move || {
+                repaint_pending.set(false);
+                for (root, viewport) in roots.iter() {
+                    repaint_visible_drawing_areas(root, viewport);
+                }
+            });
         };
 
         // dragging the split pane of the riff set view

@@ -8692,7 +8692,12 @@ impl MainWindow {
             let riff_set_box = riff_arrangement_riff_set_blade.riff_set_box.clone();
 
             riff_arrangement_riff_set_blade.riff_set_scrolled_window.set_vadjustment(vertical_adjustment);
-            riff_arrangement_riff_set_blade.riff_set_scrolled_window.set_vscrollbar_policy(PolicyType::Never);
+            // external (like the sequence and grid item columns and the other
+            // riff views) - a never-policy window silently swallows wheel
+            // events instead of driving the shared vertical adjustment, so
+            // scrolling over a riff set column left the track panels (and the
+            // other columns) frozen.
+            riff_arrangement_riff_set_blade.riff_set_scrolled_window.set_vscrollbar_policy(PolicyType::External);
             riff_set_head_box.pack_start(&riff_set_blade_head.riff_set_blade, false, false, 2);
             riff_set_box.pack_start(&riff_set_blade.riff_set_box, false, false, 2);
             riff_sets_box.append(&local_riff_set_box);
@@ -9060,6 +9065,7 @@ impl MainWindow {
             let state_arc = state_arc;
             let selected_track_style_provider = self.selected_style_provider.clone();
             let riff_sequence_vertical_adjustment = self.ui.riff_sequence_vertical_adjustment.clone();
+            let riff_sequences_track_panel_scrolled_window = self.ui.riff_sequences_track_panel_scrolled_window.clone();
             self.ui.add_sequence_btn.connect_clicked(move |_| {
                 riff_sequences_box.children().iter_mut().for_each(|child| child.set_visible(false));
                 if riff_sequence_name_entry.text().len() > 0 {
@@ -9083,6 +9089,9 @@ impl MainWindow {
                         riff_sequence_blade.riff_sequence_name_entry.set_text(riff_sequence_name.as_str());
                         riff_sequence_name_entry.set_text("");
                     }
+
+                    // line the strip above the track panels up with the new blade
+                    MainWindow::sync_riff_sequence_strip_heights(&riff_sequences_box, &riff_sequences_track_panel_scrolled_window);
                 }
                 else {
                     crate::gtk4_compat::alert_dialog(None::<&gtk4::Window>, "Need a sequence name.", &["Close"]);
@@ -11211,6 +11220,10 @@ impl MainWindow {
         if restore_selected {
             self.ui.sequence_combobox.set_active(selected_index);
         }
+
+        // line the strip above the track panels up with the top of the first
+        // riff drawing area in the blades
+        MainWindow::sync_riff_sequence_strip_heights(&self.ui.riff_sequences_box, &self.ui.riff_sequences_track_panel_scrolled_window);
     }
 
     pub fn update_riff_grids(
@@ -11293,6 +11306,74 @@ impl MainWindow {
         let (_, natural_height, _, _) = head_strip.measure(Orientation::Vertical, -1);
         if natural_height > 0 {
             new_riff_set_strip.set_height_request(natural_height);
+        }
+    }
+
+    /// Mirror the distance from the top of a riff sequence blade to the top of
+    /// its first riff drawing area (the blade's controls area plus the riff
+    /// set head strip) onto the strip above the track panels in the left
+    /// column of the riff sequence view, so the track panels line up with the
+    /// drawing areas below. The offset is measured from the live geometry of
+    /// a blade (the body viewport sits exactly where the track drawing areas
+    /// start) because it depends on the theme's control heights, spacing and
+    /// frame borders. Blades are built hidden (one sequence visible at a
+    /// time) and are only allocated once shown, so when nothing has been
+    /// laid out yet the measurement is deferred until the blade maps.
+    pub fn sync_riff_sequence_strip_heights(sequences_box: &Box, track_panels_scrolled_window: &ScrolledWindow) {
+        fn find_body_viewport(widget: &Widget) -> Option<Widget> {
+            if widget.widget_name() == "riff_sequence_riff_sets_scrolled_window" {
+                return widget.first_child();
+            }
+            let mut child = widget.first_child();
+            while let Some(current_child) = child {
+                if let Some(found) = find_body_viewport(&current_child) {
+                    return Some(found);
+                }
+                child = current_child.next_sibling();
+            }
+            None
+        }
+
+        fn mirror_strip_height(blade: &Widget, body_viewport: &Widget, strip: &Widget) -> bool {
+            let Some(bounds) = body_viewport.compute_bounds(blade) else { return false };
+            let height = bounds.y().max(0.0) as i32;
+            if height <= 0 {
+                return false;
+            }
+            strip.set_height_request(height);
+            true
+        }
+
+        let Some(new_riff_sequence_strip) = track_panels_scrolled_window.prev_sibling() else { return };
+        // all blades share the same layout, measure any that have been laid out
+        let mut deferred_viewports = vec![];
+        for blade in sequences_box.children().iter() {
+            let Some(body_viewport) = find_body_viewport(blade) else { continue };
+            if mirror_strip_height(blade, &body_viewport, &new_riff_sequence_strip) {
+                return;
+            }
+            deferred_viewports.push((blade.clone(), body_viewport));
+        }
+        if deferred_viewports.is_empty() {
+            return;
+        }
+
+        // no blade has been allocated yet (hidden blades are only laid out when
+        // their sequence is selected and the view shown) - remeasure on the
+        // first map of any blade's body viewport; mapping happens during the
+        // frame's layout pass, so finish the frame (idle) before reading the
+        // geometry
+        let strip_clone = new_riff_sequence_strip.clone();
+        for (blade, body_viewport) in deferred_viewports {
+            let blade_clone = blade.clone();
+            let viewport_clone = body_viewport.clone();
+            let strip = strip_clone.clone();
+            body_viewport.connect_map(move |_viewport| {
+                let (blade, body_viewport, strip) = (blade_clone.clone(), viewport_clone.clone(), strip.clone());
+                glib::idle_add_local_once(move || {
+                    mirror_strip_height(&blade, &body_viewport, &strip);
+                });
+            });
         }
     }
 

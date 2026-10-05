@@ -3632,7 +3632,7 @@ pub enum AudioPluginCategory {
     MidiGenerator
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AudioPlugin {
     uuid: Uuid,
 	name: String,
@@ -6969,7 +6969,7 @@ impl AudioEffectTrack for AudioTrack {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Loop {
     uuid: Uuid,
 	name: String,

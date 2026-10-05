@@ -7,7 +7,7 @@ use log::*;
 use uuid::Uuid;
 
 use crate::domain::{DAWItemLength, DAWItemID, Riff};
-use crate::{DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent};
+use crate::{AudioEffectTrack, DAWItemPosition, DAWState, Note, PlayMode, Track, TrackEvent, TrackType};
 use crate::event::{DAWEvents, TrackChangeType, TranslateDirection, TranslationEntityType};
 use crate::utils::DAWUtils;
 
@@ -79,18 +79,36 @@ impl HistoryManager {
         }
     }
 
+    // discard the stale redo branch - once a fresh action is applied after one or
+    // more undos the entries after the head can never be reached again. (The old
+    // descending-intent range `(len-1)..(head)` never iterated, so nothing was ever
+    // truncated and undone actions lingered in the history.)
+    fn truncate_forward(&mut self) {
+        if self.head_index + 1 < self.history.len() as i32 {
+            self.history.truncate((self.head_index + 1) as usize);
+        }
+    }
+
+    // record an action that has already been executed by the handler it came from
+    // (the scoped mutation path) - unlike apply this does not call execute().
+    pub fn record(&mut self, action: Box<dyn HistoryAction>) {
+        self.truncate_forward();
+        self.history.push(action);
+        self.head_index += 1;
+    }
+
     pub fn apply(&mut self, state: &mut Arc<Mutex<DAWState>>, mut action: Box<dyn HistoryAction>) -> Result<Vec<DAWEvents>, String> {
         debug!("History - apply: self.history.len()={}, self.head_index={}", self.history.len(), self.head_index);
-        if self.head_index >= 0 && !self.history.is_empty() && (self.head_index as usize) != (self.history.len() - 1) {
-            // delete everything above the head_index
-            for index in (self.history.len() - 1)..(self.head_index as usize) {
-                self.history.remove(index);
-            }
-        }
+        self.truncate_forward();
         let result = action.execute(state);
         self.history.push(action);
         self.head_index += 1;
         result
+    }
+
+    pub fn clear(&mut self) {
+        self.history.clear();
+        self.head_index = -1;
     }
 
     pub fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
@@ -290,6 +308,7 @@ impl HistoryAction for RiffAddNoteAction {
                                                     _ => true,
                                                 });
 
+                                                state.set_dirty(true);
                                                 self.check_playing(riff_uuid.clone(), &mut state, track_uuid.clone(), playing, play_mode, playing_riff_set);
                                                 break;
                                             }
@@ -1130,11 +1149,12 @@ impl HistoryAction for RiffPasteSelectedAction {
                             Some(track) => {
                                 match self.riff_uuid.as_ref() {
                                     Some(riff_uuid) => {
-                                        let riff_changed = false;
+                                        let mut riff_changed = false;
 
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
                                                 self.notes.iter_mut().for_each(|event| riff.events_mut().retain(|riff_event| riff_event.id() != event.id_mut()));
+                                                riff_changed = true;
                                                 break;
                                             }
                                         }
@@ -1455,6 +1475,7 @@ impl HistoryAction for RiffAdd {
                         match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                             Some(track) => {
                                 track.riffs_mut().retain(|riff| riff.id() != self.id.to_string().clone());
+                                state.set_dirty(true);
                                 daw_events_to_propagate.push(DAWEvents::TrackChange(TrackChangeType::UpdateTrackDetails, Some(track_uuid)));
                             }
                             None => ()
@@ -1519,6 +1540,7 @@ impl HistoryAction for RiffDelete {
                                 if riff_index < usize::MAX {
                                     self.riff = Some(track.riffs_mut().remove(riff_index));
                                 }
+                                state.set_dirty(true);
                                 daw_events_to_propagate.push(DAWEvents::TrackChange(TrackChangeType::UpdateTrackDetails, Some(track_uuid)));
                             }
                             None => ()
@@ -1562,4 +1584,677 @@ impl HistoryAction for RiffDelete {
 
         Ok(daw_events_to_propagate)
     }
+}
+/// Marks the project dirty - used by every command execution/undo so all song
+/// graph mutations propagate the dirty flag regardless of which command ran.
+fn mark_project_dirty(state: &mut Arc<Mutex<DAWState>>) {
+    match state.lock() {
+        Ok(mut state) => state.set_dirty(true),
+        Err(_) => debug!("History - mark_project_dirty - could not get lock on state"),
+    }
+}
+
+/// A per-mutator history command written at the event handler site, following the
+/// same command pattern as the bespoke note editing actions: the redo closure
+/// performs the forward mutation of the song graph, the undo closure performs
+/// its inverse. A command captures only the minimal inverse data its mutator
+/// needs - the overwritten field values, the removed element, the ids touched -
+/// never surrounding collections or the song.
+pub struct ActionCommand {
+    pub description: &'static str,
+    redo: Box<dyn FnMut(&mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> + Send>,
+    undo: Box<dyn FnMut(&mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> + Send>,
+}
+
+unsafe impl Send for ActionCommand {}
+
+impl ActionCommand {
+    pub fn new(description: &'static str,
+               redo: impl FnMut(&mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> + Send + 'static,
+               undo: impl FnMut(&mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> + Send + 'static) -> Self {
+        Self { description, redo: Box::new(redo), undo: Box::new(undo) }
+    }
+}
+
+impl HistoryAction for ActionCommand {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+        debug!("History - ActionCommand - execute '{}'.", self.description);
+        let result = (self.redo)(state);
+        if result.is_ok() {
+            mark_project_dirty(state);
+        }
+        result
+    }
+
+    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+        debug!("History - ActionCommand - undo '{}'.", self.description);
+        let result = (self.undo)(state);
+        if result.is_ok() {
+            mark_project_dirty(state);
+        }
+        result
+    }
+}
+
+/// Applies a per-mutator command through the history manager (recording it for
+/// undo/redo) and re-enqueues any events it propagates for UI refresh - the
+/// pattern used by the existing event handlers that record history.
+pub fn apply_history_command(history_manager: &mut Arc<Mutex<HistoryManager>>,
+                             tx_from_ui: &crossbeam_channel::Sender<DAWEvents>,
+                             state: &mut Arc<Mutex<DAWState>>,
+                             command: ActionCommand) {
+    let description = command.description;
+    match history_manager.lock() {
+        Ok(mut history_manager) => {
+            match history_manager.apply(state, Box::new(command)) {
+                Ok(daw_events) => {
+                    for daw_event in daw_events {
+                        let _ = tx_from_ui.send(daw_event);
+                    }
+                },
+                Err(error) => debug!("History - could not apply '{}': {}", description, error),
+            }
+        },
+        Err(_) => debug!("History - could not lock the history manager to apply '{}'", description),
+    }
+}
+
+/// Locks the state, reads the song's current tempo/time signature etc. - small
+/// helpers used by command closures at their construction sites to capture the
+/// "before" values needed for the inverse mutation.
+pub fn song_f64_field(state: &mut Arc<Mutex<DAWState>>, get: impl FnOnce(&DAWState) -> f64) -> f64 {
+    match state.lock() {
+        Ok(state) => get(&state),
+        Err(_) => 0.0,
+    }
+}
+
+// ----- scoped state commands -----
+//
+// For the more context dependent mutators (reference drag/copy/paste, play
+// modes, riff event drags, routing changes, set/sequence/grid/arrangement
+// operations...) the forward mutation body stays at the handler site and the
+// command records only the changed SCOPE of the song graph before and after -
+// a track's reference list, a riff's events, one collection - rather than
+// inverse arithmetic per shape or (worse) the whole song. Both values are small
+// slices of the graph; memory per history entry stays bounded to the scope that
+// the action touched.
+
+pub fn apply_scoped_state<T: Clone + Send + 'static>(state: &mut Arc<Mutex<DAWState>>,
+                                                     writer: fn(&mut DAWState, &str, &T),
+                                                     scope_id: &str,
+                                                     value: &T) -> Result<Vec<DAWEvents>, String> {
+    match state.lock() {
+        Ok(mut state) => {
+            writer(&mut state, scope_id, value);
+            state.get_project().song_mut().recalculate_song_length();
+            Ok(vec![DAWEvents::UpdateUI])
+        },
+        Err(_) => Err("could not get a lock on the state to restore the scoped song graph".to_string()),
+    }
+}
+
+pub fn scope_command<T: Clone + Send + 'static>(description: &'static str,
+                                                writer: fn(&mut DAWState, &str, &T),
+                                                scope_id: String,
+                                                before: T,
+                                                after: T) -> ActionCommand {
+    let undo_scope_id = scope_id.clone();
+    ActionCommand::new(
+        description,
+        move |state| apply_scoped_state(state, writer, &scope_id, &after),
+        move |state| apply_scoped_state(state, writer, &undo_scope_id, &before),
+    )
+}
+
+// ---- track riff references ----
+pub fn get_track_riff_refs(state: &DAWState, track_uuid: &str) -> Vec<crate::domain::RiffReference> {
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid).map(|track| track.riff_refs().clone()).unwrap_or_default()
+}
+pub fn set_track_riff_refs(state: &mut DAWState, track_uuid: &str, refs: &Vec<crate::domain::RiffReference>) {
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        track.riff_refs_mut().clear();
+        for riff_ref in refs.iter() {
+            track.riff_refs_mut().push(riff_ref.clone());
+        }
+    }
+}
+
+// ---- track riff reference play modes ----
+pub fn get_track_riff_ref_modes(state: &DAWState, track_uuid: &str) -> Vec<(uuid::Uuid, crate::domain::RiffReferenceMode)> {
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid)
+        .map(|track| track.riff_refs().iter().map(|riff_ref| (riff_ref.uuid(), riff_ref.mode().clone())).collect_vec())
+        .unwrap_or_default()
+}
+pub fn set_track_riff_ref_modes(state: &mut DAWState, track_uuid: &str, modes: &Vec<(uuid::Uuid, crate::domain::RiffReferenceMode)>) {
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        for (riff_ref_uuid, mode) in modes.iter() {
+            if let Some(riff_ref) = track.riff_refs_mut().iter_mut().find(|riff_ref| riff_ref.uuid() == *riff_ref_uuid) {
+                riff_ref.set_mode(mode.clone());
+            }
+        }
+    }
+}
+
+// ---- a single riff (whole riff: name, length, colour, events...) ----
+// scope id: "<track uuid>|<riff uuid>"
+pub fn get_riff_scope(state: &DAWState, scope_id: &str) -> Option<crate::domain::Riff> {
+    let mut parts = scope_id.splitn(2, '|');
+    let track_uuid = parts.next().unwrap_or("");
+    let riff_uuid = parts.next().unwrap_or("");
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid)
+        .and_then(|track| track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_uuid))
+        .cloned()
+}
+pub fn set_riff_scope(state: &mut DAWState, scope_id: &str, riff: &Option<crate::domain::Riff>) {
+    let mut parts = scope_id.splitn(2, '|');
+    let track_uuid = parts.next().unwrap_or("");
+    let riff_uuid = parts.next().unwrap_or("");
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        let existing_index = track.riffs().iter().position(|existing| existing.uuid().to_string() == riff_uuid);
+        match (existing_index, riff) {
+            (Some(index), Some(new_riff)) => { track.riffs_mut()[index] = new_riff.clone(); },
+            (Some(_), None) => { track.riffs_mut().retain(|existing| existing.uuid().to_string() != riff_uuid); },
+            (None, Some(new_riff)) => { track.riffs_mut().push(new_riff.clone()); },
+            (None, None) => {}
+        }
+    }
+}
+
+// ---- a track's automation (events + envelopes) ----
+pub fn get_track_automation(state: &DAWState, track_uuid: &str) -> Option<crate::domain::Automation> {
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid).map(|track| track.automation().clone())
+}
+pub fn set_track_automation(state: &mut DAWState, track_uuid: &str, automation: &Option<crate::domain::Automation>) {
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let Some(automation) = automation {
+            *track.automation_mut() = automation.clone();
+        }
+    }
+}
+
+// ---- a track's midi routings ----
+pub fn get_track_midi_routings(state: &DAWState, track_uuid: &str) -> Vec<crate::domain::TrackEventRouting> {
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid).map(|track| track.midi_routings().clone()).unwrap_or_default()
+}
+pub fn set_track_midi_routings(state: &mut DAWState, track_uuid: &str, routings: &Vec<crate::domain::TrackEventRouting>) {
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        *track.midi_routings_mut() = routings.clone();
+    }
+}
+
+// ---- a track's audio routings ----
+pub fn get_track_audio_routings(state: &DAWState, track_uuid: &str) -> Vec<crate::domain::AudioRouting> {
+    state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid).map(|track| track.audio_routings().clone()).unwrap_or_default()
+}
+pub fn set_track_audio_routings(state: &mut DAWState, track_uuid: &str, routings: &Vec<crate::domain::AudioRouting>) {
+    if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        *track.audio_routings_mut() = routings.clone();
+    }
+}
+
+// ---- a track's instrument plugin description ----
+pub fn get_track_instrument(state: &DAWState, track_uuid: &str) -> Option<crate::domain::AudioPlugin> {
+    match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
+        Some(TrackType::InstrumentTrack(track)) => Some(track.instrument().clone()),
+        _ => None,
+    }
+}
+pub fn set_track_instrument(state: &mut DAWState, track_uuid: &str, instrument: &Option<crate::domain::AudioPlugin>) {
+    if let Some(TrackType::InstrumentTrack(track)) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        if let Some(instrument) = instrument {
+            *track.instrument_mut() = instrument.clone();
+        }
+    }
+}
+
+// ---- a track's effect plugin list ----
+pub fn get_track_effects(state: &DAWState, track_uuid: &str) -> Vec<crate::domain::AudioPlugin> {
+    match state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid) {
+        Some(TrackType::InstrumentTrack(track)) => track.effects().to_vec(),
+        _ => vec![],
+    }
+}
+pub fn set_track_effects(state: &mut DAWState, track_uuid: &str, effects: &Vec<crate::domain::AudioPlugin>) {
+    if let Some(TrackType::InstrumentTrack(track)) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        *track.effects_mut() = effects.clone();
+    }
+}
+
+// ---- the track order ----
+pub fn get_track_order(state: &DAWState, _scope_id: &str) -> Vec<String> {
+    state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect_vec()
+}
+pub fn set_track_order(state: &mut DAWState, _scope_id: &str, order: &Vec<String>) {
+    // settle one position at a time by swapping the track that belongs at this
+    // index into place - avoids cloning the whole track list (TrackType is not Clone).
+    let tracks = state.get_project().song_mut().tracks_mut();
+    let mut index = 0;
+    while index < tracks.len() {
+        let wanted_uuid = match order.get(index) {
+            Some(wanted_uuid) => wanted_uuid.clone(),
+            None => break,
+        };
+        if tracks[index].uuid().to_string() == wanted_uuid {
+            index += 1;
+            continue;
+        }
+        let mut candidate = None;
+        for search_index in (index + 1)..tracks.len() {
+            if tracks[search_index].uuid().to_string() == wanted_uuid {
+                candidate = Some(search_index);
+                break;
+            }
+        }
+        match candidate {
+            Some(candidate) => tracks.swap(index, candidate),
+            None => break,
+        }
+    }
+}
+
+// ----- scoped mutation slots -----
+//
+// Event handlers that mutate the song graph declare their mutation SCOPE at the
+// top of the arm (`scoped_mutation = Some(begin_scoped_mutation(state, Scope::X))`);
+// the dispatch tail records the command once the handler body has run, by
+// reading the scope again and comparing it against the captured "before". The
+// command stored in history holds only the two copies of the affected slice of
+// the graph, applied back via a per-scope writer on redo/undo.
+
+#[derive(Clone)]
+pub enum Scope {
+    SongProperties,                                   // tempo + time signature
+    Loops,
+    RiffSets,
+    RiffSequences,
+    RiffGrids,
+    RiffArrangements,
+    Samples,
+    TrackOrder,
+    TrackAutomation(String),                          // track uuid: automation + selected riff of that track (covers every automation view)
+    TrackRiffRefs(String),                            // track uuid
+    TrackRiffs(String),                               // track uuid (covers riff add/copy/delete, events)
+    Riff(String, String),                             // track uuid, riff uuid
+    MidiRoutings(String),                             // track uuid
+    AudioRoutings(String),                            // track uuid
+    Instrument(String),                               // track uuid
+    Effects(String),                                  // track uuid
+    AllTrackRiffRefs,                                 // every track's reference list (multi track reference edits)
+    AllTrackRiffsAndRefs,                             // every track's riffs and references (structure wide edits)
+    AllReferenceStructures,                           // track refs + every grid's and set's refs (id regeneration)
+}
+
+#[derive(Clone, serde::Serialize)]
+pub enum ScopeValue {
+    SongProperties((f64, f64, f64)),
+    Loops(Vec<crate::domain::Loop>),
+    RiffSets(Vec<crate::domain::RiffSet>),
+    RiffSequences(Vec<crate::domain::RiffSequence>),
+    RiffGrids(Vec<crate::domain::RiffGrid>),
+    RiffArrangements(Vec<crate::domain::RiffArrangement>),
+    Samples(std::collections::HashMap<String, crate::domain::Sample>),
+    TrackOrder(Vec<String>),
+    TrackAutomation(Box<(Option<crate::domain::Automation>, Option<String>, Option<crate::domain::Riff>, Vec<crate::domain::RiffArrangement>)>),
+    TrackRiffRefs(Vec<crate::domain::RiffReference>),
+    TrackRiffs(Vec<crate::domain::Riff>),
+    Riff(Option<crate::domain::Riff>),
+    MidiRoutings(Vec<crate::domain::TrackEventRouting>),
+    AudioRoutings(Vec<crate::domain::AudioRouting>),
+    Instrument(Option<crate::domain::AudioPlugin>),
+    Effects(Vec<crate::domain::AudioPlugin>),
+    AllTrackRiffRefs(Vec<(String, Vec<crate::domain::RiffReference>)>),
+    AllTrackRiffsAndRefs(Vec<(String, Vec<crate::domain::Riff>, Vec<crate::domain::RiffReference>)>),
+    AllReferenceStructures(Box<(Vec<(String, Vec<crate::domain::RiffReference>)>, Vec<crate::domain::RiffGrid>, Vec<crate::domain::RiffSet>)>),
+}
+
+pub struct ScopedMutation {
+    description: &'static str,
+    scope: Scope,
+    before: ScopeValue,
+}
+
+pub fn read_scope(state: &DAWState, scope: &Scope) -> ScopeValue {
+    match scope {
+        Scope::SongProperties => ScopeValue::SongProperties((state.project().song().tempo(), state.project().song().time_signature_numerator(), state.project().song().time_signature_denominator())),
+        Scope::Loops => ScopeValue::Loops(state.project().song().loops().to_vec()),
+        Scope::RiffSets => ScopeValue::RiffSets(state.project().song().riff_sets().clone()),
+        Scope::RiffSequences => ScopeValue::RiffSequences(state.project().song().riff_sequences().clone()),
+        Scope::RiffGrids => ScopeValue::RiffGrids(state.project().song().riff_grids().clone()),
+        Scope::RiffArrangements => ScopeValue::RiffArrangements(state.project().song().riff_arrangements().clone()),
+        Scope::Samples => ScopeValue::Samples(state.project().song().samples().clone()),
+        Scope::TrackOrder => ScopeValue::TrackOrder(get_track_order(state, "")),
+        Scope::TrackAutomation(track_uuid) => {
+            let automation = get_track_automation(state, track_uuid);
+            let selected_riff = state.selected_riff_uuid(track_uuid.clone());
+            let riff = match &selected_riff {
+                Some(riff_uuid) => get_riff_scope(state, &format!("{track_uuid}|{riff_uuid}")),
+                None => None,
+            };
+            // automation edits in the RiffArrangement view target the arrangement's
+            // own per-track automation, so the arrangements are part of this scope.
+            ScopeValue::TrackAutomation(Box::new((automation, selected_riff, riff, state.project().song().riff_arrangements().clone())))
+        }
+        Scope::TrackRiffRefs(track_uuid) => ScopeValue::TrackRiffRefs(get_track_riff_refs(state, track_uuid)),
+        Scope::TrackRiffs(track_uuid) => ScopeValue::TrackRiffs(state.project().song().tracks().iter().find(|track| track.uuid().to_string() == *track_uuid).map(|track| track.riffs().clone()).unwrap_or_default()),
+        Scope::Riff(track_uuid, riff_uuid) => ScopeValue::Riff(get_riff_scope(state, &format!("{track_uuid}|{riff_uuid}"))),
+        Scope::MidiRoutings(track_uuid) => ScopeValue::MidiRoutings(get_track_midi_routings(state, track_uuid)),
+        Scope::AudioRoutings(track_uuid) => ScopeValue::AudioRoutings(get_track_audio_routings(state, track_uuid)),
+        Scope::Instrument(track_uuid) => ScopeValue::Instrument(get_track_instrument(state, track_uuid)),
+        Scope::Effects(track_uuid) => ScopeValue::Effects(get_track_effects(state, track_uuid)),
+        Scope::AllTrackRiffRefs => ScopeValue::AllTrackRiffRefs(state.project().song().tracks().iter().map(|track| (track.uuid().to_string(), track.riff_refs().clone())).collect_vec()),
+        Scope::AllTrackRiffsAndRefs => ScopeValue::AllTrackRiffsAndRefs(state.project().song().tracks().iter().map(|track| (track.uuid().to_string(), track.riffs().clone(), track.riff_refs().clone())).collect_vec()),
+        Scope::AllReferenceStructures => ScopeValue::AllReferenceStructures(Box::new((
+            state.project().song().tracks().iter().map(|track| (track.uuid().to_string(), track.riff_refs().clone())).collect_vec(),
+            state.project().song().riff_grids().clone(),
+            state.project().song().riff_sets().clone(),
+        ))),
+    }
+}
+
+/// Serialise-equality helper for scoped/inline command capture comparisons.
+pub fn json_equal<T: serde::Serialize + ?Sized>(a: &T, b: &T) -> bool {
+    serde_json::to_string(a).ok() == serde_json::to_string(b).ok()
+}
+
+fn write_scope(state: &mut DAWState, scope: &Scope, value: &ScopeValue) {
+    match (scope, value) {
+        (Scope::SongProperties, ScopeValue::SongProperties((tempo, numerator, denominator))) => {
+            state.get_project().song_mut().set_tempo(*tempo);
+            state.get_project().song_mut().set_time_signature_numerator(*numerator);
+            state.get_project().song_mut().set_time_signature_denominator(*denominator);
+            // keep the track background processors in step with the restored song clock
+            let track_uuids = state.get_project().song().tracks().iter().map(|track| track.uuid().to_string()).collect_vec();
+            for track_uuid in track_uuids {
+                state.send_to_track_background_processor(track_uuid.clone(), crate::event::TrackBackgroundProcessorInwardEvent::Tempo(*tempo));
+                state.send_to_track_background_processor(track_uuid, crate::event::TrackBackgroundProcessorInwardEvent::TimeSignatureChange(*numerator as u32, *denominator as u32));
+            }
+        }
+        (Scope::Loops, ScopeValue::Loops(loops)) => { *state.get_project().song_mut().loops_mut() = loops.clone(); },
+        (Scope::RiffSets, ScopeValue::RiffSets(riff_sets)) => { *state.get_project().song_mut().riff_sets_mut() = riff_sets.clone(); },
+        (Scope::RiffSequences, ScopeValue::RiffSequences(riff_sequences)) => { *state.get_project().song_mut().riff_sequences_mut() = riff_sequences.clone(); },
+        (Scope::RiffGrids, ScopeValue::RiffGrids(riff_grids)) => { *state.get_project().song_mut().riff_grids_mut() = riff_grids.clone(); },
+        (Scope::RiffArrangements, ScopeValue::RiffArrangements(riff_arrangements)) => { *state.get_project().song_mut().riff_arrangements_mut() = riff_arrangements.clone(); },
+        (Scope::Samples, ScopeValue::Samples(samples)) => { *state.get_project().song_mut().samples_mut() = samples.clone(); },
+        (Scope::TrackOrder, ScopeValue::TrackOrder(order)) => set_track_order(state, "", order),
+        (Scope::TrackAutomation(track_uuid), ScopeValue::TrackAutomation(automation_scope)) => {
+            let (automation, _, riff, riff_arrangements) = automation_scope.as_ref();
+            set_track_automation(state, track_uuid, automation);
+            if let (Some(riff_uuid), Some(riff)) = (automation_scope.1.as_ref(), automation_scope.2.as_ref()) {
+                set_riff_scope(state, &format!("{track_uuid}|{riff_uuid}"), &Some(riff.clone()));
+            }
+            *state.get_project().song_mut().riff_arrangements_mut() = riff_arrangements.clone();
+        }
+        (Scope::TrackRiffRefs(track_uuid), ScopeValue::TrackRiffRefs(refs)) => set_track_riff_refs(state, track_uuid, refs),
+        (Scope::TrackRiffs(track_uuid), ScopeValue::TrackRiffs(riffs)) => {
+            if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
+                *track.riffs_mut() = riffs.clone();
+            }
+        }
+        (Scope::Riff(track_uuid, riff_uuid), ScopeValue::Riff(riff)) => set_riff_scope(state, &format!("{track_uuid}|{riff_uuid}"), riff),
+        (Scope::MidiRoutings(track_uuid), ScopeValue::MidiRoutings(routings)) => {
+            // sync the track background processors with the restored routing graph.
+            let previous = get_track_midi_routings(state, track_uuid);
+            for removed in previous.iter().filter(|route| !routings.iter().any(|desired| desired.uuid() == route.uuid())) {
+                let destination_track_uuid = match &removed.destination {
+                    crate::domain::TrackEventRoutingNodeType::Track(track_uuid) => track_uuid.clone(),
+                    crate::domain::TrackEventRoutingNodeType::Instrument(track_uuid, _) => track_uuid.clone(),
+                    crate::domain::TrackEventRoutingNodeType::Effect(track_uuid, _) => track_uuid.clone(),
+                };
+                state.send_to_track_background_processor(track_uuid.clone(), crate::event::TrackBackgroundProcessorInwardEvent::RemoveTrackEventSendRouting(removed.uuid()));
+                state.send_to_track_background_processor(destination_track_uuid, crate::event::TrackBackgroundProcessorInwardEvent::RemoveTrackEventReceiveRouting(removed.uuid()));
+            }
+            for added in routings.iter().filter(|route| !previous.iter().any(|existing| existing.uuid() == route.uuid())) {
+                state.send_midi_routing_to_track_background_processors(track_uuid.clone(), added.clone());
+            }
+            // routes kept but with changed details (channel/note range) - update in place.
+            for desired in routings.iter().filter(|route| previous.iter().any(|existing| existing.uuid() == route.uuid() && !json_equal(existing, route))) {
+                state.send_to_track_background_processor(track_uuid.clone(), crate::event::TrackBackgroundProcessorInwardEvent::UpdateTrackEventSendRouting(desired.uuid(), desired.clone()));
+                let destination_track_uuid = match &desired.destination {
+                    crate::domain::TrackEventRoutingNodeType::Track(track_uuid) => track_uuid.clone(),
+                    crate::domain::TrackEventRoutingNodeType::Instrument(track_uuid, _) => track_uuid.clone(),
+                    crate::domain::TrackEventRoutingNodeType::Effect(track_uuid, _) => track_uuid.clone(),
+                };
+                state.send_to_track_background_processor(destination_track_uuid, crate::event::TrackBackgroundProcessorInwardEvent::UpdateTrackEventReceiveRouting(desired.uuid(), desired.clone()));
+            }
+            set_track_midi_routings(state, track_uuid, routings);
+        }
+        (Scope::AudioRoutings(track_uuid), ScopeValue::AudioRoutings(routings)) => {
+            let previous = get_track_audio_routings(state, track_uuid);
+            for removed in previous.iter().filter(|route| !routings.iter().any(|desired| desired.uuid() == route.uuid())) {
+                let destination_track_uuid = match &removed.destination {
+                    crate::domain::AudioRoutingNodeType::Track(track_uuid) => track_uuid.clone(),
+                    crate::domain::AudioRoutingNodeType::Instrument(track_uuid, _, _, _) => track_uuid.clone(),
+                    crate::domain::AudioRoutingNodeType::Effect(track_uuid, _, _, _) => track_uuid.clone(),
+                };
+                state.send_to_track_background_processor(track_uuid.clone(), crate::event::TrackBackgroundProcessorInwardEvent::RemoveAudioSendRouting(removed.uuid()));
+                state.send_to_track_background_processor(destination_track_uuid, crate::event::TrackBackgroundProcessorInwardEvent::RemoveAudioReceiveRouting(removed.uuid()));
+            }
+            for added in routings.iter().filter(|route| !previous.iter().any(|existing| existing.uuid() == route.uuid())) {
+                state.send_audio_routing_to_track_background_processors(track_uuid.clone(), added.clone());
+            }
+            set_track_audio_routings(state, track_uuid, routings);
+        }
+        (Scope::Instrument(track_uuid), ScopeValue::Instrument(instrument)) => set_track_instrument(state, track_uuid, instrument),
+        (Scope::Effects(track_uuid), ScopeValue::Effects(effects)) => set_track_effects(state, track_uuid, effects),
+        (Scope::AllTrackRiffRefs, ScopeValue::AllTrackRiffRefs(all_refs)) => {
+            for (track_uuid, refs) in all_refs.iter() {
+                set_track_riff_refs(state, track_uuid, &refs.clone());
+            }
+        }
+        (Scope::AllReferenceStructures, ScopeValue::AllReferenceStructures(all)) => {
+            let (all_refs, riff_grids, riff_sets) = all.as_ref();
+            for (track_uuid, refs) in all_refs.iter() {
+                set_track_riff_refs(state, track_uuid, &refs.clone());
+            }
+            *state.get_project().song_mut().riff_grids_mut() = riff_grids.clone();
+            *state.get_project().song_mut().riff_sets_mut() = riff_sets.clone();
+        }
+        (Scope::AllTrackRiffsAndRefs, ScopeValue::AllTrackRiffsAndRefs(all)) => {
+            for (track_uuid, riffs, refs) in all.iter() {
+                if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
+                    *track.riffs_mut() = riffs.clone();
+                    *track.riff_refs_mut() = refs.clone();
+                }
+            }
+        }
+        _ => debug!("History - write_scope - scope/value mismatch!"),
+    }
+}
+
+fn scopes_equal(before: &ScopeValue, after: &ScopeValue) -> bool {
+    serde_json::to_string(before).ok() == serde_json::to_string(after).ok()
+}
+
+pub fn begin_scoped_mutation(state: &mut Arc<Mutex<DAWState>>, description: &'static str, scope: Scope) -> Option<ScopedMutation> {
+    match state.lock() {
+        Ok(state) => {
+            let before = read_scope(&state, &scope);
+            Some(ScopedMutation { description, scope, before })
+        },
+        Err(_) => {
+            debug!("History - begin_scoped_mutation - could not get lock on state");
+            None
+        }
+    }
+}
+
+pub struct ScopedCommand {
+    description: &'static str,
+    scope: Scope,
+    before: ScopeValue,
+    after: ScopeValue,
+}
+
+impl HistoryAction for ScopedCommand {
+    fn execute(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+        match state.lock() {
+            Ok(mut state) => {
+                write_scope(&mut state, &self.scope, &self.after);
+                state.get_project().song_mut().recalculate_song_length();
+                state.set_dirty(true);
+                Ok(vec![DAWEvents::UpdateUI])
+            },
+            Err(_) => Err("could not get a lock on the state to re-apply the scoped history action".to_string()),
+        }
+    }
+
+    fn undo(&mut self, state: &mut Arc<Mutex<DAWState>>) -> Result<Vec<DAWEvents>, String> {
+        match state.lock() {
+            Ok(mut state) => {
+                write_scope(&mut state, &self.scope, &self.before);
+                state.get_project().song_mut().recalculate_song_length();
+                state.set_dirty(true);
+                Ok(vec![DAWEvents::UpdateUI])
+            },
+            Err(_) => Err("could not get a lock on the state to undo the scoped history action".to_string()),
+        }
+    }
+}
+
+unsafe impl Send for ScopedCommand {}
+
+/// Called at the dispatch tail with the slot an arm marked during this event:
+/// reads the scope again, records a scoped command when it actually changed.
+pub fn record_scoped_mutation(scoped_mutation: Option<ScopedMutation>,
+                              history_manager: &mut Arc<Mutex<HistoryManager>>,
+                              state: &mut Arc<Mutex<DAWState>>) {
+    if let Some(scoped_mutation) = scoped_mutation {
+        let (after, changed) = match state.lock() {
+            Ok(mut state) => {
+                let after = read_scope(&state, &scoped_mutation.scope);
+                let changed = !scopes_equal(&scoped_mutation.before, &after);
+                if changed {
+                    state.set_dirty(true);
+                }
+                (after, changed)
+            },
+            Err(_) => return,
+        };
+        if !changed {
+            return;
+        }
+        let command = ScopedCommand {
+            description: scoped_mutation.description,
+            scope: scoped_mutation.scope,
+            before: scoped_mutation.before,
+            after,
+        };
+        match history_manager.lock() {
+            Ok(mut history_manager) => {
+                // the forward mutation has already been performed by the handler,
+                // so record without re-executing.
+                history_manager.record(Box::new(command));
+            },
+            Err(_) => debug!("History - record_scoped_mutation - could not lock the history manager"),
+        }
+    }
+}
+
+
+/// Rebuilds a plugin load descriptor from a persisted AudioPlugin domain object,
+/// so undo/redo of instrument and effect changes can send the live plugin thread
+/// its ChangeInstrument/AddEffect message from the graph data alone.
+pub fn scanned_plugin_from_audio_plugin(plugin: &crate::domain::AudioPlugin) -> Option<crate::domain::ScannedPlugin> {
+    match crate::domain::AudioPluginType::from_str(plugin.plugin_type()) {
+        Ok(audio_plugin_stack) => Some(crate::domain::ScannedPlugin {
+            name: plugin.name().to_string(),
+            path: plugin.file().to_string(),
+            id: plugin.uid().to_string(),
+            sub_id: plugin.sub_plugin_id().clone(),
+            audio_plugin_stack,
+        }),
+        Err(_) => None,
+    }
+}
+
+use std::str::FromStr;
+
+/// Instrument change command: restores/replaces the track's instrument domain
+/// description AND tells the track's background thread to (re)load the plugin,
+/// including the persisted preset state for the restored plugin.
+pub fn instrument_change_command(track_uuid: String,
+                                 before: Option<crate::domain::AudioPlugin>,
+                                 after: Option<crate::domain::AudioPlugin>,
+                                 vst24_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, vst::host::PluginLoader<crate::domain::VstHost>>>>,
+                                 clap_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>) -> ActionCommand {
+    let redo_track_uuid = track_uuid.clone();
+    let undo_track_uuid = track_uuid;
+    let redo_vst24_plugin_loaders = vst24_plugin_loaders.clone();
+    let redo_clap_plugin_loaders = clap_plugin_loaders.clone();
+    ActionCommand::new(
+        "track instrument changed",
+        move |state| apply_instrument_change(state, &redo_track_uuid, &after, redo_vst24_plugin_loaders.clone(), redo_clap_plugin_loaders.clone()),
+        move |state| apply_instrument_change(state, &undo_track_uuid, &before, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone()),
+    )
+}
+
+pub fn apply_instrument_change(state: &mut Arc<Mutex<DAWState>>,
+                               track_uuid: &str,
+                               instrument: &Option<crate::domain::AudioPlugin>,
+                               vst24_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, vst::host::PluginLoader<crate::domain::VstHost>>>>,
+                               clap_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>) -> Result<Vec<DAWEvents>, String> {
+    match state.lock() {
+        Ok(mut state) => {
+            set_track_instrument(&mut state, track_uuid, instrument);
+            if let Some(instrument) = instrument {
+                if let Some(scanned_plugin) = scanned_plugin_from_audio_plugin(instrument) {
+                    state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, instrument.uuid(), scanned_plugin));
+                    if !instrument.preset_data().is_empty() {
+                        state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::SetPresetData(instrument.preset_data().to_string(), vec![]));
+                    }
+                }
+            }
+            Ok(vec![DAWEvents::TrackChange(crate::event::TrackChangeType::UpdateTrackDetails, Some(track_uuid.to_string()))])
+        },
+        Err(_) => Err("could not get a lock on the state to change the track instrument".to_string()),
+    }
+}
+
+/// Effect list change command: restores/replaces the track's effect plugin list
+/// and tells the track's background thread to add/remove the delta effects.
+pub fn effects_change_command(track_uuid: String,
+                              before: Vec<crate::domain::AudioPlugin>,
+                              after: Vec<crate::domain::AudioPlugin>,
+                              vst24_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, vst::host::PluginLoader<crate::domain::VstHost>>>>,
+                              clap_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>) -> ActionCommand {
+    let redo_track_uuid = track_uuid.clone();
+    let undo_track_uuid = track_uuid;
+    let redo_before = before.clone();
+    let undo_after = after.clone();
+    let redo_vst24_plugin_loaders = vst24_plugin_loaders.clone();
+    let redo_clap_plugin_loaders = clap_plugin_loaders.clone();
+    ActionCommand::new(
+        "track effects changed",
+        move |state| apply_effects_change(state, &redo_track_uuid, &redo_before, &after, redo_vst24_plugin_loaders.clone(), redo_clap_plugin_loaders.clone()),
+        move |state| apply_effects_change(state, &undo_track_uuid, &undo_after, &before, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone()),
+    )
+}
+
+pub fn apply_effects_change(state: &mut Arc<Mutex<DAWState>>,
+                            track_uuid: &str,
+                            previous: &Vec<crate::domain::AudioPlugin>,
+                            desired: &Vec<crate::domain::AudioPlugin>,
+                            vst24_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, vst::host::PluginLoader<crate::domain::VstHost>>>>,
+                            clap_plugin_loaders: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>) -> Result<Vec<DAWEvents>, String> {
+        match state.lock() {
+            Ok(mut state) => {
+                // removed effects: present in previous, gone from desired.
+                for effect in previous.iter().filter(|effect| !desired.iter().any(|desired_effect| desired_effect.uuid() == effect.uuid())) {
+                    state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::DeleteEffect(effect.uuid().to_string()));
+                }
+                // added effects: present in desired, not in previous.
+                for effect in desired.iter().filter(|effect| !previous.iter().any(|previous_effect| previous_effect.uuid() == effect.uuid())) {
+                    if let Some(scanned_plugin) = scanned_plugin_from_audio_plugin(effect) {
+                        state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effect.uuid(), scanned_plugin));
+                        if !effect.preset_data().is_empty() {
+                            state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::SetPresetData(String::new(), vec![effect.preset_data().to_string()]));
+                        }
+                    }
+                }
+                set_track_effects(&mut state, track_uuid, desired);
+                Ok(vec![DAWEvents::TrackChange(crate::event::TrackChangeType::UpdateTrackDetails, Some(track_uuid.to_string()))])
+            },
+            Err(_) => Err("could not get a lock on the state to change the track effects".to_string()),
+        }
 }

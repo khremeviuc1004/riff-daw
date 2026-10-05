@@ -1845,6 +1845,13 @@ impl MainWindow {
         // set button) - GTK4 does not notify when a GtkBox's children change, so
         // there is no signal to hook.
         MainWindow::sync_riff_set_strip_heights(&ui.riff_sets_view_port, &ui.riff_sets_track_panel_scrolled_window);
+        // the riff grid view's right column stacks a toolbar row, a grid name row
+        // and the beat grid ruler above the beat grid scroll pane while the left
+        // column has a fixed height strip above the track panels - mirror the
+        // actual (theme dependent) offset from the top of the paned to the top of
+        // the beat grid scroll pane onto the left strip so the track panels start
+        // at exactly the same vertical position as the beat grid (ruler bottom).
+        MainWindow::sync_riff_grid_strip_heights(&ui.riff_grid_scrolled_window, &ui.riff_grid_tracks_panel_scrolled_window);
         main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new());
         MainWindow::setup_riff_set_drag_and_drop(ui.riff_set_heads_box.clone(), ui.riff_sets_box.clone(), ui.riff_set_horizontal_adjustment.clone(), ui.riff_sets_view_port.clone(), RiffSetType::RiffSet, tx_from_ui.clone());
 
@@ -11375,6 +11382,46 @@ impl MainWindow {
                 });
             });
         }
+    }
+
+    /// In the riff grid view, align the top of the track panels scroll pane
+    /// with the top of the beat grid scroll pane (the bottom of the beat grid
+    /// ruler): the name/grid strip in the left column must occupy exactly the
+    /// height the right column stacks above the beat grid (toolbar row + grid
+    /// name row + ruler). Those rows are theme sized, so the offset is measured
+    /// from live geometry - the beat grid scroll pane's position relative to
+    /// the paned that holds both columns. The view lives on a stack page that
+    /// isn't laid out until first shown, so until the beat grid has geometry
+    /// the measurement is deferred to its map signal plus one idle pass.
+    pub fn sync_riff_grid_strip_heights(grid_scrolled_window: &ScrolledWindow, track_panels_scrolled_window: &ScrolledWindow) {
+        fn mirror_strip_height(grid_scrolled_window: &ScrolledWindow, paned: &Paned, strip: &Widget) -> bool {
+            let Some(bounds) = grid_scrolled_window.compute_bounds(paned) else { return false };
+            let height = bounds.y().max(0.0) as i32;
+            if height <= 0 {
+                return false;
+            }
+            strip.set_height_request(height);
+            true
+        }
+
+        let Some(paned) = grid_scrolled_window
+            .ancestor(Paned::static_type())
+            .and_then(|ancestor| ancestor.downcast::<Paned>().ok()) else { return };
+        let Some(new_riff_grid_strip) = track_panels_scrolled_window.prev_sibling() else { return };
+
+        if mirror_strip_height(grid_scrolled_window, &paned, &new_riff_grid_strip) {
+            return;
+        }
+
+        let paned_clone = paned.clone();
+        let grid_clone = grid_scrolled_window.clone();
+        let strip_clone = new_riff_grid_strip.clone();
+        grid_scrolled_window.connect_map(move |_grid| {
+            let (paned, grid, strip) = (paned_clone.clone(), grid_clone.clone(), strip_clone.clone());
+            glib::idle_add_local_once(move || {
+                mirror_strip_height(&grid, &paned, &strip);
+            });
+        });
     }
 
     pub fn update_riff_sets(&mut self, tx_from_ui: &Sender<DAWEvents>, state: &mut DAWState, state_arc: &Arc<Mutex<DAWState>>, track_uuids: &mut Vec<String>) {

@@ -1409,6 +1409,90 @@ impl MainWindow {
         });
     }
 
+    /// Scrolling the shared vertical adjustment of the riff sequence and riff
+    /// arrangement views reveals bands of the track lane drawing areas that
+    /// have never been painted - the draw funcs are bounded by the visible
+    /// viewport clip (push_visible_viewport_clip) so an area's recorded
+    /// snapshot only covers the band that was visible when it was painted and
+    /// GTK4 just translates that snapshot while scrolling. The newly revealed
+    /// band then stays blank until some other event dirties the area (the same
+    /// effect `connect_scroll_repaint` works around for the statically built
+    /// views). Queue every visible drawing area for repaint when a view's
+    /// vertical adjustment changes, coalescing bursts of scroll events into a
+    /// single idle pass.
+    fn connect_riff_views_scroll_repaint(&self) {
+        // the scroll windows of these views are nested per blade/column so the
+        // cull cannot use a single viewport per walk root - test each area
+        // against its own nearest viewport ancestor. Areas under hidden
+        // (unselected) blades never intersect because their viewport has no
+        // allocation yet, so they are cheaply skipped.
+        fn repaint_visible_drawing_areas(widget: &Widget) {
+            if let Some(area) = widget.downcast_ref::<DrawingArea>() {
+                let repaint = match area
+                    .ancestor(Viewport::static_type())
+                    .and_then(|ancestor| ancestor.downcast::<Viewport>().ok())
+                {
+                    Some(viewport) => match area.compute_bounds(&viewport) {
+                        Some(bounds) => {
+                            bounds.x() + bounds.width() > 0.0
+                                && bounds.y() + bounds.height() > 0.0
+                                && bounds.x() < viewport.width() as f32
+                                && bounds.y() < viewport.height() as f32
+                        }
+                        None => false,
+                    },
+                    None => true,
+                };
+                if repaint {
+                    area.queue_draw();
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(current_child) = child {
+                repaint_visible_drawing_areas(&current_child);
+                child = current_child.next_sibling();
+            }
+        }
+
+        fn connect_vertical_repaint(adjustment: &Adjustment, roots: Vec<Widget>) {
+            let repaint_pending = std::rc::Rc::new(std::cell::Cell::new(false));
+            let schedule = move || {
+                if repaint_pending.replace(true) {
+                    return;
+                }
+                let repaint_pending = repaint_pending.clone();
+                let roots = roots.clone();
+                glib::idle_add_local_once(move || {
+                    repaint_pending.set(false);
+                    for root in roots.iter() {
+                        repaint_visible_drawing_areas(root);
+                    }
+                });
+            };
+            // scrolling emits value-changed; viewport resizes (page-size changes
+            // while the value is clamped) emit changed without value-changed
+            let scroll_schedule = schedule.clone();
+            adjustment.connect_value_changed(move |_adjustment| scroll_schedule());
+            let resize_schedule = schedule.clone();
+            adjustment.connect_changed(move |_adjustment| resize_schedule());
+        }
+
+        connect_vertical_repaint(
+            &self.ui.riff_sequence_vertical_adjustment,
+            vec![
+                self.ui.riff_sequences_box.clone().upcast(),
+                self.ui.riff_sequences_track_panel_scrolled_window.clone().upcast(),
+            ],
+        );
+        connect_vertical_repaint(
+            &self.ui.riff_arrangement_vertical_adjustment,
+            vec![
+                self.ui.riff_arrangement_box.clone().upcast(),
+                self.ui.riff_arrangement_track_panel_scrolled_window.clone().upcast(),
+            ],
+        );
+    }
+
     /// Wire the action buttons of the dialogs that were converted from GTK3
     /// `GtkDialog`s to plain `GtkWindow`s. A GTK3 dialog's action area buttons
     /// carried response ids that completed `Dialog::run()`; after the port the
@@ -1834,6 +1918,7 @@ impl MainWindow {
         main_window.setup_loops(tx_from_ui.clone(), state.clone());
         main_window.connect_scroll_repaint();
         main_window.connect_resize_repaint();
+        main_window.connect_riff_views_scroll_repaint();
 
         // the riff set blade head strip sizes itself to the natural height of the
         // heads now that its scrolled window propagates that height (see the

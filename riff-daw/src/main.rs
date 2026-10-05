@@ -1225,6 +1225,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         gui.update_ui_from_state(tx_from_ui, &mut state, state_arc);
+                        // the recently opened files list may have changed (opening
+                        // a file records it in the state) - refresh the File >
+                        // Recent submenu from it.
+                        gui.refresh_recent_menu(state.get_recent_files());
                     }
                     Err(_) => debug!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }

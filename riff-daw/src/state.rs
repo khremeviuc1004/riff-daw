@@ -21,7 +21,7 @@ use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
 use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
-use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
+use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE, MAX_RECENT_FILES, RECENT_FILES_FILE_NAME};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
 
@@ -61,6 +61,10 @@ pub struct DAWState {
     selected_riff_uuid_map: HashMap<String, String>,
     selected_riff_ref_uuid: Option<String>,
     current_file_path: Option<String>,
+    /// recently opened project files (file paths, most recent first) - GTK4
+    /// dropped GtkRecentManager so the list is tracked here and persisted to
+    /// a json file beside the configuration file.
+    recent_files: Vec<String>,
     sender: crossbeam_channel::Sender<DAWEvents>,
     pub instrument_track_senders: HashMap<String, Sender<TrackBackgroundProcessorInwardEvent>>,
     pub instrument_track_receivers: HashMap<String, Receiver<TrackBackgroundProcessorOutwardEvent>>,
@@ -124,6 +128,7 @@ impl DAWState {
             configuration: DAWConfiguration::load_config(),
             project: Project::new(),
             current_file_path: None,
+            recent_files: DAWState::load_recent_files(),
             sender,
             selected_track: None,
             selected_riff_uuid_map: HashMap::new(),
@@ -193,6 +198,9 @@ impl DAWState {
         self.current_file_path = Some(path.to_string());
         let json_text = std::fs::read_to_string(path).unwrap();
         let project: Project = serde_json::from_str(&json_text).unwrap();
+        // only project (json) files can be reopened from the recent files menu
+        // so only they are recorded (dawproject imports bypass this).
+        self.record_recent_file(path);
         self.initialise_loaded_project(project,
             vst24_plugin_loaders,
             clap_plugin_loaders,
@@ -225,6 +233,44 @@ impl DAWState {
                 false
             }
         }
+    }
+
+    pub fn get_recent_files(&self) -> &Vec<String> {
+        &self.recent_files
+    }
+
+    /// Moves the file to the front of the recent files list (dedup, capped at
+    /// MAX_RECENT_FILES) and persists the list to a json file in the
+    /// configuration directory.
+    pub fn record_recent_file(&mut self, file_path: &str) {
+        self.recent_files.retain(|recent_file| recent_file != file_path);
+        self.recent_files.insert(0, file_path.to_string());
+        self.recent_files.truncate(MAX_RECENT_FILES);
+
+        if let Some(mut recent_files_path) = dirs::config_dir() {
+            recent_files_path.push(RECENT_FILES_FILE_NAME);
+            match serde_json::to_string_pretty(&self.recent_files) {
+                Ok(json_text) => {
+                    if let Err(error) = std::fs::write(recent_files_path, json_text) {
+                        debug!("record_recent_file - failure writing the recent files list: {}", error);
+                    }
+                },
+                Err(error) => debug!("record_recent_file - failure serialising the recent files list: {}", error),
+            }
+        }
+    }
+
+    pub fn load_recent_files() -> Vec<String> {
+        if let Some(mut recent_files_path) = dirs::config_dir() {
+            recent_files_path.push(RECENT_FILES_FILE_NAME);
+            if let Ok(json_text) = std::fs::read_to_string(recent_files_path) {
+                if let Ok(recent_files) = serde_json::from_str::<Vec<String>>(&json_text) {
+                    return recent_files;
+                }
+            }
+        }
+
+        Vec::new()
     }
 
     fn initialise_loaded_project(&mut self,

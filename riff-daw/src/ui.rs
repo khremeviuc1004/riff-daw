@@ -709,6 +709,10 @@ pub struct MainWindow {
 
     pub widgets: Vec<Widget>,
 
+    // the "Recent" submenu model of the File menu - rebuilt from
+    // DAWState::get_recent_files() whenever the list changes (see refresh_recent_menu)
+    pub recent_menu: gio::Menu,
+
     pub riff_set_view_riff_set_beat_grids: Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>, // outer key = riff set uuid, inner key = track_uuid
     // outer key = riff sequence uuid, mid key = riff set uuid, inner key = track_uuid
     pub riff_sequence_view_riff_set_ref_beat_grids: Arc<Mutex<HashMap<String, Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>>>>,
@@ -1894,6 +1898,7 @@ impl MainWindow {
             scripting_window,
             scripting_window_stack,
             widgets: vec![],
+            recent_menu: gio::Menu::new(),
             midi_file_import_file_chooser,
         };
 
@@ -4646,20 +4651,17 @@ impl MainWindow {
             let action = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
             action.connect_activate(move |_, parameter| {
                 if let Some(parameter) = parameter {
-                    if let Some(uri) = parameter.str() {
-                        let file = gio::File::for_uri(uri);
-                        if let Some(path) = file.path() {
-                            window.set_title(Some(format!("DAW - {}", path.to_string_lossy()).as_str()));
-                            let tx_from_ui = tx_from_ui.clone();
-                            let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
-                                if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
-                                    debug!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
-                                }
-                            });
-                        }
-                        else {
-                            debug!("Recent chooser item is not a local file: {:?}", uri);
-                        }
+                    // the recent files list (see DAWState::record_recent_file)
+                    // stores plain file paths as the menu item targets
+                    if let Some(file_path) = parameter.str() {
+                        let path = std::path::PathBuf::from(file_path);
+                        window.set_title(Some(format!("DAW - {}", path.to_string_lossy()).as_str()));
+                        let tx_from_ui = tx_from_ui.clone();
+                        let _ = std::thread::Builder::new().name("Recent chooser menu".into()).spawn(move || {
+                            if let Err(error) = tx_from_ui.send(DAWEvents::OpenFile(path)) {
+                                debug!("Couldn't send open recent file from ui - failed to send with sender: {:?}", error)
+                            }
+                        });
                     }
                 }
             });
@@ -4678,21 +4680,15 @@ impl MainWindow {
         file_io_section.append(Some("Save As"), Some("win.save-as"));
         file_menu.append_section(None, &file_io_section);
 
-        let recent_menu = gio::Menu::new();
-        let recent_files = crate::gtk4_compat::recent_files_from_settings();
-        for (uri, display) in &recent_files {
-            let label = match display {
-                Some(display) => display.clone(),
-                None => uri.rsplit('/').next().filter(|name| !name.is_empty()).unwrap_or(uri.as_str()).to_string(),
-            };
-            let item = gio::MenuItem::new(Some(label.as_str()), None);
-            item.set_action_and_target_value(Some("win.open-recent"), Some(&uri.to_variant()));
-            recent_menu.append_item(&item);
+        // the recent files submenu (GTK4 has no GtkRecentManager so the list is
+        // tracked in DAWState) - keep the gio::Menu on the window so it can be
+        // refreshed as files are opened; GMenu change notifications update the
+        // live popover menu bar.
+        self.recent_menu.remove_all();
+        file_menu.append_submenu(Some("Recent"), &self.recent_menu);
+        if let Ok(state) = state.lock() {
+            self.refresh_recent_menu(state.get_recent_files());
         }
-        if recent_files.is_empty() {
-            recent_menu.append(Some("(no recent files)"), None);
-        }
-        file_menu.append_submenu(Some("Recent"), &recent_menu);
 
         let file_transfer_section = gio::Menu::new();
         file_transfer_section.append(Some("Import midi file"), Some("win.import-midi"));
@@ -4756,6 +4752,24 @@ impl MainWindow {
         menu_bar_model.append_item(&help_item);
 
         self.ui.main_menu_bar.set_menu_model(Some(&menu_bar_model));
+    }
+
+    /// Rebuild the File > Recent submenu from the state's recently opened files
+    /// list (GTK4 has no GtkRecentManager). Called from setup_menus at startup
+    /// and from the UpdateUI event handler once a file has been opened.
+    pub fn refresh_recent_menu(&self, recent_files: &[String]) {
+        self.recent_menu.remove_all();
+
+        for file_path in recent_files.iter() {
+            let label = file_path.rsplit('/').next().filter(|name| !name.is_empty()).unwrap_or(file_path.as_str());
+            let item = gio::MenuItem::new(Some(label), None);
+            item.set_action_and_target_value(Some("win.open-recent"), Some(&file_path.to_variant()));
+            self.recent_menu.append_item(&item);
+        }
+
+        if recent_files.is_empty() {
+            self.recent_menu.append(Some("(no recent files)"), None);
+        }
     }
 
     pub fn setup_main_tool_bar(

@@ -19,6 +19,11 @@ pub const NOTE_NAMES: [&str; 12] = ["C","C#/Db","D","D#/Eb","E","F","F#/Gb","G",
 
 pub const CONFIGURATION_FILE_NAME: &str = "riff-daw.conf";
 
+// GTK4 dropped GtkRecentManager so the recently opened project files are
+// tracked by the app itself and persisted next to the configuration file.
+pub const RECENT_FILES_FILE_NAME: &str = "riff-daw-recent.json";
+pub const MAX_RECENT_FILES: usize = 10;
+
 
 pub const LUA_GLOBAL_STATE: &str = "state";
 

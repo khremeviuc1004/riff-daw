@@ -27,7 +27,7 @@ use crate::domain::{AudioPluginType, DAWItemPosition, DAWItemLength, DAWItemID, 
 use crate::audio_plugin_util::{clap_plugin_id, clap_plugin_id_from};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
-use crate::state::{DAWState, MidiPolyphonicExpressionNoteId};
+use crate::state::{DAWState, MidiPolyphonicExpressionNoteId, MixerBladeChannelLevels};
 use crate::utils::DAWUtils;
 
 
@@ -545,8 +545,6 @@ pub struct MixerBlade {
     pub mixer_blade_track_record_toggle_btn: ToggleButton,
     pub mixer_blade_track_pan_scale: Scale,
     pub mixer_blade_volume_scale: Scale,
-    pub mixer_blade_right_channel_level_spin_button: SpinButton,
-    pub mixer_blade_left_channel_level_spin_button: SpinButton,
     pub mixer_blade_channel_level_drawing_area: DrawingArea,
 }
 
@@ -718,6 +716,11 @@ pub struct MainWindow {
     pub riff_sequence_view_riff_set_ref_beat_grids: Arc<Mutex<HashMap<String, Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>>>>,
     // outer outer key = riff arrangement uuid, mid key = riff set uuid, inner key = track_uuid
     pub riff_arrangement_view_riff_set_ref_beat_grids: Arc<Mutex<HashMap<String, Arc<Mutex<HashMap<String, HashMap<String, Arc<Mutex<BeatGrid>>>>>>>>>,
+
+    // handle to the per mixer blade channel meter levels (track uuid -> levels in db) owned by DAWState
+    pub mixer_blade_channel_levels: Arc<Mutex<HashMap<String, MixerBladeChannelLevels>>>,
+    // the mixer blade widgets, keyed by track uuid (Uuid::nil() for the master blade)
+    pub mixer_blades: HashMap<String, MixerBlade>,
 
     pub tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     pub midi_file_import_file_chooser: FileChooserDialog,
@@ -1110,8 +1113,6 @@ gtk4_builder_from!(MixerBlade {
     mixer_blade_track_record_toggle_btn: ToggleButton,
     mixer_blade_track_pan_scale: Scale,
     mixer_blade_volume_scale: Scale,
-    mixer_blade_right_channel_level_spin_button: SpinButton,
-    mixer_blade_left_channel_level_spin_button: SpinButton,
     mixer_blade_channel_level_drawing_area: DrawingArea,
 });
 
@@ -1861,6 +1862,14 @@ impl MainWindow {
         midi_file_import_file_chooser.add_button("Ok", gtk4::ResponseType::Ok);
 
 
+        // the mixer blade channel meter levels model lives in DAWState - grab a
+        // handle to the same map so blade drawing areas can read it lock-free of
+        // the rest of the application state.
+        let mixer_blade_channel_levels = match state.lock() {
+            Ok(state) => state.mixer_blade_channel_levels().clone(),
+            Err(_) => Arc::new(Mutex::new(HashMap::new())),
+        };
+
         let mut main_window = MainWindow {
             ui: ui.clone(),
             application: application.clone(),
@@ -1884,6 +1893,8 @@ impl MainWindow {
             riff_set_view_riff_set_beat_grids: Arc::new(Mutex::new(HashMap::new())),
             riff_sequence_view_riff_set_ref_beat_grids:  Arc::new(Mutex::new(HashMap::new())),
             riff_arrangement_view_riff_set_ref_beat_grids: Arc::new(Mutex::new(HashMap::new())),
+            mixer_blade_channel_levels,
+            mixer_blades: HashMap::new(),
             tx_from_ui: tx_from_ui.clone(),
             piano_roll_window,
             piano_roll_window_stack,
@@ -2204,6 +2215,7 @@ impl MainWindow {
                 self.ui.mixer_box.remove(&child);
             }
         }
+        self.mixer_blades.retain(|key, _| key == &Uuid::nil().to_string());
 
         // remove riff set track panels
         let children = &mut self.ui.riff_sets_track_panel.children();
@@ -2322,6 +2334,7 @@ impl MainWindow {
         }
 
         // remove track from mixer blades
+        self.mixer_blades.remove(&track_uuid);
         let mut child_count = 1;
         for child in self.ui.mixer_box.children().iter_mut() {
             if child.widget_name() == track_uuid {
@@ -3313,8 +3326,8 @@ impl MainWindow {
         }
 
         {
-            let left_channel_level_spin_button = mixer_blade.mixer_blade_left_channel_level_spin_button.clone();
-            let right_channel_level_spin_button = mixer_blade.mixer_blade_right_channel_level_spin_button.clone();
+            let mixer_blade_channel_levels = self.mixer_blade_channel_levels.clone();
+            let channel_levels_key = track_uuid.to_string();
             let level_meter_width = 5.0;
             let gap_between_channel_levels = 5.0;
             let number_of_scale_graduations = 72.0;
@@ -3335,8 +3348,13 @@ impl MainWindow {
                     let _ = context.show_text(format!("{}", *text).as_str());
                 }
 
-                let mut left_channel = left_channel_level_spin_button.value();
-                let mut right_channel = right_channel_level_spin_button.value();
+                let channel_levels = match mixer_blade_channel_levels.lock() {
+                    Ok(channel_levels) => channel_levels.get(channel_levels_key.as_str()).copied().unwrap_or_default(),
+                    Err(_) => MixerBladeChannelLevels::default(),
+                };
+
+                let mut left_channel = channel_levels.left_db;
+                let mut right_channel = channel_levels.right_db;
 
                 if left_channel < -66.0 {
                     left_channel = -66.0;
@@ -3366,6 +3384,8 @@ impl MainWindow {
         }
 
         mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
+
+        self.mixer_blades.insert(track_uuid.to_string(), mixer_blade.clone());
 
         {
             let tx_from_ui = tx_from_ui.clone();

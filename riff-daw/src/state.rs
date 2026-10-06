@@ -38,6 +38,24 @@ pub enum AutomationViewMode {
     NoteExpression,
 }
 
+/// The per mixer blade channel meter levels, in dB, as reported by the audio
+/// layers and consumed by the blade's drawing area (keyed by track uuid -
+/// the master blade uses Uuid::nil()).
+#[derive(Clone, Copy, Debug)]
+pub struct MixerBladeChannelLevels {
+    pub left_db: f64,
+    pub right_db: f64,
+}
+
+impl Default for MixerBladeChannelLevels {
+    fn default() -> Self {
+        MixerBladeChannelLevels {
+            left_db: -66.0,
+            right_db: -66.0,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum MidiPolyphonicExpressionNoteId {
     ALL = -1,
@@ -103,6 +121,7 @@ pub struct DAWState {
     jack_connections: HashMap<String, String>,
     sample_data: HashMap<String, SampleData>,
     track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>>,
+    mixer_blade_channel_levels: Arc<Mutex<HashMap<String, MixerBladeChannelLevels>>>,
     centre_split_pane_position: i32,
     track_grid_cursor_follow: bool,
     riff_grid_cursor_follow: bool,
@@ -166,6 +185,7 @@ impl DAWState {
             jack_connections: HashMap::new(),
             sample_data: HashMap::new(),
             track_render_audio_consumers: Arc::new(Mutex::new(HashMap::new())),
+            mixer_blade_channel_levels: Arc::new(Mutex::new(HashMap::new())),
             centre_split_pane_position: 600,
             track_grid_cursor_follow: true,
             riff_grid_cursor_follow: true,
@@ -2950,6 +2970,16 @@ impl DAWState {
         &mut self.track_render_audio_consumers
     }
 
+    /// Get a reference to the per mixer blade channel meter levels (track uuid -> levels in db).
+    pub fn mixer_blade_channel_levels(&self) -> &Arc<Mutex<HashMap<String, MixerBladeChannelLevels>>> {
+        &self.mixer_blade_channel_levels
+    }
+
+    /// Get a mutable reference to the per mixer blade channel meter levels (track uuid -> levels in db).
+    pub fn mixer_blade_channel_levels_mut(&mut self) -> &mut Arc<Mutex<HashMap<String, MixerBladeChannelLevels>>> {
+        &mut self.mixer_blade_channel_levels
+    }
+
     pub fn play_mode(&self) -> PlayMode {
         self.play_mode.clone()
     }
@@ -3271,6 +3301,9 @@ impl DAWState {
         if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers_mut().lock() {
             track_render_audio_consumers.clear();
         }
+        if let Ok(mut mixer_blade_channel_levels) = self.mixer_blade_channel_levels_mut().lock() {
+            mixer_blade_channel_levels.clear();
+        }
         // need to kill audio threads for tracks in the current file
         let current_track_uuids = self.get_project().song_mut().tracks_mut().iter_mut().map(|track| {
             track.uuid().to_string()
@@ -3360,6 +3393,9 @@ impl DAWState {
         self.sample_data.clear();
         if let Ok(mut track_render_audio_consumers) = self.track_render_audio_consumers.lock() {
             track_render_audio_consumers.clear();
+        }
+        if let Ok(mut mixer_blade_channel_levels) = self.mixer_blade_channel_levels.lock() {
+            mixer_blade_channel_levels.clear();
         }
         self.dirty = false;
         self.selected_automation.clear();

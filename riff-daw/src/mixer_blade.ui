@@ -1,18 +1,6 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <interface>
   <requires lib="gtk" version="4.0" />
-  <object class="GtkAdjustment" id="db_adjustment1">
-    <property name="lower">-66</property>
-    <property name="upper">6</property>
-    <property name="step-increment">1</property>
-    <property name="page-increment">10</property>
-  </object>
-  <object class="GtkAdjustment" id="db_adjustment2">
-    <property name="lower">-66</property>
-    <property name="upper">6</property>
-    <property name="step-increment">1</property>
-    <property name="page-increment">10</property>
-  </object>
   <object class="GtkAdjustment" id="pan_adjustment">
     <property name="lower">-50</property>
     <property name="upper">50</property>
@@ -26,8 +14,9 @@
     <property name="page-increment">10</property>
   </object>
   <object class="GtkFrame" id="mixer_blade">
-    <property name="width-request">100</property>
     <property name="visible">True</property>
+    <property name="hexpand">False</property>
+    <property name="halign">start</property>
     <property name="label-xalign">0</property>
     <child>
       <object class="GtkBox">
@@ -40,7 +29,6 @@
           <object class="GtkBox">
             <property name="visible">True</property>
             <property name="halign">end</property>
-            <property name="hexpand">True</property>
             <child>
               <placeholder />
             </child>
@@ -137,19 +125,7 @@
                     <property name="height-request">220</property>
                     <property name="visible">True</property>
                     <property name="margin-top">7</property>
-                    <property name="hexpand">True</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="mixer_blade_left_channel_level_spin_button">
-                    <property name="adjustment">db_adjustment2</property>
-                    <property name="numeric">True</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="mixer_blade_right_channel_level_spin_button">
-                    <property name="adjustment">db_adjustment1</property>
-                    <property name="numeric">True</property>
+                    <property name="hexpand">False</property>
                   </object>
                 </child>
               </object>
@@ -162,6 +138,9 @@
       <object class="GtkLabel" id="mixer_blade_track_name_label">
         <property name="name">mixer_blade_track_name_label</property>
         <property name="visible">True</property>
+        <property name="ellipsize">end</property>
+        <property name="width-chars">6</property>
+        <property name="max-width-chars">10</property>
         <property name="label" translatable="yes">Track Name</property>
       </object>
     </child>

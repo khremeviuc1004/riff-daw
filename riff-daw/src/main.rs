@@ -8,7 +8,7 @@ use constants::{TRACK_VIEW_TRACK_PANEL_HEIGHT, LUA_GLOBAL_STATE, DAW_AUTO_SAVE_T
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use flexi_logger::Logger;
 use gdk4_x11::X11Surface;
-use gtk4::{glib, prelude::*, Adjustment, DrawingArea, Frame, SpinButton, Viewport, Window};
+use gtk4::{glib, prelude::*, Adjustment, Viewport, Window};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use jack::MidiOut;
@@ -16206,6 +16206,17 @@ fn create_jack_time_critical_event_processing_thread(
             });
 }
 
+/// Convert a linear channel level as reported by the audio layers into a dB
+/// value for the mixer blade meters, with the meter floor at -66 db.
+fn channel_level_to_db(channel_level: f32) -> f64 {
+    if channel_level > 0.0 {
+        (channel_level.abs().log10() * 20.0) as f64
+    }
+    else {
+        -66.0
+    }
+}
+
 fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        jack_midi_receiver: &Receiver<AudioLayerOutwardEvent>,
                        state: &mut Arc<Mutex<DAWState>>,
@@ -16398,51 +16409,20 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     }
                 }
                 AudioLayerOutwardEvent::MasterChannelLevels(left_channel_level, right_channel_level) => {
-                    if let Some(master_mixer_blade_widget) = gui.ui.mixer_box.children().first() {
-                        if let Some(master_mixer_blade) = master_mixer_blade_widget.dynamic_cast_ref::<Frame>() {
-                            if let Some(master_mixer_blade_box_widget) = master_mixer_blade.children().first() {
-                                if let Some(master_mixer_blade_box) = master_mixer_blade_box_widget.dynamic_cast_ref::<gtk4::Box>() {
-                                        for child in master_mixer_blade_box.children().iter() {
-                                            if child.widget_name() == "mixer_blade_volume_box" {
-                                                if let Some(volume_box) = child.dynamic_cast_ref::<gtk4::Box>() {
-                                                    if let Some(channel_meter_box_widget) = volume_box.children().get(1) {
-                                                        if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk4::Box>() {
-                                                            if let Some(left_channel_spin_button_widget) = channel_meter_box.children().get_mut(1) {
-if let Some(left_channel_spin_button) = left_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                     let left_channel_level_in_db = if left_channel_level > 0.0 {
-                                                                         (left_channel_level.abs().log10() * 20.0) as f64
-                                                                     }
-                                                                     else {
-                                                                         -66.0
-                                                                     };
-                                                                     left_channel_spin_button.set_value(left_channel_level_in_db);
-                                                                 }
-                                                             }
-                                                             if let Some(right_channel_spin_button_widget) = channel_meter_box.children().get_mut(2) {
-                                                                 if let Some(right_channel_spin_button) = right_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                     let right_channel_level_in_db = if right_channel_level > 0.0 {
-                                                                         (right_channel_level.abs().log10() * 20.0) as f64
-                                                                     }
-                                                                     else {
-                                                                         -66.0
-                                                                     };
-                                                                     right_channel_spin_button.set_value(right_channel_level_in_db);
-                                                                 }
-                                                             }
-                                                            if let Some(channel_meter_levels_drawing_area_widget) = channel_meter_box.children().get_mut(0) {
-                                                                if let Some(channel_meter_levels_drawing_area) = channel_meter_levels_drawing_area_widget.dynamic_cast_ref::<DrawingArea>() {
-                                                                    channel_meter_levels_drawing_area.queue_draw();
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                        }
-                                }
-                            }
+                    let master_blade_uuid = Uuid::nil().to_string();
+                    let left_channel_level_in_db = channel_level_to_db(left_channel_level);
+                    let right_channel_level_in_db = channel_level_to_db(right_channel_level);
+                    match gui.mixer_blade_channel_levels.lock() {
+                        Ok(mut mixer_blade_channel_levels) => {
+                            mixer_blade_channel_levels.insert(master_blade_uuid.clone(), MixerBladeChannelLevels {
+                                left_db: left_channel_level_in_db,
+                                right_db: right_channel_level_in_db,
+                            });
                         }
+                        Err(_) => (),
+                    }
+                    if let Some(mixer_blade) = gui.mixer_blades.get(&master_blade_uuid) {
+                        mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
                     }
                 },
             }
@@ -16558,54 +16538,19 @@ fn process_track_background_processor_events(
                         }
                         TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid, left_channel_level, right_channel_level) => {
                             // debug!("Track: {}, left: {}, left in db: {}, right: {}, right in db: {}", track_uuid.as_str(), left_channel_level, left_channel_level.abs().log10() * 20.0, right_channel_level, right_channel_level.abs().log10() * 20.0);
-                            for mixer_blade_widget in gui.ui.mixer_box.children().iter() {
-                                if mixer_blade_widget.widget_name() == track_uuid.as_str() {
-                                    if let Some(mixer_blade) = mixer_blade_widget.dynamic_cast_ref::<Frame>() {
-                                        if let Some(mixer_blade_box_widget) = mixer_blade.children().first() {
-                                            if let Some(mixer_blade_box) = mixer_blade_box_widget.dynamic_cast_ref::<gtk4::Box>() {
-                                                    for child in mixer_blade_box.children().iter() {
-                                                        if child.widget_name() == "mixer_blade_volume_box" {
-                                                            if let Some(volume_box) = child.dynamic_cast_ref::<gtk4::Box>() {
-                                                                if let Some(channel_meter_box_widget) = volume_box.children().get(1) {
-                                                                    if let Some(channel_meter_box) = channel_meter_box_widget.dynamic_cast_ref::<gtk4::Box>() {
-                                                                        if let Some(left_channel_spin_button_widget) = channel_meter_box.children().get_mut(1) {
-                                                                            if let Some(left_channel_spin_button) = left_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                                let left_channel_level_in_db = if left_channel_level > 0.0 {
-                                                                                    (left_channel_level.abs().log10() * 20.0) as f64
-                                                                                }
-                                                                                else {
-                                                                                    -66.0
-                                                                                };
-                                                                                left_channel_spin_button.set_value(left_channel_level_in_db);
-                                                                            }
-                                                                        }
-                                                                        if let Some(right_channel_spin_button_widget) = channel_meter_box.children().get_mut(2) {
-                                                                            if let Some(right_channel_spin_button) = right_channel_spin_button_widget.dynamic_cast_ref::<SpinButton>() {
-                                                                                let right_channel_level_in_db = if right_channel_level > 0.0 {
-                                                                                    (right_channel_level.abs().log10() * 20.0) as f64
-                                                                                }
-                                                                                else {
-                                                                                    -66.0
-                                                                                };
-                                                                                right_channel_spin_button.set_value(right_channel_level_in_db);
-                                                                            }
-                                                                        }
-                                                                        if let Some(channel_meter_levels_drawing_area_widget) = channel_meter_box.children().get_mut(0) {
-                                                                            if let Some(channel_meter_levels_drawing_area) = channel_meter_levels_drawing_area_widget.dynamic_cast_ref::<DrawingArea>() {
-                                                                                channel_meter_levels_drawing_area.queue_draw();
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            break;
-                                                        }
-                                                    }
-                                            }
-                                        }
-                                    }
-                                    break;
+                            let left_channel_level_in_db = channel_level_to_db(left_channel_level);
+                            let right_channel_level_in_db = channel_level_to_db(right_channel_level);
+                            match gui.mixer_blade_channel_levels.lock() {
+                                Ok(mut mixer_blade_channel_levels) => {
+                                    mixer_blade_channel_levels.insert(track_uuid.clone(), MixerBladeChannelLevels {
+                                        left_db: left_channel_level_in_db,
+                                        right_db: right_channel_level_in_db,
+                                    });
                                 }
+                                Err(_) => (),
+                            }
+                            if let Some(mixer_blade) = gui.mixer_blades.get(&track_uuid) {
+                                mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
                             }
                         },
                     },

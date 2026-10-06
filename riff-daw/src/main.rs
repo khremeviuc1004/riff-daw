@@ -6337,6 +6337,15 @@ win.connect_close_request(|window| {
                 gui.ui.automation_drawing_area.queue_draw();
             }
             DAWEvents::TransportStop => {
+                // drop all mixer blade meters to silence straight away - a track that
+                // goes quiet/coast after the stop may never send a final silent level,
+                // and without this the blades keep showing stale movement.
+                if let Ok(mut mixer_blade_channel_levels) = gui.mixer_blade_channel_levels.lock() {
+                    mixer_blade_channel_levels.clear();
+                }
+                for mixer_blade in gui.mixer_blades.values() {
+                    mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
+                }
                 match state.lock() {
                     Ok(mut state) => {
                         state.set_playing(false);
@@ -16229,9 +16238,18 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        gui: &mut MainWindow,
                        vst_host_time_info: &Arc<RwLock<TimeInfo>>,
 ) {
-    match jack_midi_receiver.try_recv() {
-        Ok(audio_layer_outward_event) => {
-            match audio_layer_outward_event {
+    // Drain every pending jack event each tick (bounded) instead of a single try_recv:
+    // the audio layer pushes play position + master level events every jack cycle into an
+    // unbounded channel, so one event per 8ms tick lets a backlog grow while playing which
+    // then keeps moving the meters/play position for seconds after transport stop.
+    let mut jack_events_processed: u32 = 0;
+    while jack_events_processed < 512 {
+        let audio_layer_outward_event = match jack_midi_receiver.try_recv() {
+            Ok(audio_layer_outward_event) => audio_layer_outward_event,
+            Err(_) => break,
+        };
+        jack_events_processed += 1;
+        match audio_layer_outward_event {
                 AudioLayerOutwardEvent::PlayPositionInFrames(play_position_in_frames) => {
                     match state.lock() {
                         Ok(mut state) => {
@@ -16426,8 +16444,6 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     }
                 },
             }
-        },
-        Err(_) => (),
     }
 }
 
@@ -16445,8 +16461,14 @@ fn process_track_background_processor_events(
             let mut automation_track_uuid = "".to_string();
             state.instrument_track_receivers().iter().for_each(|(track_uuid, receiver)| {
                 let mut plugins_to_plugin_params_map = HashMap::new();
-                match receiver.try_recv() {
-                    Ok(event) => match event {
+                let mut track_events_processed: u32 = 0;
+                while track_events_processed < 512 {
+                    let event = match receiver.try_recv() {
+                        Ok(event) => event,
+                        Err(_) => break,
+                    };
+                    track_events_processed += 1;
+                    match event {
                         TrackBackgroundProcessorOutwardEvent::InstrumentParameters(instrument_parameters) => {
                             let mut parameter_details = vec![];
                             let mut plugin_uuid = String::new();
@@ -16553,8 +16575,7 @@ fn process_track_background_processor_events(
                                 mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
                             }
                         },
-                    },
-                    Err(_) => (),
+                    }
                 }
 
                 if plugins_to_plugin_params_map.keys().count() > 0 {

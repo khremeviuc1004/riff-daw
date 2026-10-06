@@ -1293,6 +1293,37 @@ impl MouseHandler for BeatGrid {
                                         y_start += y_increment;
                                     }
                                 }
+                                else if let DrawMode::Curve = self.draw_mode {
+                                    let x_start_position = mouse_coord_helper.get_time(self.draw_mode_x_start, self.beat_width_in_pixels, self.zoom_horizontal);
+                                    let y_start_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_start, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let x_end_position = mouse_coord_helper.get_time(self.draw_mode_x_end, self.beat_width_in_pixels, self.zoom_horizontal);
+                                    let y_end_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_end, self.entity_height_in_pixels, self.zoom_vertical);
+
+                                    // orient left -> right like the drawn preview so the curve bows the same way
+                                    let (curve_start, curve_end, left_value, right_value) = if x_start_position <= x_end_position {
+                                        (x_start_position, x_end_position, y_start_index, y_end_index)
+                                    }
+                                    else {
+                                        (x_end_position, x_start_position, y_end_index, y_start_index)
+                                    };
+                                    let snap_position_start = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, curve_start);
+                                    let snap_position_end = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, curve_end);
+                                    let snap_span = snap_position_end - snap_position_start;
+                                    let exponent = AutomationCustomPainter::curve_exponent((self.draw_mode_x_end - self.draw_mode_x_start).abs());
+
+                                    if snap_span <= 0.0 {
+                                        mouse_coord_helper.add_entity(self.tx_from_ui.clone(), left_value.round() as i32, snap_position_start, 0.0, data.clone());
+                                    }
+                                    else {
+                                        let mut position = snap_position_start;
+                                        while position <= snap_position_end {
+                                            let t = (position - snap_position_start) / snap_span;
+                                            let value = left_value + (right_value - left_value) * t.powf(exponent);
+                                            mouse_coord_helper.add_entity(self.tx_from_ui.clone(), value.round() as i32, position, 0.0, data.clone());
+                                            position += self.snap_position_in_beats;
+                                        }
+                                    }
+                                }
                                 else if let DrawMode::Triplet = self.draw_mode {
                                     let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
@@ -5081,6 +5112,45 @@ impl AutomationCustomPainter {
         let _ = context.stroke();
     }
 
+    // The curve runs from the left point to the right point as y(t) = left + (right - left) * t^exponent
+    // with t across the horizontal span. The closer the horizontal points are together, the larger the
+    // exponent and the tighter the curve. When the right point sits above the left point the curve is
+    // open at the top; when it sits below, the curve opens the other way (down).
+    pub fn curve_exponent(horizontal_distance_in_pixels: f64) -> f64 {
+        if horizontal_distance_in_pixels <= 1.0 {
+            9.0
+        }
+        else {
+            1.0 + (1000.0 / horizontal_distance_in_pixels).clamp(0.25, 8.0)
+        }
+    }
+
+    fn draw_curve(context: &Context, x_start: f64, y_start: f64, x_end: f64, y_end: f64) {
+        let (left_x, left_y, right_x, right_y) = if x_start <= x_end {
+            (x_start, y_start, x_end, y_end)
+        }
+        else {
+            (x_end, y_end, x_start, y_start)
+        };
+
+        let horizontal_distance = right_x - left_x;
+        if horizontal_distance < 1.0 {
+            Self::draw_line(context, x_start, y_start, x_end, y_end);
+            return;
+        }
+
+        let exponent = Self::curve_exponent(horizontal_distance);
+        let number_of_segments = ((horizontal_distance / 2.0).ceil() as i32).clamp(8, 250);
+
+        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+        context.move_to(left_x, left_y);
+        for segment in 1..=number_of_segments {
+            let t = segment as f64 / number_of_segments as f64;
+            context.line_to(left_x + horizontal_distance * t, left_y + (right_y - left_y) * t.powf(exponent));
+        }
+        let _ = context.stroke();
+    }
+
     fn draw_automation(context: &Context, height: f64, automation_discrete: bool, previous_point_x: &mut f64, previous_point_y: &mut f64, default_line_width: f64, x: f64, y: f64, automation_value: f64) {
         if automation_discrete {
             context.move_to(x, height);
@@ -5744,6 +5814,10 @@ impl CustomPainter for AutomationCustomPainter {
                 context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                 Self::draw_line(context, draw_mode_start_x, draw_mode_start_y, draw_mode_end_x, draw_mode_end_y);
             }
+            else if let DrawMode::Curve = draw_mode {
+                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                Self::draw_curve(context, draw_mode_start_x, draw_mode_start_y, draw_mode_end_x, draw_mode_end_y);
+            }
         }
 
         (
@@ -6322,4 +6396,89 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
 
 fn rects_intersect(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
     a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+}
+
+#[cfg(test)]
+mod automation_curve_tests {
+    use super::*;
+
+    fn collect_automation_adds(rx: &crossbeam_channel::Receiver<DAWEvents>) -> Vec<(f64, i32)> {
+        let mut points = vec![];
+        while let Ok(event) = rx.try_recv() {
+            if let DAWEvents::TrackChange(TrackChangeType::AutomationAdd(new_entities), _) = event {
+                points.extend(new_entities);
+            }
+        }
+        points
+    }
+
+    #[test]
+    fn curve_drag_release_emits_curve_events() {
+        if gtk4::init().is_err() {
+            eprintln!("no display available - skipping");
+            return;
+        }
+        let (tx, rx) = crossbeam_channel::unbounded::<DAWEvents>();
+        let mut grid = BeatGrid::new_with_custom(
+            1.0,
+            1.0,
+            10.0,
+            50.0,
+            4,
+            None,
+            Some(std::boxed::Box::new(AutomationMouseCoordHelper)),
+            tx,
+            false,
+            Some(DrawingAreaType::Automation),
+        );
+        grid.set_operation_mode(OperationModeType::Add);
+        grid.turn_on_draw_curve_mode();
+        grid.set_snap_position_in_beats(4.0);
+        assert!(matches!(grid.draw_mode, DrawMode::Curve));
+
+        let area = DrawingArea::new();
+        grid.handle_mouse_press(100.0, 700.0, &area, MouseButton::Button1, false, false, false);
+        assert!(grid.draw_mode_on, "press in add mode must enable the drag preview");
+        grid.handle_mouse_motion(900.0, 100.0, &area, MouseButton::Button1, false, false, false);
+        assert_eq!(grid.draw_mode_x_end, 900.0);
+        grid.handle_mouse_release(900.0, 100.0, &area, MouseButton::Button1, false, false, false, String::new());
+
+        let points = collect_automation_adds(&rx);
+        assert!(points.len() >= 3, "curve drag should add several events, got {:?}", points);
+
+        let values: Vec<i32> = points.iter().map(|(_, value)| *value).collect();
+        let first = values.first().unwrap().to_owned();
+        let last = values.last().unwrap().to_owned();
+        assert!(last > first, "rising drag should produce rising values: {:?}", values);
+
+        let mid_index = values.len() / 2;
+        let linear_mid = first + (last - first) / 2;
+        assert!(
+            values[mid_index] < linear_mid - 5,
+            "middle value {} should sit well below the linear chord midpoint {} (curve must bow towards the start level): {:?}",
+            values[mid_index], linear_mid, values
+        );
+    }
+
+    #[test]
+    fn draw_curve_paints_curved_not_straight_shape() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 100, 100).expect("surface");
+        {
+            let cr = cairo::Context::new(&surface).expect("context");
+            cr.set_source_rgb(1.0, 1.0, 1.0);
+            cr.paint();
+            AutomationCustomPainter::draw_curve(&cr, 10.0, 80.0, 90.0, 20.0);
+        }
+        let stride = surface.stride() as usize;
+        let data_guard = surface.data().expect("surface data");
+        let data: &[u8] = &data_guard;
+        let dark_at = |x: usize, mut y_range: std::ops::Range<usize>| -> bool {
+            y_range.any(|y| {
+                let px = &data[y * stride + x * 4..][..4];
+                (px[0] as u32 + px[1] as u32 + px[2] as u32) < 300
+            })
+        };
+        assert!(dark_at(50, 70..90), "tight curve must stay near the start level at mid span (bow, not chord)");
+        assert!(!dark_at(50, 45..55), "curve must not follow the straight chord at mid span");
+    }
 }

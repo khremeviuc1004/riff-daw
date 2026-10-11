@@ -180,7 +180,7 @@
                                         <property name="label" translatable="yes">Midi Device</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">3</property>
+                                          <property name="row">5</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -190,7 +190,7 @@
                                         <property name="label" translatable="yes">Midi Channel</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">4</property>
+                                          <property name="row">6</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -200,7 +200,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">3</property>
+                                          <property name="row">5</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -210,7 +210,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">4</property>
+                                          <property name="row">6</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -220,7 +220,7 @@
                                         <property name="label" translatable="yes">Track</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">5</property>
+                                          <property name="row">7</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -232,7 +232,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">5</property>
+                                          <property name="row">7</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -242,7 +242,7 @@
                                         <property name="label" translatable="yes">Riff</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">6</property>
+                                          <property name="row">8</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -254,7 +254,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">6</property>
+                                          <property name="row">8</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -272,27 +272,27 @@
                                       </object>
                                     </child>
                                     <child>
-                      <object class="GtkBox" id="track_riff_choice_box">
-                        <property name="visible">True</property>
-                        <property name="orientation">horizontal</property>
-                        <property name="hexpand">True</property>
-                        <style>
-                          <class name="linked" />
-                        </style>
-                        <child>
-                          <object class="GtkEntry" id="track_details_riff_choice_entry">
-                            <property name="visible">True</property>
-                            <property name="valign">center</property>
-                            <property name="hexpand">True</property>
-                            <property name="truncate-multiline">True</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkDropDown" id="track_riff_choice">
-                            <property name="visible">True</property>
-                            <property name="valign">center</property>
-                          </object>
-                        </child>
+                                      <object class="GtkBox" id="track_riff_choice_box">
+                                        <property name="visible">True</property>
+                                        <property name="orientation">horizontal</property>
+                                        <property name="hexpand">True</property>
+                                        <style>
+                                          <class name="linked" />
+                                        </style>
+                                        <child>
+                                          <object class="GtkEntry" id="track_details_riff_choice_entry">
+                                            <property name="visible">True</property>
+                                            <property name="valign">center</property>
+                                            <property name="hexpand">True</property>
+                                            <property name="truncate-multiline">True</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkDropDown" id="track_riff_choice">
+                                            <property name="visible">True</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
                                         <layout>
                                           <property name="column">1</property>
                                           <property name="row">0</property>
@@ -318,7 +318,7 @@
                                         <property name="label" translatable="yes">Send midi to</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">7</property>
+                                          <property name="row">9</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -334,7 +334,7 @@
                                         </child>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">7</property>
+                                          <property name="row">9</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -344,7 +344,7 @@
                                         <property name="label" translatable="yes">Effects</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">11</property>
+                                          <property name="row">13</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -371,7 +371,7 @@
                                         </child>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">11</property>
+                                          <property name="row">13</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -381,7 +381,7 @@
                                         <property name="label" translatable="yes">Add Effect</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">10</property>
+                                          <property name="row">12</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -391,7 +391,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">10</property>
+                                          <property name="row">12</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -404,7 +404,7 @@
                                         <property name="valign">center</property>
                                         <layout>
                                           <property name="column">2</property>
-                                          <property name="row">10</property>
+                                          <property name="row">12</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -415,7 +415,7 @@
                                         <property name="margin-bottom">5</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">9</property>
+                                          <property name="row">11</property>
                                           <property name="column-span">5</property>
                                         </layout>
                                       </object>
@@ -426,7 +426,7 @@
                                         <property name="label" translatable="yes">Send audio to</property>
                                         <layout>
                                           <property name="column">0</property>
-                                          <property name="row">8</property>
+                                          <property name="row">10</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -442,9 +442,194 @@
                                         </child>
                                         <layout>
                                           <property name="column">1</property>
-                                          <property name="row">8</property>
+                                          <property name="row">10</property>
                                         </layout>
                                       </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_instrument_override_label">
+                                        <property name="visible">False</property>
+                                        <property name="label" translatable="yes">Instrument Override</property>
+                                        <property name="tooltip-text" translatable="yes">Use a different instrument plugin for the selected riff arrangement</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">3</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkCheckButton" id="track_instrument_override_check_button">
+                                        <property name="visible">False</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">3</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_override_instrument_label">
+                                        <property name="visible">False</property>
+                                        <property name="label" translatable="yes">Override Instrument</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">4</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_override_instrument_choice">
+                                        <property name="visible">False</property>
+                                        <property name="valign">center</property>
+                                        <property name="hexpand">True</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">4</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_override_instrument_window_visibility_toggle_btn">
+                                        <property name="icon-name">document-open</property>
+                                        <property name="visible">False</property>
+                                        <property name="tooltip-text" translatable="yes">Toggle the visibility of the override instrument plugin window</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">4</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_effects_override_label">
+                                        <property name="visible">False</property>
+                                        <property name="label" translatable="yes">Effects Override</property>
+                                        <property name="tooltip-text" translatable="yes">Use a different set of effects plugins for the selected riff arrangement</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">15</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkCheckButton" id="track_effects_override_check_button">
+                                        <property name="visible">False</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">15</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_override_effects_choice_label">
+                                        <property name="visible">False</property>
+                                        <property name="label" translatable="yes">Add Override Effect</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">16</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkDropDown" id="track_override_effects_choice">
+                                        <property name="visible">False</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">16</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="track_add_override_effect_button">
+                                        <property name="visible">False</property>
+                                        <property name="icon-name">list-add</property>
+                                        <property name="tooltip-text" translatable="yes">Add an override effect plugin</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">16</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="track_override_effects_btns_label">
+                                        <property name="visible">False</property>
+                                        <property name="label" translatable="yes">Override Effects</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">17</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox" id="track_override_effects_btns_box">
+                                        <property name="visible">False</property>
+                                        <child>
+                                          <object class="GtkButton" id="track_override_effect_window_visibility_toggle_btn">
+                                            <property name="icon-name">document-open</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Toggle the visibility of the selected override effect plugin window</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="track_override_effect_delete_btn">
+                                            <property name="icon-name">edit-delete</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Delete the selected override effect plugin</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">17</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkScrolledWindow" id="track_effects_scroll_window">
+                                        <property name="visible">True</property>
+                                        <property name="vexpand">True</property>
+                                        <property name="min-content-height">150</property>
+                                        <child>
+                                          <object class="GtkViewport">
+                                            <property name="visible">True</property>
+                                            <child>
+                                              <object class="GtkListView" id="track_effect_list">
+                                                <property name="visible">True</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">14</property>
+                                          <property name="column-span">5</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
+                                    </child>
+                                    <child>
+                                      <placeholder />
                                     </child>
                                     <child>
                                       <placeholder />
@@ -536,15 +721,15 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkScrolledWindow" id="track_effects_scroll_window">
-                        <property name="visible">True</property>
+                      <object class="GtkScrolledWindow" id="track_override_effects_scroll_window">
+                        <property name="visible">False</property>
                         <property name="vexpand">True</property>
-                        <property name="min-content-height">150</property>
+                        <property name="min-content-height">100</property>
                         <child>
                           <object class="GtkViewport">
                             <property name="visible">True</property>
                             <child>
-                              <object class="GtkListView" id="track_effect_list">
+                              <object class="GtkListView" id="track_override_effect_list">
                                 <property name="visible">True</property>
                               </object>
                             </child>

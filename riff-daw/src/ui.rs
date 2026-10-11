@@ -9,7 +9,7 @@ use cairo::glib::{BindingFlags, SignalHandlerId};
 use crossbeam_channel::Sender;
 use gdk4::{EventType, ScrollDirection};
 use gtk4::{ResponseType, PolicyType};
-use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, ColorDialogButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer , FileChooserAction, FileFilter, Frame, glib, Grid, Label, ListView, Orientation, Paned, prelude::*, prelude::Cast, PopoverMenuBar, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, Viewport, Widget, Window};
+use gtk4::{AboutDialog, Adjustment, ApplicationWindow, Box, Button, CheckButton, ColorDialogButton, DropDown, CssProvider, DrawingArea, Entry, EntryBuffer , FileChooserAction, FileFilter, Frame, glib, Grid, Label, ListView, Orientation, Paned, prelude::*, prelude::Cast, PopoverMenuBar, ProgressBar, Scale, ScrolledWindow, SpinButton, Stack, TextView, ToggleButton, Viewport, Widget, Window};
 
 use crate::combo_box_text_compat::{ComboItemObject, ComboBoxTextCompat};
 use crate::gladis4::FromGtk4Builder;
@@ -511,6 +511,25 @@ pub struct TrackDetailsDialogue {
     pub track_instrument_choice: DropDown,
     pub track_instrument_window_visibility_toggle_btn: Button,
 
+    // riff arrangement instrument/effects overrides - only shown when the active view
+    // is the riff arrangement (with an arrangement selected) for instrument/audio tracks
+    pub track_instrument_override_label: Label,
+    pub track_instrument_override_check_button: CheckButton,
+    pub track_override_instrument_label: Label,
+    pub track_override_instrument_choice: DropDown,
+    pub track_override_instrument_window_visibility_toggle_btn: Button,
+    pub track_effects_override_label: Label,
+    pub track_effects_override_check_button: CheckButton,
+    pub track_override_effects_choice_label: Label,
+    pub track_override_effects_choice: DropDown,
+    pub track_add_override_effect_button: Button,
+    pub track_override_effects_btns_label: Label,
+    pub track_override_effects_btns_box: Box,
+    pub track_override_effect_window_visibility_toggle_btn: Button,
+    pub track_override_effect_delete_btn: Button,
+    pub track_override_effect_list: ListView,
+    pub track_override_effects_scroll_window: ScrolledWindow,
+
     pub track_midi_device_label: Label,
     pub track_midi_device_choice: DropDown,
     pub track_midi_channel_label: Label,
@@ -703,6 +722,9 @@ pub struct MainWindow {
     pub track_audio_routing_dialogues: HashMap<String, TrackAudioRoutingDialogue>,
     pub selected_style_provider: CssProvider,
     pub track_details_dialogue_track_instrument_choice_signal_handlers: HashMap<String, SignalHandlerId>,
+    pub track_details_dialogue_track_override_instrument_choice_signal_handlers: HashMap<String, SignalHandlerId>,
+    pub track_details_dialogue_instrument_override_check_button_signal_handlers: HashMap<String, SignalHandlerId>,
+    pub track_details_dialogue_effects_override_check_button_signal_handlers: HashMap<String, SignalHandlerId>,
     pub automation_effects_choice_signal_handler_id: Option<SignalHandlerId>,
 
     pub widgets: Vec<Widget>,
@@ -1084,6 +1106,22 @@ gtk4_builder_from!(TrackDetailsDialogue {
     track_instrument_label: Label,
     track_instrument_choice: DropDown,
     track_instrument_window_visibility_toggle_btn: Button,
+    track_instrument_override_label: Label,
+    track_instrument_override_check_button: CheckButton,
+    track_override_instrument_label: Label,
+    track_override_instrument_choice: DropDown,
+    track_override_instrument_window_visibility_toggle_btn: Button,
+    track_effects_override_label: Label,
+    track_effects_override_check_button: CheckButton,
+    track_override_effects_choice_label: Label,
+    track_override_effects_choice: DropDown,
+    track_add_override_effect_button: Button,
+    track_override_effects_btns_label: Label,
+    track_override_effects_btns_box: Box,
+    track_override_effect_window_visibility_toggle_btn: Button,
+    track_override_effect_delete_btn: Button,
+    track_override_effect_list: ListView,
+    track_override_effects_scroll_window: ScrolledWindow,
     track_midi_device_label: Label,
     track_midi_device_choice: DropDown,
     track_midi_channel_label: Label,
@@ -1889,6 +1927,9 @@ impl MainWindow {
             track_audio_routing_dialogues: HashMap::new(),
             selected_style_provider,
             track_details_dialogue_track_instrument_choice_signal_handlers: HashMap::new(),
+            track_details_dialogue_track_override_instrument_choice_signal_handlers: HashMap::new(),
+            track_details_dialogue_instrument_override_check_button_signal_handlers: HashMap::new(),
+            track_details_dialogue_effects_override_check_button_signal_handlers: HashMap::new(),
             automation_effects_choice_signal_handler_id: None,
             riff_set_view_riff_set_beat_grids: Arc::new(Mutex::new(HashMap::new())),
             riff_sequence_view_riff_set_ref_beat_grids:  Arc::new(Mutex::new(HashMap::new())),
@@ -2036,7 +2077,7 @@ impl MainWindow {
         }
 
         {
-            let tx_from_ui = tx_from_ui;
+            let tx_from_ui = tx_from_ui.clone();
             ui.time_signature_denominator_spinner.connect_value_changed(move |time_signature_denominator_spinner| {
                 let time_signature_denominator = time_signature_denominator_spinner.value();
                 if let Ok(time_signature_denominator) = time_signature_denominator.to_value().get() {
@@ -2050,6 +2091,7 @@ impl MainWindow {
 
         {
             let state = state.clone();
+            let tx_from_ui = tx_from_ui.clone();
             let riffs_view_toggle_button = ui.riffs_view_toggle_button.clone();
             let centre_panel_stack = ui.centre_panel_stack.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
@@ -2060,6 +2102,12 @@ impl MainWindow {
                         state.set_current_view(CurrentView::Track);
                         centre_panel_stack.set_visible_child_name("Track Grid");
                         automation_drawing_area.queue_draw();
+                    }
+                    // leaving the riff arrangement view - drop any arrangement
+                    // instrument/effects override plugin instances
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when leaving the riff arrangement view"),
                     }
                 }
             });
@@ -2074,6 +2122,7 @@ impl MainWindow {
             let riff_grid_view_toggle_button = ui.riff_grid_view_toggle_button.clone();
             let riff_arrangement_view_toggle_button = ui.riff_arrangement_view_toggle_button.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
+            let tx_from_ui = tx_from_ui.clone();
             ui.riffs_view_toggle_button.connect_clicked(move |riffs_view_toggle_button| {
                 if riffs_view_toggle_button.is_active() {
                     if let Ok(mut state) = state.lock() {
@@ -2094,6 +2143,12 @@ impl MainWindow {
                         }
                         automation_drawing_area.queue_draw();
                     }
+                    // the view determines whether the selected arrangement's
+                    // instrument/effects override plugins are in effect
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when switching to the riffs view"),
+                    }
                 }
             });
         }
@@ -2105,6 +2160,7 @@ impl MainWindow {
             let riff_arrangement_view_toggle_button = ui.riff_arrangement_view_toggle_button.clone();
             let riffs_stack = ui.riffs_stack.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
+            let tx_from_ui = tx_from_ui.clone();
             ui.riff_sets_view_toggle_button.connect_clicked(move |riff_sets_view_toggle_button| {
                 if riff_sets_view_toggle_button.is_active() {
                     if let Ok(mut state) = state.lock() {
@@ -2115,6 +2171,11 @@ impl MainWindow {
                         riffs_stack.set_visible_child_name("riff_sets");
                         automation_drawing_area.queue_draw();
                     }
+                    // switched riff view - the selected arrangement's overrides only apply in the riff arrangement view
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when switching the riffs sub view"),
+                    }
                 }
             });
         }
@@ -2126,6 +2187,7 @@ impl MainWindow {
             let riff_arrangement_view_toggle_button = ui.riff_arrangement_view_toggle_button.clone();
             let riffs_stack = ui.riffs_stack.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
+            let tx_from_ui = tx_from_ui.clone();
             ui.riff_sequence_view_toggle_button.connect_clicked(move |riff_sequence_view_toggle_button| {
                 if riff_sequence_view_toggle_button.is_active() {
                     if let Ok(mut state) = state.lock() {
@@ -2136,6 +2198,11 @@ impl MainWindow {
                         riffs_stack.set_visible_child_name("riff_sequences");
                         automation_drawing_area.queue_draw();
                     }
+                    // switched riff view - the selected arrangement's overrides only apply in the riff arrangement view
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when switching the riffs sub view"),
+                    }
                 }
             });
         }
@@ -2147,6 +2214,7 @@ impl MainWindow {
             let riff_arrangement_view_toggle_button = ui.riff_arrangement_view_toggle_button.clone();
             let riffs_stack = ui.riffs_stack.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
+            let tx_from_ui = tx_from_ui.clone();
             ui.riff_grid_view_toggle_button.connect_clicked(move |riff_grid_view_toggle_button| {
                 if riff_grid_view_toggle_button.is_active() {
                     if let Ok(mut state) = state.lock() {
@@ -2156,6 +2224,11 @@ impl MainWindow {
                         state.set_current_view(CurrentView::RiffGrid);
                         riffs_stack.set_visible_child_name("riff_grids");
                         automation_drawing_area.queue_draw();
+                    }
+                    // switched riff view - the selected arrangement's overrides only apply in the riff arrangement view
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when switching the riffs sub view"),
                     }
                 }
             });
@@ -2168,6 +2241,7 @@ impl MainWindow {
             let riff_grid_view_toggle_button = ui.riff_grid_view_toggle_button.clone();
             let riffs_stack = ui.riffs_stack.clone();
             let automation_drawing_area = ui.automation_drawing_area.clone();
+            let tx_from_ui = tx_from_ui.clone();
             ui.riff_arrangement_view_toggle_button.connect_clicked(move |riff_arrangement_view_toggle_button| {
                 if riff_arrangement_view_toggle_button.is_active() {
                     if let Ok(mut state) = state.lock() {
@@ -2177,6 +2251,11 @@ impl MainWindow {
                         state.set_current_view(CurrentView::RiffArrangement);
                         riffs_stack.set_visible_child_name("riff_arrangement");
                         automation_drawing_area.queue_draw();
+                    }
+                    // entered the riff arrangement view - sync the selected arrangement's instrument/effects override plugins
+                    match tx_from_ui.send(DAWEvents::RiffArrangementOverridesChanged) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Problem sending message with tx from ui lock when switching the riffs sub view"),
                     }
                 }
             });
@@ -2199,6 +2278,9 @@ impl MainWindow {
         }
 
         self.track_details_dialogue_track_instrument_choice_signal_handlers.clear();
+        self.track_details_dialogue_track_override_instrument_choice_signal_handlers.clear();
+        self.track_details_dialogue_instrument_override_check_button_signal_handlers.clear();
+        self.track_details_dialogue_effects_override_check_button_signal_handlers.clear();
 
         // clear track detail panel references
         self.track_details_dialogues.clear();
@@ -3510,6 +3592,7 @@ impl MainWindow {
         }
         track_details_dialogue.track_details_panel.set_widget_name(track_uuid.to_string().as_str());
         let (_, track_effects_list_store) = crate::gtk4_compat::setup_text_list_view(&track_details_dialogue.track_effect_list);
+        let (_, track_override_effects_list_store) = crate::gtk4_compat::setup_text_list_view(&track_details_dialogue.track_override_effect_list);
 
 
         match general_track_type {
@@ -4168,6 +4251,135 @@ impl MainWindow {
                     if let Some(effect_uuid) = row.id() {
                         match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
                             Err(_) => debug!("Problem sending message with tx from ui lock when toggling effect window visibility"),
+                            _ => (),
+                        }
+                    }
+                }
+            });
+        }
+
+        // riff arrangement instrument/effects override wiring - these controls are only
+        // made visible when the active view is the riff arrangement (see
+        // update_track_details_dialogue)
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let instrument_override_check_button_signal_handler_id = track_details_dialogue.track_instrument_override_check_button.connect_toggled(move |check_button| {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::InstrumentOverride(check_button.is_active()), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling the track instrument override"),
+                    _ => (),
+                }
+            });
+            self.track_details_dialogue_instrument_override_check_button_signal_handlers.insert(track_uuid.to_string(), instrument_override_check_button_signal_handler_id);
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_override_instrument_choice_signal_handler_id = track_details_dialogue.track_override_instrument_choice.connect_changed(move |track_override_instrument_choice| {
+                match track_override_instrument_choice.active_id() {
+                    Some(instrument_shared_library_file) => {
+                        let file = instrument_shared_library_file.to_string();
+                        debug!("Selected override instrument: id={:?}, text={:?}", file.as_str(), track_override_instrument_choice.active_text().unwrap().to_string());
+
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::OverrideInstrumentChanged(file), Some(track_uuid.to_string()))) {
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track override instrument has been selected."),
+                            _ => (),
+                        }
+                    },
+                    None => (),
+                }
+            });
+            self.track_details_dialogue_track_override_instrument_choice_signal_handlers.insert(track_uuid.to_string(), track_override_instrument_choice_signal_handler_id);
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            track_details_dialogue.track_override_instrument_window_visibility_toggle_btn.connect_clicked(move |_| {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::ShowInstrument, Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling the override instrument window visibility"),
+                    _ => (),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let effects_override_check_button_signal_handler_id = track_details_dialogue.track_effects_override_check_button.connect_toggled(move |check_button| {
+                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectsOverride(check_button.is_active()), Some(track_uuid.to_string()))) {
+                    Err(_) => debug!("Problem sending message with tx from ui lock when toggling the track effects override"),
+                    _ => (),
+                }
+            });
+            self.track_details_dialogue_effects_override_check_button_signal_handlers.insert(track_uuid.to_string(), effects_override_check_button_signal_handler_id);
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_override_effects_choice = track_details_dialogue.track_override_effects_choice.clone();
+            let track_override_effect_list = track_details_dialogue.track_override_effect_list.clone();
+            let track_override_effects_list_store = track_override_effects_list_store.clone();
+            track_details_dialogue.track_add_override_effect_button.connect_clicked(move |_| {
+                match track_override_effects_choice.active_id() {
+                    Some(effect_shared_library_file) => {
+                        let file = effect_shared_library_file.to_string();
+                        let uuid = Uuid::new_v4();
+                        let name = track_override_effects_choice.active_text().unwrap().to_string();
+
+                        debug!("Add override effect: id={}, text={}, uuid={}", file.as_str(), name.as_str(), uuid);
+
+                        track_override_effects_list_store.append(&ComboItemObject::new(Some(uuid.to_string().as_str()), name.as_str()));
+                        track_override_effect_list.set_visible(true);
+
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::OverrideEffectAdded(uuid, name, file), Some(track_uuid.to_string()))) {
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track override effect is being added"),
+                            _ => (),
+                        }
+                    },
+                    None => debug!("No effect selected."),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_override_effect_list = track_details_dialogue.track_override_effect_list.clone();
+            let track_override_effects_list_store = track_override_effects_list_store;
+            track_details_dialogue.track_override_effect_delete_btn.connect_clicked(move |_| {
+                if let (Some(row), Some(store)) = (
+                    crate::gtk4_compat::list_view_selected_row(&track_override_effect_list),
+                    crate::gtk4_compat::list_view_store(&track_override_effect_list),
+                ) {
+                    if let Some(effect_uuid) = row.id() {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::OverrideEffectDeleted(effect_uuid.clone()), Some(track_uuid.to_string()))) {
+                            Ok(_) => {
+                                let remove_at = store
+                                    .iter::<glib::Object>()
+                                    .flatten()
+                                    .position(|item| {
+                                        item.downcast_ref::<ComboItemObject>()
+                                            .and_then(ComboItemObject::id)
+                                            .as_deref()
+                                            == Some(effect_uuid.as_str())
+                                    });
+                                if let Some(index) = remove_at {
+                                    store.remove(index as u32);
+                                }
+                            },
+                            Err(_) => debug!("Couldn't send override effect delete message."),
+                        }
+                    }
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_override_effect_list = track_details_dialogue.track_override_effect_list.clone();
+            track_details_dialogue.track_override_effect_window_visibility_toggle_btn.connect_clicked(move |_| {
+                debug!("Track override effect toggle visibility clicked.");
+                if let Some(row) = crate::gtk4_compat::list_view_selected_row(&track_override_effect_list) {
+                    if let Some(effect_uuid) = row.id() {
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectToggleWindowVisibility(effect_uuid), Some(track_uuid.to_string()))) {
+                            Err(_) => debug!("Problem sending message with tx from ui lock when toggling override effect window visibility"),
                             _ => (),
                         }
                     }
@@ -10963,6 +11175,13 @@ impl MainWindow {
         // each instrument track's current instrument in the track details dialogues.
         let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
 
+        // the currently selected arrangement (only when the active view is the riff
+        // arrangement) drives the override controls in the track details dialogues
+        let riff_arrangement: Option<RiffArrangement> = match state.current_view() {
+            CurrentView::RiffArrangement => state.selected_riff_arrangement_uuid().and_then(|riff_arrangement_uuid| state.project().song().riff_arrangement(riff_arrangement_uuid.clone())).cloned(),
+            _ => None,
+        };
+
         let project = state.get_project();
         let song = project.song_mut();
         let mut track_number = 0;
@@ -11025,7 +11244,7 @@ impl MainWindow {
                     );
                 }
             }
-            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track);
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track, riff_arrangement.as_ref());
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -11084,8 +11303,13 @@ impl MainWindow {
                     TrackType::InstrumentTrack(track) => {
                         // update the controller view instrument params list based on the selected track
                         self.ui.automation_instrument_parameters_combobox.remove_all();
-                        let instrument_uuid = track.instrument().uuid().to_string();
                         let key = track.uuid().to_string();
+                        // in the riff arrangement view with an instrument override enabled,
+                        // instrument automation is created against the override instrument
+                        let instrument_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&key) {
+                            Some(override_instrument_uuid) => override_instrument_uuid.to_string(),
+                            None => track.instrument().uuid().to_string(),
+                        };
                         if let Some(track_plugins) = plugins_params.get(&key) {
                             if let Some(plugin_params) = track_plugins.get(&instrument_uuid) {
                                 debug!("instrument plugin param count={}", plugin_params.len());
@@ -11096,8 +11320,13 @@ impl MainWindow {
                         }
 
                         // update the controller view effect list based on the selected track
+                        // (the arrangement's override effects while the override is enabled)
                         self.ui.automation_effects_combobox.remove_all();
-                        for effect in track.effects() {
+                        let automation_effects: &[crate::domain::AudioPlugin] = match state.riff_arrangement_effects_override(&key) {
+                            Some(effects_override) => effects_override.effects(),
+                            None => track.effects(),
+                        };
+                        for effect in automation_effects.iter() {
                             let effect_uuid = effect.uuid().to_string();
                             self.ui.automation_effects_combobox.append(Some(effect_uuid.as_str()), effect.name());
 
@@ -11583,8 +11812,10 @@ impl MainWindow {
         effects_plugins: &mut IndexMap<String, String>,
         scanned_instrument_plugins: &HashMap<String, ScannedPlugin>,
         track_number: &mut i32,
-        track: &&mut TrackType
+        track: &&mut TrackType,
+        riff_arrangement: Option<&RiffArrangement>,
     ) {
+
         let track_uuid = track.uuid().to_string();
         
         match self.track_details_dialogues.get_mut(&track_uuid) {
@@ -11692,14 +11923,21 @@ impl MainWindow {
 
                                 track_instrument_choice.unblock_signal(signal_handler_id);
                                 track_instrument_choice.set_visible(true);
-                                track_instrument_choice.activate();
                             }
                         }
 
                         Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+
+                        // riff arrangement instrument/effects override controls
+                        Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
+                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
                     }
                     TrackType::AudioTrack(track) => {
                         Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+
+                        // no instrument on an audio track - only the effects override applies
+                        Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
+                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
                     }
                     TrackType::MidiTrack(track) => {
                         track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
@@ -11711,6 +11949,10 @@ impl MainWindow {
                         }
 
                         track_details_dialogue.track_midi_device_choice.set_active_id(Some(track.midi_device().name()));
+
+                        // no plugins on a midi track - hide all the override controls
+                        Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
+                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
                     }
                 }
             }
@@ -11741,6 +11983,168 @@ impl MainWindow {
         }
     }
 
+    /// Syncs the riff arrangement instrument override controls in a track details
+    /// dialogue: the override checkbox (only shown while the active view is the riff
+    /// arrangement), the override instrument dropdown and its plugin window button
+    /// (only shown while the override is enabled) and the enabled state of the track's
+    /// own instrument dropdown (disabled while the override is on).
+    fn update_track_details_instrument_override(
+        instrument_plugins: &mut IndexMap<String, String>,
+        scanned_instrument_plugins: &HashMap<String, ScannedPlugin>,
+        override_instrument_choice_signal_handler_id: Option<&SignalHandlerId>,
+        override_check_button_signal_handler_id: Option<&SignalHandlerId>,
+        track_details_dialogue: &mut TrackDetailsDialogue,
+        track_uuid: &String,
+        riff_arrangement: Option<&RiffArrangement>,
+        show: bool,
+    ) {
+        let instrument_override = riff_arrangement.and_then(|riff_arrangement| riff_arrangement.instrument_override(track_uuid));
+        let override_enabled = instrument_override.map(|instrument_override| instrument_override.enabled()).unwrap_or(false);
+        let enabled = show && override_enabled;
+
+        track_details_dialogue.track_instrument_override_label.set_visible(show);
+        track_details_dialogue.track_instrument_override_check_button.set_visible(show);
+        // set the checkbox state without generating an event - a programmatic toggle
+        // must not send an InstrumentOverride event back to the state, otherwise a
+        // dialogue refresh that resolves no arrangement (e.g. while another view is
+        // active) would silently clear the saved enabled flag.
+        if let Some(signal_handler_id) = override_check_button_signal_handler_id {
+            track_details_dialogue.track_instrument_override_check_button.block_signal(signal_handler_id);
+            track_details_dialogue.track_instrument_override_check_button.set_active(override_enabled);
+            track_details_dialogue.track_instrument_override_check_button.unblock_signal(signal_handler_id);
+        }
+        else {
+            track_details_dialogue.track_instrument_override_check_button.set_active(override_enabled);
+        }
+
+        // the track's own instrument dropdown is disabled while the override is on
+        track_details_dialogue.track_instrument_choice.set_sensitive(!enabled);
+        track_details_dialogue.track_instrument_window_visibility_toggle_btn.set_sensitive(!enabled);
+
+        track_details_dialogue.track_override_instrument_label.set_visible(enabled);
+        track_details_dialogue.track_override_instrument_choice.set_visible(enabled);
+        track_details_dialogue.track_override_instrument_window_visibility_toggle_btn.set_visible(enabled);
+        // the plugin window can only be opened once an override instrument has been chosen
+        track_details_dialogue.track_override_instrument_window_visibility_toggle_btn.set_sensitive(instrument_override.and_then(|instrument_override| instrument_override.instrument()).is_some());
+
+        if enabled {
+            // re-populate the track override instrument choice
+            let track_override_instrument_choice = track_details_dialogue.track_override_instrument_choice.clone();
+            track_override_instrument_choice.remove_all();
+            track_override_instrument_choice.append(None, "");
+            let instrument_keys = instrument_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+            for key in instrument_keys.iter() {
+                if let Some(value) = instrument_plugins.get(*key) {
+                    let adjusted_key = key.replace(char::from(0), "");
+                    let adjusted_value = value.replace(char::from(0), "");
+                    track_override_instrument_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                }
+            }
+
+            if let Some(instrument) = instrument_override.and_then(|instrument_override| instrument_override.instrument()) {
+                if !instrument.file().is_empty() && instrument.file() != "Unknown" {
+                    // the combo entries are keyed by the scanned plugin map key, so find the
+                    // key of the scanned plugin the override was loaded from
+                    let override_instrument_id = scanned_instrument_plugins
+                        .iter()
+                        .find(|(_key, scanned_plugin)| {
+                            scanned_plugin.path == instrument.file()
+                                && scanned_plugin.audio_plugin_stack.to_string() == instrument.plugin_type()
+                                && match scanned_plugin.audio_plugin_stack {
+                                    AudioPluginType::VST24 => &scanned_plugin.sub_id == instrument.sub_plugin_id(),
+                                    AudioPluginType::CLAP => clap_plugin_id(scanned_plugin) == clap_plugin_id_from(instrument.uid(), instrument.sub_plugin_id()),
+                                    AudioPluginType::VST3 => scanned_plugin.id == instrument.uid(),
+                                }
+                        })
+                        .map(|(key, _scanned_plugin)| key.clone())
+                        .unwrap_or_else(|| instrument.file().to_string());
+
+                    // set the active element without generating an event
+                    if let Some(signal_handler_id) = override_instrument_choice_signal_handler_id {
+                        track_override_instrument_choice.block_signal(signal_handler_id);
+                        let override_instrument_id = override_instrument_id.replace(char::from(0), "");
+                        if !track_override_instrument_choice.set_active_id(Some(override_instrument_id.as_str())) {
+                            debug!("failed to set the active id for the track override instrument: {}", override_instrument_id.as_str());
+                        }
+                        track_override_instrument_choice.unblock_signal(signal_handler_id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Syncs the riff arrangement effects override controls in a track details
+    /// dialogue: the override checkbox (only shown while the active view is the riff
+    /// arrangement), the override effect chooser/add controls and the override effects
+    /// list (only shown while the override is enabled).
+    fn update_track_details_effects_override(
+        effects_plugins: &mut IndexMap<String, String>,
+        override_check_button_signal_handler_id: Option<&SignalHandlerId>,
+        track_details_dialogue: &mut TrackDetailsDialogue,
+        track_uuid: &String,
+        riff_arrangement: Option<&RiffArrangement>,
+        show: bool,
+    ) {
+        let effects_override = riff_arrangement.and_then(|riff_arrangement| riff_arrangement.effects_override(track_uuid));
+        let override_enabled = effects_override.map(|effects_override| effects_override.enabled()).unwrap_or(false);
+        let enabled = show && override_enabled;
+
+        track_details_dialogue.track_effects_override_label.set_visible(show);
+        track_details_dialogue.track_effects_override_check_button.set_visible(show);
+        // set the checkbox state without generating an event - a programmatic toggle
+        // must not send an EffectsOverride event back to the state, otherwise a
+        // dialogue refresh that resolves no arrangement (e.g. while another view is
+        // active) would silently clear the saved enabled flag.
+        if let Some(signal_handler_id) = override_check_button_signal_handler_id {
+            track_details_dialogue.track_effects_override_check_button.block_signal(signal_handler_id);
+            track_details_dialogue.track_effects_override_check_button.set_active(override_enabled);
+            track_details_dialogue.track_effects_override_check_button.unblock_signal(signal_handler_id);
+        }
+        else {
+            track_details_dialogue.track_effects_override_check_button.set_active(override_enabled);
+        }
+
+        track_details_dialogue.track_override_effects_choice_label.set_visible(enabled);
+        track_details_dialogue.track_override_effects_choice.set_visible(enabled);
+        track_details_dialogue.track_add_override_effect_button.set_visible(enabled);
+        track_details_dialogue.track_override_effects_btns_label.set_visible(enabled);
+        track_details_dialogue.track_override_effects_btns_box.set_visible(enabled);
+        track_details_dialogue.track_override_effects_scroll_window.set_visible(enabled);
+
+        // the track's own effects controls are disabled while the override is on
+        track_details_dialogue.track_effects_choice_label.set_sensitive(!enabled);
+        track_details_dialogue.track_effects_choice.set_sensitive(!enabled);
+        track_details_dialogue.track_add_effect_button.set_sensitive(!enabled);
+        track_details_dialogue.track_effects_btns_label.set_sensitive(!enabled);
+        track_details_dialogue.track_effect_window_visibility_toggle_btn.set_sensitive(!enabled);
+        track_details_dialogue.track_effect_delete_btn.set_sensitive(!enabled);
+
+        if enabled {
+            // re-populate the track override effects choice
+            let track_override_effects_choice = track_details_dialogue.track_override_effects_choice.clone();
+            track_override_effects_choice.remove_all();
+            let effects_keys = effects_plugins.iter().sorted_by(|(_key1, value1), (_key2, value2)| value1.cmp(value2)).map(|(key, _value)| key).collect_vec();
+            for key in effects_keys.iter() {
+                if let Some(value) = effects_plugins.get(*key) {
+                    let adjusted_key = key.replace(char::from(0), "");
+                    let adjusted_value = value.replace(char::from(0), "");
+                    track_override_effects_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                }
+            }
+
+            // clear and add the override effects
+            let track_override_effects_list = track_details_dialogue.track_override_effect_list.clone();
+            if let Some(store) = crate::gtk4_compat::list_view_store(&track_override_effects_list) {
+                store.remove_all();
+                if let Some(effects_override) = effects_override {
+                    for effect in effects_override.effects().iter() {
+                        store.append(&ComboItemObject::new(Some(effect.uuid().to_string().as_str()), effect.name().to_string().as_str()));
+                    }
+                }
+            }
+        }
+    }
+
     pub fn update_available_audio_plugins_in_ui(&self, instrument_plugins: &HashMap<String, ScannedPlugin>, effect_plugins: &HashMap<String, ScannedPlugin>) {
         self.track_details_dialogues.iter().for_each(|(track_uuid, panel)| {
             let active_instrument_id = panel.track_instrument_choice.active_id();
@@ -11759,7 +12163,6 @@ impl MainWindow {
                     }
                     panel.track_instrument_choice.unblock_signal(signal_handler_id);
                     panel.track_instrument_choice.set_visible(true);
-                    panel.track_instrument_choice.activate();
                 }
             }
 
@@ -12137,8 +12540,13 @@ impl MainWindow {
                     TrackType::InstrumentTrack(track) => {
                         // update the automation view instrument params list based on the selected track
                         self.ui.automation_instrument_parameters_combobox.remove_all();
-                        let instrument_uuid = track.instrument().uuid().to_string();
                         let key = track.uuid().to_string();
+                        // in the riff arrangement view with an instrument override enabled,
+                        // instrument automation is created against the override instrument
+                        let instrument_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&key) {
+                            Some(override_instrument_uuid) => override_instrument_uuid.to_string(),
+                            None => track.instrument().uuid().to_string(),
+                        };
                         if let Some(track_plugins) = plugins_params.get(&key) {
                             if let Some(plugin_params) = track_plugins.get(&instrument_uuid) {
                                 debug!("Instrument plugin param count={}", plugin_params.len());
@@ -12155,9 +12563,14 @@ impl MainWindow {
                         }
 
                         // update the automation view effect list based on the selected track
+                        // (the arrangement's override effects while the override is enabled)
                         self.ui.automation_effects_combobox.remove_all();
                         let mut found_effects = false;
-                        for effect in track.effects() {
+                        let automation_effects: &[crate::domain::AudioPlugin] = match state.riff_arrangement_effects_override(&key) {
+                            Some(effects_override) => effects_override.effects(),
+                            None => track.effects(),
+                        };
+                        for effect in automation_effects.iter() {
                             found_effects = true;
                             let effect_uuid = effect.uuid().to_string();
                             self.ui.automation_effects_combobox.append(Some(effect_uuid.as_str()), effect.name());

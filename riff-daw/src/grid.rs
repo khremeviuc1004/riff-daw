@@ -5381,11 +5381,14 @@ impl CustomPainter for AutomationCustomPainter {
                                                         }
                                                     }
                                                     AutomationViewMode::Instrument => {
-                                                        let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track {
-                                                            instrument_track.instrument().uuid().to_string()
-                                                        }
-                                                        else {
-                                                            "".to_string()
+                                                        let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                            Some(uuid) => uuid.to_string(),
+                                                            None => if let TrackType::InstrumentTrack(instrument_track) = track {
+                                                                instrument_track.instrument().uuid().to_string()
+                                                            }
+                                                            else {
+                                                                "".to_string()
+                                                            },
                                                         };
                                                         if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
                                                             if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
@@ -5465,11 +5468,14 @@ impl CustomPainter for AutomationCustomPainter {
                                                                     }
                                                                 }
                                                                 AutomationViewMode::Instrument => {
-                                                                    let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track {
-                                                                        instrument_track.instrument().uuid().to_string()
-                                                                    }
-                                                                    else {
-                                                                        "".to_string()
+                                                                    let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                        Some(uuid) => uuid.to_string(),
+                                                                        None => if let TrackType::InstrumentTrack(instrument_track) = track {
+                                                                            instrument_track.instrument().uuid().to_string()
+                                                                        }
+                                                                        else {
+                                                                            "".to_string()
+                                                                        },
                                                                     };
                                                                     if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
                                                                         if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {

@@ -171,6 +171,7 @@ fn main() {
 
     start_autosave(state.clone(), autosave_keep_alive.clone());
 
+
     let _wnd_main = gui.ui.wnd_main.clone();
     let application = gui.application.clone();
 
@@ -209,6 +210,8 @@ fn main() {
                 &track_audio_coast,
                 &mut gui,
                 &vst_host_time_info,
+                &vst24_plugin_loaders,
+                &clap_plugin_loaders,
             );
             process_track_background_processor_events(
                 &mut audio_plugin_windows,
@@ -382,6 +385,59 @@ fn set_track_solo_flags(state: &mut DAWState, solo_flags: &[(String, bool)]) {
             state.send_to_track_background_processor(uuid, TrackBackgroundProcessorInwardEvent::Unmute);
         }
     }
+}
+
+/// Queues a refresh of every existing track details dialogue - called after riff
+/// arrangement instrument/effects override state changes so the override checkboxes,
+/// dropdowns and override effects list (and the enabled state of the track's own
+/// instrument dropdown) reflect the currently selected arrangement.
+fn refresh_track_details_dialogues(gui: &MainWindow, state: &Arc<Mutex<DAWState>>) {
+    if let Ok(state) = state.lock() {
+        for track in state.project().song().tracks().iter() {
+            let track_uuid = track.uuid().to_string();
+            if gui.track_details_dialogues.contains_key(&track_uuid) {
+                match gui.tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateTrackDetails, Some(track_uuid))) {
+                    Ok(_) => (),
+                    Err(_) => debug!("Problem sending message with tx from ui lock when refreshing track details dialogues"),
+                }
+            }
+        }
+    }
+}
+
+/// Syncs the live plugin instances backing the riff arrangement instrument/effects
+/// overrides with the arrangement that is currently in effect (the selected arrangement
+/// in the RiffArrangement view, none in any other view) and refreshes the track details
+/// dialogues so the override controls show the right state.
+fn handle_riff_arrangement_overrides_sync(state: &mut Arc<Mutex<DAWState>>,
+                                          vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                                          clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+                                          gui: &MainWindow,
+) {
+    if let Ok(mut state) = state.lock() {
+        let riff_arrangement_uuid = if let CurrentView::RiffArrangement = state.current_view() {
+            state.selected_riff_arrangement_uuid().cloned()
+        }
+        else {
+            None
+        };
+
+        state.sync_riff_arrangement_override_plugins(riff_arrangement_uuid.as_ref(), vst24_plugin_loaders, clap_plugin_loaders);
+
+        // if the synced arrangement is the one currently playing, keep its override
+        // switches in step with the (possibly just changed) enable flags
+        if let Some(riff_arrangement_uuid) = &riff_arrangement_uuid {
+            if state.playing() && state.playing_riff_arrangement().as_ref() == Some(riff_arrangement_uuid) {
+                if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                    let track_uuids: Vec<String> = state.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+                    for track_uuid in track_uuids {
+                        state.set_riff_arrangement_overrides_active(riff_arrangement, &track_uuid, true);
+                    }
+                }
+            }
+        }
+    }
+    refresh_track_details_dialogues(gui, state);
 }
 
 fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
@@ -1169,7 +1225,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 match state.lock() {
                     Ok(mut state) => {
                         debug!("Main - rx_ui processing loop - Export Wave File - attempting to export.");
-                        state.export_to_wave_file(path, tx_to_audio, track_audio_coast, tx_from_ui);
+                        state.export_to_wave_file(path, tx_to_audio, track_audio_coast, tx_from_ui, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                     }
                     Err(_) => debug!("Main - rx_ui processing loop - Export Wave File - could not get lock on state"),
                 }
@@ -1938,12 +1994,38 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state_for_xid = state.clone();
                     match state.lock() {
                         Ok(mut state) => {
+                            // when the view is the riff arrangement and the track has an
+                            // instrument override in effect the override instrument's plugin
+                            // window is the one shown - resolved before the mutable track
+                            // lookup below as it borrows state immutably
+                            let override_instrument: Option<(String, String)> = state.riff_arrangement_instrument_override(&track_uuid)
+                                .and_then(|instrument_override| instrument_override.instrument())
+                                .map(|instrument| (instrument.uuid().to_string(), instrument.name().to_string()));
+                            // the live override plugin instances are normally loaded when the
+                            // arrangement is selected/entered - if they have not been synced for
+                            // the arrangement the dialogue resolves (a browse-only session, a
+                            // copied arrangement, selection bounced by a combobox rebuild) the
+                            // window id sent below would reach an empty override instance list
+                            // and the editor window would stay blank, so make sure the selected
+                            // arrangement's override instances are in place before opening a
+                            // window for one of them (idempotent)
+                            if override_instrument.is_some() {
+                                if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                    state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                }
+                            }
                             match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                 Some(track_type) => match track_type {
                                     TrackType::InstrumentTrack(track) => {
                                         let track_name = track.name().to_string();
-                                        let instrument = track.instrument_mut();
-                                        if let Some(window) = audio_plugin_windows.get(&instrument.uuid().to_string()) {
+                                        let (instrument_uuid, instrument_name, override_instrument) = match override_instrument {
+                                            Some((instrument_uuid, instrument_name)) => (instrument_uuid, instrument_name, true),
+                                            None => {
+                                                let instrument = track.instrument_mut();
+                                                (instrument.uuid().to_string(), instrument.name().to_string(), false)
+                                            }
+                                        };
+                                        if let Some(window) = audio_plugin_windows.get(&instrument_uuid) {
                                             if window.is_visible() {
                                                 window.set_visible(false);
                                             } else {
@@ -1951,7 +2033,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             }
                                         } else {
                                             let win = Window::new();
-                                            win.set_title(Some(format!("Track: {} - Instrument: {}", track_name, instrument.name()).as_str()));
+                                            let window_title = if override_instrument {
+                                                format!("Track: {} - Override Instrument: {}", track_name, instrument_name)
+                                            } else {
+                                                format!("Track: {} - Instrument: {}", track_name, instrument_name)
+                                            };
+                                            win.set_title(Some(window_title.as_str()));
                                             win.connect_close_request(|window| {
                                                 window.set_visible(false);
                                                 glib::Propagation::Stop
@@ -1960,7 +2047,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             win.set_width_request(200);
                                             win.set_resizable(true);
                                             win.set_visible(true);
-                                            audio_plugin_windows.insert(instrument.uuid().to_string(), win.clone());
+                                            audio_plugin_windows.insert(instrument_uuid.clone(), win.clone());
 
                                             let window = win.clone();
                                             {
@@ -1981,7 +2068,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 debug!("Plugin editor window xid: {:#x}", xid);
                                                 match state_for_xid.lock() {
                                                     Ok(state) => {
-                                                        state.send_to_track_background_processor(cb_track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid));
+                                                        // the xid must reach whichever plugin instance the window was opened for
+                                                        if override_instrument {
+                                                            state.send_to_track_background_processor(cb_track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentWindowId(xid));
+                                                        } else {
+                                                            state.send_to_track_background_processor(cb_track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetInstrumentWindowId(xid));
+                                                        }
                                                     },
                                                     Err(_) => debug!("Could not get read only lock on state."),
                                                 }
@@ -1996,6 +2088,145 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         },
                         Err(_) => debug!("Main - rx_ui processing loop - show track instrument - could not get lock on state"),
                     };
+                }
+                TrackChangeType::InstrumentOverride(enabled) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    match state.lock() {
+                        Ok(mut state) => {
+                            if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                    riff_arrangement.add_track_instrument_override(scoped_track_uuid.clone());
+                                    if let Some(instrument_override) = riff_arrangement.instrument_override_mut(&scoped_track_uuid) {
+                                        instrument_override.set_enabled(enabled);
+                                    }
+                                }
+                                state.set_dirty(true);
+                                // make sure the override plugin instances on the track threads
+                                // match the arrangement state and (if this arrangement is the
+                                // one currently playing) the switch is flipped
+                                state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                if state.playing() && state.playing_riff_arrangement().as_ref() == Some(&riff_arrangement_uuid) {
+                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                                        state.set_riff_arrangement_overrides_active(riff_arrangement, &scoped_track_uuid, true);
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track instrument override toggle - could not get lock on state"),
+                    };
+                    refresh_track_details_dialogues(&gui, state);
+                },
+                TrackChangeType::EffectsOverride(enabled) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    match state.lock() {
+                        Ok(mut state) => {
+                            if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                    riff_arrangement.add_track_effects_override(scoped_track_uuid.clone());
+                                    if let Some(effects_override) = riff_arrangement.effects_override_mut(&scoped_track_uuid) {
+                                        effects_override.set_enabled(enabled);
+                                    }
+                                }
+                                state.set_dirty(true);
+                                // make sure the override plugin instances on the track threads
+                                // match the arrangement state and (if this arrangement is the
+                                // one currently playing) the switch is flipped
+                                state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                if state.playing() && state.playing_riff_arrangement().as_ref() == Some(&riff_arrangement_uuid) {
+                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                                        state.set_riff_arrangement_overrides_active(riff_arrangement, &scoped_track_uuid, true);
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track effects override toggle - could not get lock on state"),
+                    };
+                    refresh_track_details_dialogues(&gui, state);
+                },
+                TrackChangeType::OverrideInstrumentChanged(instrument_details) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    match state.lock() {
+                        Ok(mut state) => {
+                            let scanned_plugin = state.configuration.scanned_instrument_plugins.successfully_scanned.get(&instrument_details).cloned();
+                            if let Some(scanned_plugin) = scanned_plugin {
+                                if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                    let instrument_uuid = Uuid::new_v4();
+                                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                        riff_arrangement.add_track_instrument_override(scoped_track_uuid.clone());
+                                        if let Some(instrument_override) = riff_arrangement.instrument_override_mut(&scoped_track_uuid) {
+                                            // a fresh instance descriptor - the freshly loaded
+                                            // plugin must not inherit the previous plugin's
+                                            // preset chunk
+                                            let mut instrument = AudioPlugin::new_with_uuid(instrument_uuid, scanned_plugin.name.clone(), scanned_plugin.path.clone(), scanned_plugin.sub_id.clone(), scanned_plugin.audio_plugin_stack.to_string());
+                                            instrument.set_uid(scanned_plugin.id.clone());
+                                            instrument_override.set_instrument(Some(instrument));
+                                        }
+                                    }
+                                    state.set_dirty(true);
+                                    state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                    if state.playing() && state.playing_riff_arrangement().as_ref() == Some(&riff_arrangement_uuid) {
+                                        if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                                            state.set_riff_arrangement_overrides_active(riff_arrangement, &scoped_track_uuid, true);
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track override instrument changed - could not get lock on state"),
+                    };
+                    refresh_track_details_dialogues(&gui, state);
+                },
+                TrackChangeType::OverrideEffectAdded(uuid, name, effect_details) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    match state.lock() {
+                        Ok(mut state) => {
+                            let scanned_plugin = state.configuration.scanned_effect_plugins.successfully_scanned.get(&effect_details).cloned();
+                            if let Some(scanned_plugin) = scanned_plugin {
+                                if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                        riff_arrangement.add_track_effects_override(scoped_track_uuid.clone());
+                                        if let Some(effects_override) = riff_arrangement.effects_override_mut(&scoped_track_uuid) {
+                                            let mut effect = AudioPlugin::new_with_uuid(uuid, name, scanned_plugin.path.clone(), scanned_plugin.sub_id.clone(), scanned_plugin.audio_plugin_stack.to_string());
+                                            effect.set_uid(scanned_plugin.id.clone());
+                                            effects_override.effects_mut().push(effect);
+                                        }
+                                    }
+                                    state.set_dirty(true);
+                                    state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                    if state.playing() && state.playing_riff_arrangement().as_ref() == Some(&riff_arrangement_uuid) {
+                                        if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                                            state.set_riff_arrangement_overrides_active(riff_arrangement, &scoped_track_uuid, true);
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track override effect add - could not get lock on state"),
+                    };
+                    refresh_track_details_dialogues(&gui, state);
+                },
+                TrackChangeType::OverrideEffectDeleted(effect_uuid) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    match state.lock() {
+                        Ok(mut state) => {
+                            if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(riff_arrangement_uuid.clone()) {
+                                    if let Some(effects_override) = riff_arrangement.effects_override_mut(&scoped_track_uuid) {
+                                        effects_override.effects_mut().retain(|effect| effect.uuid().to_string() != effect_uuid);
+                                    }
+                                }
+                                state.set_dirty(true);
+                                state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                if state.playing() && state.playing_riff_arrangement().as_ref() == Some(&riff_arrangement_uuid) {
+                                    if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                                        state.set_riff_arrangement_overrides_active(riff_arrangement, &scoped_track_uuid, true);
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track override effect delete - could not get lock on state"),
+                    };
+                    refresh_track_details_dialogues(&gui, state);
                 }
                 TrackChangeType::TrackNameChanged(track_name) => {
                     let track_uuid = track_uuid.unwrap();
@@ -4107,10 +4338,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                     }
                                                                                 }
                                                                                 AutomationViewMode::Instrument => {
-                                                                                    let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track_type {
-                                                                                        instrument_track.instrument().uuid().to_string()
-                                                                                    } else {
-                                                                                        "".to_string()
+                                                                                    let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                                        Some(uuid) => uuid.to_string(),
+                                                                                        None => if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                                            instrument_track.instrument().uuid().to_string()
+                                                                                        } else {
+                                                                                            "".to_string()
+                                                                                        },
                                                                                     };
                                                                                     if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
                                                                                         if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
@@ -4171,10 +4405,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                 }
                                                                             }
                                                                             AutomationViewMode::Instrument => {
-                                                                                let plugin_uuid = if let TrackType::InstrumentTrack(instrument_track) = track_type {
-                                                                                    instrument_track.instrument().uuid().to_string()
-                                                                                } else {
-                                                                                    "".to_string()
+                                                                                let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                                    Some(uuid) => uuid.to_string(),
+                                                                                    None => if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                                        instrument_track.instrument().uuid().to_string()
+                                                                                    } else {
+                                                                                        "".to_string()
+                                                                                    },
                                                                                 };
                                                                                 if let TrackEvent::AudioPluginParameter(param) = envelope.event_details() {
                                                                                     if param.index == automation_type_value && param.plugin_uuid() == plugin_uuid {
@@ -4267,10 +4504,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
-                                                                let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
-                                                                    instrument_track.instrument().uuid()
-                                                                } else {
-                                                                    return;
+                                                                let instrument_plugin_id = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                    Some(uuid) => uuid,
+                                                                    None => if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                        instrument_track.instrument().uuid()
+                                                                    } else {
+                                                                        return;
+                                                                    },
                                                                 };
 
                                                                 events.iter().for_each(|event| {
@@ -4488,10 +4728,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
-                                                                let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
-                                                                    instrument_track.instrument().uuid()
-                                                                } else {
-                                                                    return;
+                                                                let instrument_plugin_id = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                    Some(uuid) => uuid,
+                                                                    None => if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                        instrument_track.instrument().uuid()
+                                                                    } else {
+                                                                        return;
+                                                                    },
                                                                 };
 
                                                                 events.iter().for_each(|event| {
@@ -4634,11 +4877,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 else {
                                                                     // find the relevant envelope
                                                                     if let Some(automation_type_value) = automation_type {
-                                                                        let instrument_plugin_uuid = if let TrackType::InstrumentTrack(track) = track_type {
-                                                                            track.instrument().uuid().to_string()
-                                                                        }
-                                                                        else {
-                                                                            "".to_string()
+                                                                        let instrument_plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                            Some(uuid) => uuid.to_string(),
+                                                                            None => if let TrackType::InstrumentTrack(track) = track_type {
+                                                                                track.instrument().uuid().to_string()
+                                                                            }
+                                                                            else {
+                                                                                "".to_string()
+                                                                            },
                                                                         };
 
                                                                         match automation_view_mode {
@@ -4799,10 +5045,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
-                                                                let instrument_plugin_id = if let TrackType::InstrumentTrack(instrument_track) = track_type {
-                                                                    instrument_track.instrument().uuid()
-                                                                } else {
-                                                                    return;
+                                                                let instrument_plugin_id = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
+                                                                    Some(uuid) => uuid,
+                                                                    None => if let TrackType::InstrumentTrack(instrument_track) = track_type {
+                                                                        instrument_track.instrument().uuid()
+                                                                    } else {
+                                                                        return;
+                                                                    },
                                                                 };
 
                                                                 events.iter().for_each(|event| {
@@ -5015,15 +5264,32 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             let state_for_xid = state.clone();
                             match state.lock() {
                                 Ok(mut state) => {
+                                    // the effect may also be one of the currently selected
+                                    // riff arrangement's override effects
+                                    let override_effect_name: Option<String> = state.selected_riff_arrangement_uuid().and_then(|riff_arrangement_uuid| state.project().song().riff_arrangement(riff_arrangement_uuid.clone())).and_then(|riff_arrangement| riff_arrangement.effects_override(&track_uuid)).and_then(|effects_override| effects_override.effects().iter().find(|effect| effect.uuid().to_string() == effect_uuid)).map(|effect| effect.name().to_string());
+                                    // same as the ShowInstrument override case: the editor xid
+                                    // sent below has to reach a live override effect instance,
+                                    // so make sure the selected arrangement's override plugin
+                                    // instances are in place before opening a window for one
+                                    // of them (idempotent)
+                                    if override_effect_name.is_some() {
+                                        if let Some(riff_arrangement_uuid) = state.selected_riff_arrangement_uuid().cloned() {
+                                            state.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                        }
+                                    }
                                     match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                         Some(track_type) => {
                                             let track_name = track_type.name().to_string();
                                             match track_type {
                                                 TrackType::InstrumentTrack(track) => {
                                                     debug!("track name={}, # of effects={}", track.name(), track.effects().len());
-                                                    for effect in track.effects_mut().iter_mut() {
-                                                        debug!("effect name={}, effect uuid={}, search for effect uuid={}", effect.name(), effect.uuid(), effect_uuid.as_str());
-                                                        if effect.uuid().to_string() == effect_uuid {
+                                                    let mut effect_names: Vec<(String, String)> = track.effects().iter().map(|effect| (effect.uuid().to_string(), effect.name().to_string())).collect();
+                                                    if let Some(override_effect_name) = override_effect_name {
+                                                        effect_names.push((effect_uuid.clone(), override_effect_name));
+                                                    }
+                                                    for (effect_uuid_candidate, effect_name) in effect_names.iter() {
+                                                        debug!("effect name={}, effect uuid={}, search for effect uuid={}", effect_name, effect_uuid_candidate, effect_uuid.as_str());
+                                                        if effect_uuid_candidate == &effect_uuid {
                                                             if let Some(window) = audio_plugin_windows.get(&effect_uuid) {
                                                                 if window.is_visible() {
                                                                     window.set_visible(false);
@@ -5032,7 +5298,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 }
                                                             } else {
                                                                 let win = Window::new();
-                                                                win.set_title(Some(format!("Track: {} - Effect: {}", track_name, effect.name()).as_str()));
+                                                                win.set_title(Some(format!("Track: {} - Effect: {}", track_name, effect_name.as_str()).as_str()));
 win.connect_close_request(|window| {
                                                                      window.set_visible(false);
                                                                      glib::Propagation::Stop
@@ -5688,6 +5954,13 @@ win.connect_close_request(|window| {
                         if let Some((_, dialogue)) = gui.track_details_dialogues.iter().find(|(dialogue_track_uuid, _dialogue)| dialogue_track_uuid.to_string() == track_uuid) {
                             if show {
                                 dialogue.track_details_dialogue.set_visible(true);
+
+                                // refresh so the riff arrangement override controls match
+                                // the current view and selected arrangement
+                                match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::UpdateTrackDetails, Some(track_uuid.clone()))) {
+                                    Ok(_) => (),
+                                    Err(_) => debug!("Problem sending message with tx from ui lock when refreshing track details"),
+                                }
                             } else {
                                 dialogue.track_details_dialogue.set_visible(false);
                             }
@@ -5718,10 +5991,18 @@ win.connect_close_request(|window| {
 
                                 let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
 
+                                // the currently selected arrangement (only when the active
+                                // view is the riff arrangement) drives the override controls
+                                // in the track details dialogue
+                                let riff_arrangement: Option<RiffArrangement> = match state.current_view() {
+                                    CurrentView::RiffArrangement => state.selected_riff_arrangement_uuid().and_then(|riff_arrangement_uuid| state.project().song().riff_arrangement(riff_arrangement_uuid.clone())).cloned(),
+                                    _ => None,
+                                };
+
                                 for (track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                     if track.uuid().to_string() == track_uuid {
                                         let mut track_number = track_number as i32;
-                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track);
+                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track, riff_arrangement.as_ref());
                                         break;
                                     }
                                 }
@@ -6447,7 +6728,7 @@ win.connect_close_request(|window| {
                                     "".to_string()
                                 };
                                 state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
-                                state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid, 0.0);
+                                state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid, 0.0, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                             }
                         }
                     },
@@ -6705,7 +6986,7 @@ win.connect_close_request(|window| {
                                 state.play_riff_grid(tx_to_audio.clone(), riff_grid_uuid);
                             }
                             else if let Some(riff_arrangement_uuid) = play_riff_arrangement_uuid {
-                                state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0);
+                                state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                             }
                             else {
                                 state.play_song(tx_to_audio.clone());
@@ -8218,7 +8499,7 @@ win.connect_close_request(|window| {
                         else {
                             0.0
                         };
-                        state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid.clone(), selected_riff_arrangement_play_position);
+                        state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid.clone(), selected_riff_arrangement_play_position, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                         state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
                         if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
                             gui.repaint_riff_arrangement_view_active_drawing_areas(&riff_arrangement_uuid, 0.0, playing_riff_arrangement_summary_data);
@@ -8237,6 +8518,8 @@ win.connect_close_request(|window| {
                         // add an automation object for each track
                         for track in state.project().song().tracks().iter() {
                             arrangement.add_track_automation(track.uuid().to_string());
+                            arrangement.add_track_instrument_override(track.uuid().to_string());
+                            arrangement.add_track_effects_override(track.uuid().to_string());
                         }
 
                         state.get_project().song_mut().add_riff_arrangement(arrangement);
@@ -8263,7 +8546,14 @@ win.connect_close_request(|window| {
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff arrangement selected - could not get lock on state"),
                 };
+                // preload the live plugin instances backing the selected arrangement's
+                // instrument/effects overrides (and drop the previous arrangement's) so
+                // their parameters can be automated while the view is just being inspected
+                handle_riff_arrangement_overrides_sync(state, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), gui);
                 gui.ui.riff_arrangement_box.queue_draw();
+            }
+            DAWEvents::RiffArrangementOverridesChanged => {
+                handle_riff_arrangement_overrides_sync(state, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), gui);
             }
             DAWEvents::RiffArrangementNameChange(riff_arrangement_uuid, name) => {
             scoped_mutation = begin_scoped_mutation(state, "riff arrangement name change", Scope::RiffArrangements);
@@ -9032,9 +9322,13 @@ fn handle_automation_instrument_add(time: f64, value: i32, state: &mut DAWState)
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -9847,9 +10141,13 @@ fn handle_automation_instrument_delete(time: f64, state: &mut DAWState) {
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -10656,9 +10954,13 @@ fn handle_automation_instrument_cut(state: &mut DAWState, edit_cursor_time_in_be
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -11535,9 +11837,13 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -12524,9 +12830,13 @@ fn handle_automation_instrument_copy(state: &mut DAWState, edit_cursor_time_in_b
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -13357,9 +13667,13 @@ fn handle_automation_instrument_paste(state: &mut DAWState, edit_cursor_time_in_
     let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -14176,9 +14490,13 @@ fn handle_automation_instrument_quantise(state: &mut DAWState, snap_in_beats: f6
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -15011,9 +15329,13 @@ fn handle_automation_instrument_change(state: &mut DAWState, changed_events: Vec
     let automation_edit_type = state.automation_edit_type();
     let automation_discrete = state.automation_discrete();
 
+    // instrument automation in the riff arrangement view is created against the
+    // arrangement's override instrument (when enabled) rather than the track's own
+    let override_instrument_plugin_uuid = state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid);
+
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
         if let TrackType::InstrumentTrack(instrument_track) = track_type {
-            let plugin_uuid = instrument_track.instrument().uuid();
+            let plugin_uuid = override_instrument_plugin_uuid.unwrap_or_else(|| instrument_track.instrument().uuid());
             let events = if let CurrentView::RiffArrangement = current_view {
                 let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                     Some(selected_arrangement_uuid.clone())
@@ -16237,6 +16559,8 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        jack_audio_coast: &Arc<Mutex<TrackBackgroundProcessorMode>>,
                        gui: &mut MainWindow,
                        vst_host_time_info: &Arc<RwLock<TimeInfo>>,
+                       vst24_plugin_loaders: &Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                       clap_plugin_loaders: &Arc<Mutex<HashMap<String, PluginLibrary>>>,
 ) {
     // Drain every pending jack event each tick (bounded) instead of a single try_recv:
     // the audio layer pushes play position + master level events every jack cycle into an
@@ -16400,7 +16724,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                         } else {
                                             "".to_string()
                                         };
-                                        state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0);
+                                        state.play_riff_arrangement(tx_to_audio.clone(), riff_arrangement_uuid, 0.0, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                                     }
                                 }
                             } else {
@@ -16507,19 +16831,13 @@ fn process_track_background_processor_events(
                             });
                             plugins_to_plugin_params_map.insert(plugin_uuid, parameter_details);
                         },
-                        TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(track_uuid, plugin_window_width, plugin_window_height) => {
-                            state.project().song().tracks().iter().for_each(|track_type| {
-                                match track_type {
-                                    TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
-                                        if let Some(window) = vst_audio_plugin_windows.get(&track.instrument().uuid().to_string()) {
-                                            debug!("Instrument plugin window resize requested: width={}, height={}", plugin_window_width, plugin_window_height);
-                                            window.set_default_size(plugin_window_width, plugin_window_height);
-                                        }
-                                    },
-                                    TrackType::AudioTrack(_) => (),
-                                    TrackType::MidiTrack(_) => (),
-                                }
-                            });
+                        TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(track_uuid, instrument_uuid, plugin_window_width, plugin_window_height) => {
+                            // plugin windows are keyed by the plugin uuid - the instrument may
+                            // be the track's own or the selected riff arrangement's override instrument
+                            if let Some(window) = vst_audio_plugin_windows.get(&instrument_uuid) {
+                                debug!("Instrument plugin window resize requested: track={}, instrument={}, width={}, height={}", track_uuid, instrument_uuid, plugin_window_width, plugin_window_height);
+                                window.set_default_size(plugin_window_width, plugin_window_height);
+                            }
                         },
                         TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
                             automation_track_uuid.push_str(track_uuid.as_str());
@@ -16533,27 +16851,19 @@ fn process_track_background_processor_events(
                                 plugin_uuid: Uuid::parse_str(plugin_uuid.as_str()).unwrap(),
                             }));
                         },
-                        TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(track_uuid, plugin_uuid, plugin_window_width, plugin_window_height) => {
+                        TrackBackgroundProcessorOutwardEvent::EffectPluginWindowSize(_track_uuid, plugin_uuid, plugin_window_width, plugin_window_height) => {
                             debug!("Effect plugin requested window resize: width={}, height={}", plugin_window_width, plugin_window_height);
-                            state.project().song().tracks().iter().for_each(|track_type| {
-                                match track_type {
-                                    TrackType::InstrumentTrack(track) => if track.uuid().to_string() == track_uuid {
-                                        for effect in track.effects() {
-                                            if effect.uuid().to_string() == plugin_uuid {
-                                                if let Some(window) = vst_audio_plugin_windows.get(&plugin_uuid) {
-                                                    window.set_default_size(plugin_window_width, plugin_window_height);
-                                                    window.set_height_request(plugin_window_height);
-                                                    window.set_width_request(plugin_window_width);
-                                                    window.queue_resize();
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    },
-                                    TrackType::AudioTrack(_) => (),
-                                    TrackType::MidiTrack(_) => (),
-                                }
-                            });
+                            // effect plugin windows are keyed by the plugin uuid - the effect may be
+                            // one of the track's own effects (on any track type) or one of the
+                            // currently selected riff arrangement's override effects, so apply the
+                            // resize to whichever window this plugin opened rather than searching
+                            // the track's own effect list (which never finds an override effect)
+                            if let Some(window) = vst_audio_plugin_windows.get(&plugin_uuid) {
+                                window.set_default_size(plugin_window_width, plugin_window_height);
+                                window.set_height_request(plugin_window_height);
+                                window.set_width_request(plugin_window_width);
+                                window.queue_resize();
+                            }
                         },
                         TrackBackgroundProcessorOutwardEvent::TrackRenderAudioConsumer(track_render_audio_consumer) => {
                             track_render_audio_consumers.insert(track_render_audio_consumer.track_id().to_string(), track_render_audio_consumer);

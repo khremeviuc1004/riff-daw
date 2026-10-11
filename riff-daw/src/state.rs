@@ -857,6 +857,28 @@ impl DAWState {
                     TrackType::MidiTrack(_) => (),
                 };
             }
+
+            // the live override plugin instances belong to a riff arrangement - capture
+            // their presets back into the arrangement whose override descriptors match
+            // the captured plugin uuids (identity matched, never by position)
+            if let Some(selected_riff_arrangement_uuid) = self.selected_riff_arrangement_uuid().cloned() {
+                if let Some(riff_arrangement) = self.get_project().song_mut().riff_arrangement_mut(selected_riff_arrangement_uuid) {
+                    if !response.override_instrument_preset_data.is_empty() && !response.override_instrument_plugin_uuid.is_empty() {
+                        if let Some(instrument_override) = riff_arrangement.instrument_override_mut(&response.track_uuid) {
+                            if let Some(instrument) = instrument_override.instrument_mut().as_mut() {
+                                if instrument.uuid().to_string() == response.override_instrument_plugin_uuid {
+                                    instrument.set_preset_data(response.override_instrument_preset_data.clone());
+                                }
+                            }
+                        }
+                    }
+                    if !response.override_effect_presets.is_empty() {
+                        if let Some(effects_override) = riff_arrangement.effects_override_mut(&response.track_uuid) {
+                            Self::apply_captured_effect_presets(effects_override.effects_mut(), &response.override_effect_presets);
+                        }
+                    }
+                }
+            }
         }
         debug!("Exiting save_presets_for_all_tracks...");
     }
@@ -1232,6 +1254,9 @@ impl DAWState {
     }
 
     pub fn play_song(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>) -> i32 {
+        // riff arrangement instrument/effects overrides only apply to the arrangement itself
+        self.deactivate_riff_arrangement_overrides();
+
         let bpm = self.project().song().tempo();
         let time_signature_numerator = self.project().song().time_signature_numerator();
         let time_signature_denominator = self.project().song().time_signature_denominator();
@@ -1324,6 +1349,9 @@ impl DAWState {
 
     pub fn play_riff_set_in_blocks(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
         debug!("Playing riff set in blocks={}", riff_set_uuid.as_str());
+
+        // riff arrangement instrument/effects overrides only apply to the arrangement itself
+        self.deactivate_riff_arrangement_overrides();
 
         let already_playing = self.playing();
 
@@ -1428,6 +1456,9 @@ impl DAWState {
 
     pub fn play_riff_set_as_riff(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
         debug!("Playing riff set as riff={}", riff_set_uuid.as_str());
+
+        // riff arrangement instrument/effects overrides only apply to the arrangement itself
+        self.deactivate_riff_arrangement_overrides();
 
         let already_playing = self.playing();
 
@@ -1769,6 +1800,9 @@ impl DAWState {
     pub fn play_riff_sequence(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_sequence_uuid: String) {
         let song_length_in_beats = 400.0;
 
+        // riff arrangement instrument/effects overrides only apply to the arrangement itself
+        self.deactivate_riff_arrangement_overrides();
+
         let already_playing = self.playing();
 
         self.set_playing(true);
@@ -1856,6 +1890,9 @@ impl DAWState {
 
 
     pub fn play_riff_grid(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_grid_uuid: String) -> i32 {
+        // riff arrangement instrument/effects overrides only apply to the arrangement itself
+        self.deactivate_riff_arrangement_overrides();
+
         let bpm = self.project().song().tempo();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
@@ -2100,13 +2137,19 @@ impl DAWState {
 
 
 
-    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64) -> i32 {
+    pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64, vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>, clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>) -> i32 {
         let mut song_length_in_beats = 400.0;
 
         let already_playing = self.playing();
 
         self.set_playing(true);
         self.set_play_mode(PlayMode::RiffArrangement);
+
+        // make sure the live plugin instances for the arrangement's instrument/effects
+        // overrides match the arrangement about to play (idempotent) - the switches are
+        // flipped per track below
+        self.sync_riff_arrangement_override_plugins(Some(&riff_arrangement_uuid), vst24_plugin_loaders, clap_plugin_loaders);
+
         let bpm = self.project().song().tempo();
         let time_signature_numerator = self.project().song().time_signature_numerator();
         let time_signature_denominator = self.project().song().time_signature_denominator();
@@ -2130,6 +2173,9 @@ impl DAWState {
                 if !already_playing {
                     self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
                 }
+
+                // switch the arrangement's instrument/effects overrides in for this track
+                self.set_riff_arrangement_overrides_active(riff_arrangement, &track.uuid().to_string(), true);
             }
 
             playing_riff_arrangement_summary_data = self.get_riff_arrangement_play_events(riff_arrangement.items(), &mut track_riff_refs_map, &mut track_running_position);
@@ -2609,13 +2655,15 @@ impl DAWState {
                                path: std::path::PathBuf,
                                tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
                                track_audio_coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                               tx_from_ui: crossbeam_channel::Sender<DAWEvents>
+                               tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+                               vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                               clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
     ) {
         let number_of_blocks = match self.current_view() {
             CurrentView::Track => Some(self.play_song(tx_to_audio) + 1000 /* silence at the end */),
             CurrentView::RiffArrangement => {
                 if let Some(selected_riff_arrangement_uuid) = self.selected_riff_arrangement_uuid() {
-                    Some(self.play_riff_arrangement(tx_to_audio, selected_riff_arrangement_uuid.clone(), 0.0) + 1000 /* silence at the end */)
+                    Some(self.play_riff_arrangement(tx_to_audio, selected_riff_arrangement_uuid.clone(), 0.0, vst24_plugin_loaders, clap_plugin_loaders) + 1000 /* silence at the end */)
                 }
                 else {
                     None
@@ -3151,6 +3199,120 @@ impl DAWState {
         else {
             None
         }
+    }
+
+    /// The currently selected riff arrangement's instrument override for the given
+    /// track, in effect only when the active view is the riff arrangement, an
+    /// arrangement is selected, the override is enabled and an override instrument
+    /// plugin has been configured.
+    pub fn riff_arrangement_instrument_override(&self, track_uuid: &String) -> Option<&InstrumentOverride> {
+        if let CurrentView::RiffArrangement = self.current_view {
+            if let Some(riff_arrangement_uuid) = self.selected_riff_arrangement_uuid() {
+                if let Some(riff_arrangement) = self.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                    if let Some(instrument_override) = riff_arrangement.instrument_override(track_uuid) {
+                        if instrument_override.enabled() && instrument_override.instrument().is_some() {
+                            return Some(instrument_override);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The plugin uuid of the currently selected riff arrangement's override instrument
+    /// for the given track (None when no override is in effect) - automation created
+    /// against the arrangement's instrument targets this plugin instance.
+    pub fn riff_arrangement_instrument_override_plugin_uuid(&self, track_uuid: &String) -> Option<Uuid> {
+        self.riff_arrangement_instrument_override(track_uuid).and_then(|instrument_override| instrument_override.instrument()).map(|instrument| instrument.uuid())
+    }
+
+    /// The currently selected riff arrangement's effects override for the given track,
+    /// in effect only when the active view is the riff arrangement, an arrangement is
+    /// selected, the override is enabled and override effect plugins are configured.
+    pub fn riff_arrangement_effects_override(&self, track_uuid: &String) -> Option<&EffectsOverride> {
+        if let CurrentView::RiffArrangement = self.current_view {
+            if let Some(riff_arrangement_uuid) = self.selected_riff_arrangement_uuid() {
+                if let Some(riff_arrangement) = self.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
+                    if let Some(effects_override) = riff_arrangement.effects_override(track_uuid) {
+                        if effects_override.enabled() && !effects_override.effects().is_empty() {
+                            return Some(effects_override);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Loads (or removes) the live plugin instances backing the given riff arrangement's
+    /// instrument/effects overrides on every track background processor - idempotent,
+    /// instances already loaded with a matching plugin uuid are kept. The switches that
+    /// actually route events/audio to the overrides are separate and driven by the play
+    /// functions (so the plugins can be pre-loaded for automation while the arrangement
+    /// is merely the selected view).
+    pub fn sync_riff_arrangement_override_plugins(&mut self,
+                                                  riff_arrangement_uuid: Option<&String>,
+                                                  vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+                                                  clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+    ) {
+        let mut track_requests: Vec<(String, Option<(Uuid, ScannedPlugin, String)>, Vec<(Uuid, ScannedPlugin, String)>)> = vec![];
+        {
+            let song = self.project().song();
+            let riff_arrangement = riff_arrangement_uuid.and_then(|riff_arrangement_uuid| song.riff_arrangement(riff_arrangement_uuid.clone()));
+            for track in song.tracks().iter() {
+                match track {
+                    TrackType::InstrumentTrack(instrument_track) => {
+                        let track_uuid = instrument_track.uuid().to_string();
+                        let instrument_override = riff_arrangement
+                            .and_then(|riff_arrangement| riff_arrangement.instrument_override(&track_uuid))
+                            .filter(|instrument_override| instrument_override.enabled())
+                            .and_then(|instrument_override| instrument_override.instrument())
+                            .and_then(|instrument| instrument.as_scanned_plugin().map(|scanned_plugin| (instrument.uuid(), scanned_plugin, instrument.preset_data().to_string())));
+                        let effects_override = Self::arrangement_override_effects_load_list(riff_arrangement, &track_uuid);
+                        track_requests.push((track_uuid, instrument_override, effects_override));
+                    },
+                    TrackType::AudioTrack(audio_track) => {
+                        let track_uuid = audio_track.uuid().to_string();
+                        let effects_override = Self::arrangement_override_effects_load_list(riff_arrangement, &track_uuid);
+                        track_requests.push((track_uuid, None, effects_override));
+                    },
+                    TrackType::MidiTrack(_) => (),
+                }
+            }
+        }
+
+        for (track_uuid, instrument_override, effects_override) in track_requests {
+            self.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrument(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), instrument_override));
+            self.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetOverrideEffects(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effects_override));
+        }
+    }
+
+    fn arrangement_override_effects_load_list(riff_arrangement: Option<&RiffArrangement>, track_uuid: &String) -> Vec<(Uuid, ScannedPlugin, String)> {
+        match riff_arrangement.and_then(|riff_arrangement| riff_arrangement.effects_override(track_uuid)).filter(|effects_override| effects_override.enabled()) {
+            Some(effects_override) => effects_override.effects().iter().filter_map(|effect| effect.as_scanned_plugin().map(|scanned_plugin| (effect.uuid(), scanned_plugin, effect.preset_data().to_string()))).collect(),
+            None => vec![],
+        }
+    }
+
+    /// Switches the override plugin routing off on every track - called when playback
+    /// starts in any view other than the riff arrangement so the overrides only ever
+    /// affect the riff arrangement they belong to.
+    pub fn deactivate_riff_arrangement_overrides(&self) {
+        let track_uuids: Vec<String> = self.project().song().tracks().iter().map(|track| track.uuid().to_string()).collect();
+        for track_uuid in track_uuids {
+            self.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(false));
+            self.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::SetOverrideEffectsActive(false));
+        }
+    }
+
+    /// Switches the riff arrangement's instrument/effects overrides in (or out when not
+    /// enabled) for a single track on its background processor.
+    pub fn set_riff_arrangement_overrides_active(&self, riff_arrangement: &RiffArrangement, track_uuid: &String, active: bool) {
+        let instrument_override_active = active && riff_arrangement.instrument_override(track_uuid).map(|instrument_override| instrument_override.enabled()).unwrap_or(false);
+        let effects_override_active = active && riff_arrangement.effects_override(track_uuid).map(|effects_override| effects_override.enabled()).unwrap_or(false);
+        self.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(instrument_override_active));
+        self.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideEffectsActive(effects_override_active));
     }
 
     pub fn dirty(&self) -> bool {

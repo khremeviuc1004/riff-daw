@@ -1744,6 +1744,89 @@ pub struct RiffArrangement {
     name: String,
     items: Vec<RiffItem>,
     track_automation: HashMap<String, Automation>,
+    #[serde(default)]
+    track_instrument_overrides: HashMap<String, InstrumentOverride>,
+    #[serde(default)]
+    track_effects_overrides: HashMap<String, EffectsOverride>,
+}
+
+/// A per track instrument plugin override for a riff arrangement. When enabled the
+/// arrangement's override instrument receives all the events that would normally go
+/// to the track's own instrument plugin (except for events addressed to a particular
+/// plugin instance by uuid - e.g. automation), and its audio feeds the track's
+/// (overridden or not) effects chain.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InstrumentOverride {
+    enabled: bool,
+    instrument: Option<AudioPlugin>,
+}
+
+impl InstrumentOverride {
+    pub fn new() -> Self {
+        InstrumentOverride {
+            enabled: false,
+            instrument: None,
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub fn instrument(&self) -> Option<&AudioPlugin> {
+        self.instrument.as_ref()
+    }
+
+    pub fn instrument_mut(&mut self) -> &mut Option<AudioPlugin> {
+        &mut self.instrument
+    }
+
+    pub fn set_instrument(&mut self, instrument: Option<AudioPlugin>) {
+        self.instrument = instrument;
+    }
+}
+
+/// A per track effects chain override for a riff arrangement. When enabled the
+/// arrangement's override effects receive the audio from whichever instrument plugin
+/// is active, and events addressed to the track's own effects (by plugin uuid) are
+/// never sent to the override effects.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EffectsOverride {
+    enabled: bool,
+    effects: Vec<AudioPlugin>,
+}
+
+impl EffectsOverride {
+    pub fn new() -> Self {
+        EffectsOverride {
+            enabled: false,
+            effects: vec![],
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub fn effects(&self) -> &Vec<AudioPlugin> {
+        self.effects.as_ref()
+    }
+
+    pub fn effects_mut(&mut self) -> &mut Vec<AudioPlugin> {
+        &mut self.effects
+    }
+
+    pub fn set_effects(&mut self, effects: Vec<AudioPlugin>) {
+        self.effects = effects;
+    }
 }
 
 impl RiffArrangement {
@@ -1753,6 +1836,8 @@ impl RiffArrangement {
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
+            track_instrument_overrides: HashMap::new(),
+            track_effects_overrides: HashMap::new(),
         }
     }
 
@@ -1762,6 +1847,8 @@ impl RiffArrangement {
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
+            track_instrument_overrides: HashMap::new(),
+            track_effects_overrides: HashMap::new(),
         }
     }
 
@@ -1815,6 +1902,38 @@ impl RiffArrangement {
 
     pub fn remove_track_automation(&mut self, track_uuid: &String) {
         self.track_automation.remove(track_uuid);
+    }
+
+    pub fn instrument_override(&self, track_uuid: &String) -> Option<&InstrumentOverride> {
+        self.track_instrument_overrides.get(track_uuid)
+    }
+
+    pub fn instrument_override_mut(&mut self, track_uuid: &String) -> Option<&mut InstrumentOverride> {
+        self.track_instrument_overrides.get_mut(track_uuid)
+    }
+
+    pub fn add_track_instrument_override(&mut self, track_uuid: String) {
+        self.track_instrument_overrides.entry(track_uuid).or_insert_with(InstrumentOverride::new);
+    }
+
+    pub fn remove_track_instrument_override(&mut self, track_uuid: &String) {
+        self.track_instrument_overrides.remove(track_uuid);
+    }
+
+    pub fn effects_override(&self, track_uuid: &String) -> Option<&EffectsOverride> {
+        self.track_effects_overrides.get(track_uuid)
+    }
+
+    pub fn effects_override_mut(&mut self, track_uuid: &String) -> Option<&mut EffectsOverride> {
+        self.track_effects_overrides.get_mut(track_uuid)
+    }
+
+    pub fn add_track_effects_override(&mut self, track_uuid: String) {
+        self.track_effects_overrides.entry(track_uuid).or_insert_with(EffectsOverride::new);
+    }
+
+    pub fn remove_track_effects_override(&mut self, track_uuid: &String) {
+        self.track_effects_overrides.remove(track_uuid);
     }
 }
 
@@ -2878,6 +2997,7 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 
     /// Set the vst effect's xid.
     fn set_xid(&mut self, xid: Option<u32>) {
+        let previous_xid = self.xid;
         self.xid = xid;
         let Some(parent_xid) = self.xid else {
             // No host window: tear the GUI down if one was created.
@@ -2887,7 +3007,32 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         if self.gui_created {
             // The GUI is already alive and parented to a window id - creating it again
             // for a new (re-shown) host window would leak it, the plugin only supports
-            // one.
+            // one. If the embedding window itself changed (a different xid - e.g. two
+            // riff arrangements sharing one copied override plugin instance, each with
+            // its own host window) re-parent and re-show the existing GUI so the new
+            // window isn't left blank; the GUI would otherwise stay on the old embed.
+            if previous_xid != Some(parent_xid) {
+                if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
+                    let window_def = clap_window {
+                        api: CLAP_WINDOW_API_X11.as_ptr(),
+                        specific: clap_window_handle {
+                            x11: parent_xid as u64
+                        }
+                    };
+                    if gui.set_parent(&self.plugin, &window_def) {
+                        debug!("Successfully re-parented the clap gui onto the new plugin window.");
+                    }
+                    else {
+                        debug!("Failed to re-parent the clap gui onto the new plugin window.");
+                    }
+                    if gui.show(&self.plugin) {
+                        debug!("Successfully re-showed the plugin window.");
+                    }
+                    else {
+                        debug!("Failed to re-show the plugin window.");
+                    }
+                }
+            }
             return;
         }
         if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
@@ -3333,6 +3478,7 @@ impl Drop for BackgroundProcessorClapAudioPlugin {
     }
 }
 
+
 #[derive()]
 pub struct BackgroundProcessorVst3AudioPlugin {
     track_uuid: String,
@@ -3702,6 +3848,23 @@ impl AudioPlugin {
         self.file = file;
     }
 
+    /// Rebuild a plugin load descriptor from a persisted AudioPlugin domain object, so
+    /// an arrangement's instrument/effects overrides (and undo/redo) can send the track
+    /// background thread its plugin load message from the graph data alone.
+    pub fn as_scanned_plugin(&self) -> Option<ScannedPlugin> {
+        use std::str::FromStr;
+        match AudioPluginType::from_str(self.plugin_type.as_str()) {
+            Ok(audio_plugin_stack) => Some(ScannedPlugin {
+                name: self.name.clone(),
+                path: self.file.clone(),
+                id: self.uid.clone(),
+                sub_id: self.sub_plugin_id.clone(),
+                audio_plugin_stack,
+            }),
+            Err(_) => None,
+        }
+    }
+
     pub fn file(&self) -> &str {
         self.file.as_ref()
     }
@@ -3856,10 +4019,20 @@ pub struct TrackBackgroundProcessorHelper {
     pub instrument_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
     pub pending_preset_response_sender: Option<Sender<TrackPluginPresetResponse>>,
     pub effect_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
+    // riff arrangement override plugin instances - switched in by the SetOverride*Active
+    // events when a riff arrangement with instrument/effects overrides enabled plays
+    pub override_instrument_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
+    pub override_effect_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
+    pub override_instrument_active: bool,
+    pub override_effects_active: bool,
     pub vst_editor: Option<Box<dyn Editor>>,
     pub vst_effect_editors: HashMap<String, Box<dyn Editor>>,
     pub request_effect_params: bool,
     pub request_effect_params_for_uuid: String,
+    // override effect plugin uuids whose parameter details still have to be reported
+    // back after a SetOverrideEffects load (one request per poll, like the single
+    // request_effect_params slot above)
+    pub pending_override_effect_param_requests: Vec<String>,
     pub tx_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>,
     pub rx_vst_thread: Receiver<TrackBackgroundProcessorInwardEvent>,
     pub tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
@@ -3922,10 +4095,15 @@ impl TrackBackgroundProcessorHelper {
             instrument_plugin_instances: vec![],
             pending_preset_response_sender: None,
             effect_plugin_instances: vec![],
+            override_instrument_plugin_instances: vec![],
+            override_effect_plugin_instances: vec![],
+            override_instrument_active: false,
+            override_effects_active: false,
             vst_editor: None,
             vst_effect_editors: HashMap::new(),
             request_effect_params: false,
             request_effect_params_for_uuid: "".to_string(),
+            pending_override_effect_param_requests: vec![],
             tx_audio,
             rx_vst_thread,
             tx_vst_thread,
@@ -3957,6 +4135,62 @@ impl TrackBackgroundProcessorHelper {
             tempo,
             time_signature_numerator,
             time_signature_denominator,
+        }
+    }
+
+    /// Instantiate a live plugin instance for this track thread - shared by the
+    /// track's own instrument/effects load events and the riff arrangement
+    /// instrument/effects override load events.
+    pub fn create_audio_plugin_instance(
+        &self,
+        vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+        clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+        uuid: Uuid,
+        scanned_plugin: &ScannedPlugin,
+        is_instrument: bool,
+    ) -> Result<BackgroundProcessorAudioPluginType, String> {
+        if let AudioPluginType::VST24 = scanned_plugin.audio_plugin_stack {
+            BackgroundProcessorVst24AudioPlugin::new_with_uuid(
+                vst24_plugin_loaders,
+                self.track_uuid.clone(),
+                uuid,
+                scanned_plugin.sub_id.clone(),
+                scanned_plugin.path.clone(),
+                self.vst_host_time_info.clone(),
+                self.sample_rate,
+                self.block_size as i64,
+                self.tempo,
+                self.time_signature_numerator,
+                self.time_signature_denominator,
+            ).map(BackgroundProcessorAudioPluginType::Vst24)
+        }
+        else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
+            BackgroundProcessorClapAudioPlugin::new_with_uuid(
+                clap_plugin_loaders,
+                self.track_uuid.clone(),
+                uuid,
+                clap_plugin_id(scanned_plugin),
+                scanned_plugin.path.clone(),
+                self.sample_rate,
+                self.block_size as i64,
+                self.tempo,
+                self.time_signature_numerator,
+                self.time_signature_denominator,
+            ).map(BackgroundProcessorAudioPluginType::Clap)
+        }
+        else {
+            BackgroundProcessorVst3AudioPlugin::new_with_uuid(
+                self.track_uuid.clone(),
+                uuid,
+                scanned_plugin.id.clone(),
+                scanned_plugin.path.clone(),
+                is_instrument,
+                self.sample_rate,
+                self.block_size as i64,
+                self.tempo,
+                self.time_signature_numerator,
+                self.time_signature_denominator,
+            ).map(BackgroundProcessorAudioPluginType::Vst3)
         }
     }
 
@@ -4022,7 +4256,15 @@ impl TrackBackgroundProcessorHelper {
                     self.vst_event_blocks_transition_to = None;
                     self.event_processor.set_block_index(-1);
 
+                    // flush sounding notes through the plugin that is producing them
+                    // (the override if active) before the override switches are dropped
                     self.stop_all_playing_notes();
+
+                    // the arrangement override plugins are only switched in while the
+                    // arrangement itself is playing - any live work resumes on the track's
+                    // own instrument/effects once stopped
+                    self.override_instrument_active = false;
+                    self.override_effects_active = false;
                 },
                 TrackBackgroundProcessorInwardEvent::GotoStart => {
                     match std::thread::current().name() {
@@ -4073,7 +4315,17 @@ impl TrackBackgroundProcessorHelper {
                         effect.stop_processing();
                         effect.shutdown();
                     }
+                    for effect in self.override_effect_plugin_instances.iter_mut() {
+                        effect.close_editor();
+                        effect.stop_processing();
+                        effect.shutdown();
+                    }
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.close_editor();
+                        instrument_plugin.stop_processing();
+                        instrument_plugin.shutdown();
+                    }
+                    if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.close_editor();
                         instrument_plugin.stop_processing();
                         instrument_plugin.shutdown();
@@ -4151,6 +4403,17 @@ impl TrackBackgroundProcessorHelper {
                         }
                     }
                     self.effect_plugin_instances.retain(|effect| {
+                        effect.uuid().to_string() != uuid
+                    });
+                    for effect in self.override_effect_plugin_instances.iter_mut() {
+                        if effect.uuid().to_string() == uuid {
+                            effect.close_editor();
+                            effect.stop_processing();
+                            effect.shutdown();
+                            self.vst_effect_editors.remove(&effect.uuid().to_string());
+                        }
+                    }
+                    self.override_effect_plugin_instances.retain(|effect| {
                         effect.uuid().to_string() != uuid
                     });
                 }
@@ -4249,6 +4512,90 @@ impl TrackBackgroundProcessorHelper {
                             }
                         },
                     }
+                }
+                TrackBackgroundProcessorInwardEvent::SetOverrideInstrument(vst24_plugin_loaders, clap_plugin_loaders, override_instrument) => {
+                    // idempotent - the sync path resends the whole desired override state and a
+                    // reload of the same plugin instance would drop its captured preset state
+                    let already_loaded = match (&override_instrument, self.override_instrument_plugin_instances.get(0)) {
+                        (Some((uuid, _scanned_plugin, _preset)), Some(instance)) => instance.uuid() == *uuid,
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !already_loaded {
+                        if let Some(mut plugin_instance_to_delete) = self.override_instrument_plugin_instances.pop() {
+                            plugin_instance_to_delete.close_editor();
+                            plugin_instance_to_delete.stop_processing();
+                            plugin_instance_to_delete.shutdown();
+                        }
+
+                        if let Some((uuid, scanned_plugin, preset_data)) = override_instrument {
+                            match self.create_audio_plugin_instance(vst24_plugin_loaders, clap_plugin_loaders, uuid, &scanned_plugin, true) {
+                                Ok(mut plugin_instance) => {
+                                    if !preset_data.is_empty() {
+                                        plugin_instance.set_preset_data(preset_data);
+                                    }
+                                    self.override_instrument_plugin_instances.push(plugin_instance);
+                                },
+                                Err(error) => {
+                                    let message = format!("Track '{}' could not load override instrument plugin '{}' from '{}': {}", self.track_uuid, scanned_plugin.name, scanned_plugin.path, error);
+                                    error!("{}", message);
+                                    eprintln!("{}", message);
+                                },
+                            }
+                        }
+
+                        // refresh the parameter details so the automation views can offer the
+                        // override plugin's parameters
+                        self.handle_request_instrument_plugin_parameters();
+                    }
+                }
+                TrackBackgroundProcessorInwardEvent::SetOverrideEffects(vst24_plugin_loaders, clap_plugin_loaders, override_effects) => {
+                    // remove the override effects that are no longer wanted
+                    for effect in self.override_effect_plugin_instances.iter_mut() {
+                        if !override_effects.iter().any(|(uuid, _scanned_plugin, _preset)| *uuid == effect.uuid()) {
+                            effect.close_editor();
+                            effect.stop_processing();
+                            effect.shutdown();
+                            self.vst_effect_editors.remove(&effect.uuid().to_string());
+                        }
+                    }
+                    self.override_effect_plugin_instances.retain(|effect| {
+                        override_effects.iter().any(|(uuid, _scanned_plugin, _preset)| *uuid == effect.uuid())
+                    });
+
+                    // add the missing ones and reorder the list to match the arrangement
+                    let mut new_instances: Vec<BackgroundProcessorAudioPluginType> = vec![];
+                    for (uuid, scanned_plugin, preset_data) in override_effects {
+                        if let Some(position) = self.override_effect_plugin_instances.iter().position(|effect| effect.uuid() == uuid) {
+                            new_instances.push(self.override_effect_plugin_instances.remove(position));
+                        }
+                        else {
+                            match self.create_audio_plugin_instance(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), uuid, &scanned_plugin, false) {
+                                Ok(mut plugin_instance) => {
+                                    if !preset_data.is_empty() {
+                                        plugin_instance.set_preset_data(preset_data);
+                                    }
+                                    // request the parameter details for the newly added
+                                    // override effect so its automation parameters are on
+                                    // offer in the automation views
+                                    self.pending_override_effect_param_requests.push(uuid.to_string());
+                                    new_instances.push(plugin_instance);
+                                },
+                                Err(error) => {
+                                    let message = format!("Track '{}' could not load override effect plugin '{}' from '{}': {}", self.track_uuid, scanned_plugin.name, scanned_plugin.path, error);
+                                    error!("{}", message);
+                                    eprintln!("{}", message);
+                                },
+                            }
+                        }
+                    }
+                    self.override_effect_plugin_instances = new_instances;
+                }
+                TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(active) => {
+                    self.override_instrument_active = active && !self.override_instrument_plugin_instances.is_empty();
+                }
+                TrackBackgroundProcessorInwardEvent::SetOverrideEffectsActive(active) => {
+                    self.override_effects_active = active && !self.override_effect_plugin_instances.is_empty();
                 }
                 TrackBackgroundProcessorInwardEvent::SetPresetData(instrument_preset_data, effect_presets) => {
                     // an empty string means "no captured state" (e.g. a chunkless plugin
@@ -4358,15 +4705,31 @@ impl TrackBackgroundProcessorHelper {
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.set_xid(Some(xid));
                         let (plugin_window_width, plugin_window_height) = instrument_plugin.get_window_size();
-                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), plugin_window_width, plugin_window_height)) {
+                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), instrument_plugin_uuid.clone(), plugin_window_width, plugin_window_height)) {
                             Ok(_) => debug!("Instrument plugin window size sent for: track={}, instrument={}, name={}.", self.track_uuid.clone(), instrument_plugin_uuid, instrument_plugin.name()),
                             Err(error) => debug!("Problem sending plugin window size from VST thread to state: {}", error),
                         }
                     }
                 },
+                TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentWindowId(xid) => {
+                    let instrument_plugin_uuid = if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get(0) {
+                        instrument_plugin.uuid().to_string()
+                    }
+                    else {
+                        "".to_string()
+                    };
+                    if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.set_xid(Some(xid));
+                        let (plugin_window_width, plugin_window_height) = instrument_plugin.get_window_size();
+                        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), instrument_plugin_uuid.clone(), plugin_window_width, plugin_window_height)) {
+                            Ok(_) => debug!("Override instrument plugin window size sent for: track={}, instrument={}, name={}.", self.track_uuid.clone(), instrument_plugin_uuid, instrument_plugin.name()),
+                            Err(error) => debug!("Problem sending override plugin window size from VST thread to state: {}", error),
+                        }
+                    }
+                },
                 TrackBackgroundProcessorInwardEvent::SetEffectWindowId(effect_uuid, xid) => {
                     debug!("Received - VstThreadInwardEvent::SetEffectWindowId({}, {})", effect_uuid, xid);
-                    for effect in self.effect_plugin_instances.iter_mut() {
+                    for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                         if effect.uuid().to_string() == effect_uuid {
                             effect.set_xid(Some(xid));
                             let (plugin_window_width, plugin_window_height) = effect.get_window_size();
@@ -4440,7 +4803,10 @@ impl TrackBackgroundProcessorHelper {
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.set_tempo(tempo);
                     }
-                    for effect in self.effect_plugin_instances.iter_mut() {
+                    if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.set_tempo(tempo);
+                    }
+                    for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                         effect.set_tempo(tempo);
                     }
                 }
@@ -4448,7 +4814,10 @@ impl TrackBackgroundProcessorHelper {
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.set_time_signature(numerator, denominator);
                     }
-                    for effect in self.effect_plugin_instances.iter_mut() {
+                    if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.set_time_signature(numerator, denominator);
+                    }
+                    for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                         effect.set_time_signature(numerator, denominator);
                     }
                 }
@@ -4466,7 +4835,10 @@ impl TrackBackgroundProcessorHelper {
                     if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
                         instrument_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
                     }
-                    for effect in self.effect_plugin_instances.iter_mut() {
+                    if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                        instrument_plugin.change_sample_rate_and_block_size(sample_rate, block_size);
+                    }
+                    for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                         effect.change_sample_rate_and_block_size(sample_rate, block_size);
                     }
 
@@ -4567,7 +4939,14 @@ impl TrackBackgroundProcessorHelper {
 
     fn stop_all_playing_notes(&mut self) {
         if !self.event_processor.playing_notes().is_empty() {
-            if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+            let use_override_instrument = self.override_instrument_active && !self.override_instrument_plugin_instances.is_empty();
+            let instrument_plugin = if use_override_instrument {
+                self.override_instrument_plugin_instances.get_mut(0)
+            }
+            else {
+                self.instrument_plugin_instances.get_mut(0)
+            };
+            if let Some(instrument_plugin) = instrument_plugin {
                 match instrument_plugin {
                     BackgroundProcessorAudioPluginType::Vst24(vst_24_plugin) => {
                         let mut all_note_offs: Vec<MidiEvent> = Vec::new();
@@ -4615,7 +4994,7 @@ impl TrackBackgroundProcessorHelper {
     }
 
     pub fn refresh_instrument_plugin_editor(&mut self) {
-        if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+        for instrument_plugin in self.instrument_plugin_instances.iter_mut().chain(self.override_instrument_plugin_instances.iter_mut()) {
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                     if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
@@ -4636,7 +5015,7 @@ impl TrackBackgroundProcessorHelper {
     }
 
     pub fn refresh_effect_plugin_editors(&mut self) {
-        for effect_plugin in self.effect_plugin_instances.iter_mut() {
+        for effect_plugin in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
             match effect_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                     if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
@@ -4658,8 +5037,30 @@ impl TrackBackgroundProcessorHelper {
     /// editors must not go quiescent: VST2 editors need editor_idle pumping and CLAP/VST3
     /// windows need their timer callbacks, both of which are tied to the plugin being
     /// processed. VST3/CLAP only expose a sticky xid, so this is conservative for them.
+    /// Drives the CLAP GUI event loops (timer and posix fd callbacks) of plugin
+    /// instances that are not being processed for audio in the current block. A CLAP
+    /// editor only paints and handles input while the host pumps these callbacks, so
+    /// an instance whose window is open but that sits outside the audio chain (e.g.
+    /// the arrangement override instrument while browsing, or the track's own
+    /// instrument/effects while the override is routed) would otherwise show a
+    /// frozen or blank editor.
+    fn pump_idle_clap_plugin_guis(plugin_instances: &mut Vec<BackgroundProcessorAudioPluginType>) {
+        for plugin_instance in plugin_instances.iter_mut() {
+            if let BackgroundProcessorAudioPluginType::Clap(clap_plugin) = plugin_instance {
+                if clap_plugin.xid().is_some() {
+                    if let Some(timer_support) = clap_plugin.plugin.get_extension::<TimerSupport>() {
+                        timer_support.on_timer(&clap_plugin.plugin, 0);
+                    }
+                    if let Some(posix_fd_support) = clap_plugin.plugin.get_extension::<PosixFDSupport>() {
+                        posix_fd_support.on_fd(&clap_plugin.plugin, 0, 0);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn plugin_editor_open(&mut self) -> bool {
-        if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+        for instrument_plugin in self.instrument_plugin_instances.iter_mut().chain(self.override_instrument_plugin_instances.iter_mut()) {
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                     if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
@@ -4680,7 +5081,7 @@ impl TrackBackgroundProcessorHelper {
                 }
             }
         }
-        for effect_plugin in self.effect_plugin_instances.iter_mut() {
+        for effect_plugin in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
             match effect_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
                     if let Some(editor) = vst24_plugin.editor_mut().as_mut() {
@@ -4706,7 +5107,7 @@ impl TrackBackgroundProcessorHelper {
 
     pub fn handle_host_events_from_plugins(&self) -> bool {
         let mut had_events = false;
-        if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
+        for instrument_plugin in self.instrument_plugin_instances.iter().chain(self.override_instrument_plugin_instances.iter()) {
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(_) => {
                     while let Ok(event) = instrument_plugin.rx_from_host().try_recv() {
@@ -4718,8 +5119,8 @@ impl TrackBackgroundProcessorHelper {
                                     Err(error) => debug!("Problem relaying instrument VstHost automation from VST thread to state: {}", error),
                                 }
                             }
-                            AudioPluginHostOutwardEvent::SizeWindow(_, _, _, width, height) => {
-                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width, height)) {
+                            AudioPluginHostOutwardEvent::SizeWindow(_, plugin_uuid, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), plugin_uuid, width, height)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument VstHost size window from VST thread to state: {}", error),
                                 }
@@ -4737,8 +5138,8 @@ impl TrackBackgroundProcessorHelper {
                                     Err(error) => debug!("Problem relaying instrument Vst3Host automation from VST3 thread to state: {}", error),
                                 }
                             }
-                            AudioPluginHostOutwardEvent::SizeWindow(_, _, _, width, height) => {
-                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width, height)) {
+                            AudioPluginHostOutwardEvent::SizeWindow(_, plugin_uuid, _, width, height) => {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), plugin_uuid, width, height)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument Vst3Host size window from VST3 thread to state: {}", error),
                                 }
@@ -4765,7 +5166,7 @@ impl TrackBackgroundProcessorHelper {
                                 // host to answer request_resize() with set_size()), then
                                 // grow/shrink the host window to the resulting size
                                 let (width, height) = clap_plugin.handle_gui_resize(width, height);
-                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), width as i32, height as i32)) {
+                                match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentPluginWindowSize(self.track_uuid.clone(), clap_plugin.uuid().to_string(), width as i32, height as i32)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem relaying instrument Clap Host size window from CLAP thread to state: {}", error),
                                 }
@@ -4776,7 +5177,7 @@ impl TrackBackgroundProcessorHelper {
             }
         }
 
-        for effect_plugin in self.effect_plugin_instances.iter() {
+        for effect_plugin in self.effect_plugin_instances.iter().chain(self.override_effect_plugin_instances.iter()) {
             match effect_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(_) => {
                     while let Ok(event) = effect_plugin.rx_from_host().try_recv() {
@@ -4866,10 +5267,30 @@ impl TrackBackgroundProcessorHelper {
                 effect_presets.push((effect.uuid().to_string(), effect.preset_data()));
             }
 
+            let override_instrument_preset = if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                instrument_plugin.preset_data()
+            }
+            else {
+                String::from("")
+            };
+
+            let override_instrument_plugin_uuid = match self.override_instrument_plugin_instances.get(0) {
+                Some(instrument_plugin) => instrument_plugin.uuid().to_string(),
+                None => "".to_string(),
+            };
+
+            let mut override_effect_presets = vec![];
+            for effect in self.override_effect_plugin_instances.iter_mut() {
+                override_effect_presets.push((effect.uuid().to_string(), effect.preset_data()));
+            }
+
             let response = TrackPluginPresetResponse {
                 track_uuid: self.track_uuid.clone(),
                 instrument_preset_data: instrument_preset,
                 effect_presets,
+                override_instrument_plugin_uuid,
+                override_instrument_preset_data: override_instrument_preset,
+                override_effect_presets,
             };
 
             match response_sender.send(response) {
@@ -4882,7 +5303,12 @@ impl TrackBackgroundProcessorHelper {
     pub fn handle_request_instrument_plugin_parameters(&mut self) {
         debug!("Requested vst instrument parameter details");
 
-        if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+        // send a parameter details event per loaded instrument instance (the track's own
+        // instrument and any riff arrangement override instrument) - the receiving side
+        // keys the parameter list by plugin uuid, so the automation views can offer the
+        // parameters of either plugin.
+        for instrument_plugin in self.instrument_plugin_instances.iter_mut().chain(self.override_instrument_plugin_instances.iter_mut()) {
+            let instrument_plugin_uuid = instrument_plugin.uuid();
             let mut plugin_parameters = vec![];
             match instrument_plugin {
                 BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
@@ -4925,11 +5351,7 @@ impl TrackBackgroundProcessorHelper {
             }
 
             match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::InstrumentParameters(plugin_parameters)) {
-                Ok(_) => {
-                    if let Some(instrument_plugin) = self.instrument_plugin_instances.get(0) {
-                        debug!("Plugin parameter details sent for: uuid={} name={}.", instrument_plugin.uuid(), instrument_plugin.name());
-                    }
-                },
+                Ok(_) => debug!("Plugin parameter details sent for: uuid={}.", instrument_plugin_uuid),
                 Err(error) => debug!("Problem sending instrument parameters data from VST thread to state: {}", error),
             }
         }
@@ -4939,7 +5361,7 @@ impl TrackBackgroundProcessorHelper {
         if self.request_effect_params {
             debug!("Requested vst effect parameter details");
             let mut plugin_parameters = vec![];
-            for effect in self.effect_plugin_instances.iter_mut() {
+            for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                 if effect.uuid().to_string() == self.request_effect_params_for_uuid {
                     match effect {
                         BackgroundProcessorAudioPluginType::Vst24(effect) => {
@@ -4977,6 +5399,16 @@ impl TrackBackgroundProcessorHelper {
                 Err(error) => debug!("Problem sending effect parameters data from VST thread to state: {}", error),
             }
             self.request_effect_params = false;
+        }
+
+        // drain one queued override effect parameter request per poll
+        if !self.request_effect_params {
+            if let Some(next_override_effect_uuid) = self.pending_override_effect_param_requests.first().cloned() {
+                self.pending_override_effect_param_requests.remove(0);
+                self.request_effect_params = true;
+                self.request_effect_params_for_uuid.clear();
+                self.request_effect_params_for_uuid.push_str(next_override_effect_uuid.as_str());
+            }
         }
     }
 
@@ -5067,7 +5499,15 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                         if !effect_events.is_empty() && !self.mute {
-                            if let Some(effect_plugin) = self.effect_plugin_instances.iter_mut().find(|effect| effect.uuid().to_string() == effect_uuid) {
+                            // routed events address a specific effect plugin by uuid - look
+                            // in the track's effects first, then in the arrangement's override
+                            // effects (events addressed to a non-override effect are never
+                            // delivered to an override effect and vice versa)
+                            let mut effect_plugin = self.effect_plugin_instances.iter_mut().find(|effect| effect.uuid().to_string() == effect_uuid);
+                            if effect_plugin.is_none() {
+                                effect_plugin = self.override_effect_plugin_instances.iter_mut().find(|effect| effect.uuid().to_string() == effect_uuid);
+                            }
+                            if let Some(effect_plugin) = effect_plugin {
                                 let plugin_uuid = effect_plugin.uuid().to_string();
                                 match effect_plugin {
                                     BackgroundProcessorAudioPluginType::Vst24(effect_plugin) => {
@@ -5097,20 +5537,42 @@ impl TrackBackgroundProcessorHelper {
             }
         }
 
-        if !events.is_empty() && !self.mute {
-            if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+        // when the riff arrangement's instrument override is active the override plugin
+        // instance receives all the events that would normally go to the track's own
+        // instrument - except plugin parameter events addressed (by plugin uuid) to a
+        // particular other plugin instance, which stay with that plugin
+        let use_override_instrument = self.override_instrument_active && !self.override_instrument_plugin_instances.is_empty();
+        let instrument_events: Vec<TrackEvent> = if use_override_instrument {
+            let override_plugin_uuid = match self.override_instrument_plugin_instances.get(0) {
+                Some(instrument_plugin) => instrument_plugin.uuid().to_string(),
+                None => "".to_string(),
+            };
+            events.into_iter().filter(|event| match event {
+                TrackEvent::AudioPluginParameter(plugin_parameter) => plugin_parameter.plugin_uuid() == override_plugin_uuid,
+                _ => true,
+            }).collect()
+        }
+        else {
+            std::mem::take(&mut events)
+        };
+
+        if !instrument_events.is_empty() && !self.mute {
+            let instrument_plugin = if use_override_instrument {
+                self.override_instrument_plugin_instances.get_mut(0)
+            }
+            else {
+                self.instrument_plugin_instances.get_mut(0)
+            };
+            if let Some(instrument_plugin) = instrument_plugin {
                 let plugin_uuid = instrument_plugin.uuid().to_string();
                 match instrument_plugin {
                     BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
                         let vst_midi_events = DAWUtils::convert_events_with_timing_in_frames_to_vst(
-                            &events, 
+                            &instrument_events, 
                             0);
                         let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
                         self.midi_sender.store_events(vst_midi_events);
-                        if events.len() == 0 {
-                            debug!("Somehow the events have been exhausted.");
-                        }
-                        for event in events.iter() {
+                        for event in instrument_events.iter() {
                             if let TrackEvent::AudioPluginParameter(plugin_parameter) = event {
                                 if plugin_uuid == plugin_parameter.plugin_uuid() {
                                     debug!("Sent a plugin parameter to the instrument plugin.");
@@ -5121,73 +5583,59 @@ impl TrackBackgroundProcessorHelper {
                         vst_plugin_instance.process_events(self.midi_sender.events());
                     }
                     BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
-                        vst3_plugin.process_events(&events);
+                        vst3_plugin.process_events(&instrument_events);
                     }
                     BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
                         // debug!("{} - process_plugin_events: sending events to clap instrument plugin, muted={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), self.mute);
-                        instrument_plugin.process_events(&events);
+                        instrument_plugin.process_events(&instrument_events);
                     }
                 }
             }
         }
 
         if !param_events.is_empty() && !self.mute {
-            if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
-                match instrument_plugin {
-                    BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
-                        let vst_plugin_instance = instrument_plugin.vst_plugin_instance_mut();
-                        let param_object = vst_plugin_instance.get_parameter_object();
-                        // send parameters to the track instrument
-                        for event in param_events.iter() {
-                            if event.plugin_uuid() == instrument_plugin.uuid().to_string() {
-                                param_object.set_parameter(event.index, event.value());
-                            }
-                        }
-                    }
-                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
-                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
-                        vst3_plugin.process_param_events(&plugin_param_events);
-                    }
-                    BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
-                        if let Some(params) = instrument_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
-                            match params.info(instrument_plugin.plugin()) {
-                                Ok(param_info) => {
-                                    let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == instrument_plugin.uuid().to_string()).collect();
-                                    instrument_plugin.process_param_events(&plugin_param_events, &param_info);
-                                }
-                                Err(_) => {}
-                            }
-                        }
+            // plugin parameter events remain addressed to their own plugin instance (by
+            // plugin uuid) - the track's instrument/effects and the arrangement's override
+            // instrument/effects each only receive the parameters that refer to them, so
+            // automation created against a non-override plugin is never sent to an
+            // override plugin and vice versa
+            for instrument_plugin in self.instrument_plugin_instances.iter_mut().chain(self.override_instrument_plugin_instances.iter_mut()) {
+                Self::apply_plugin_param_events(instrument_plugin, &param_events);
+            }
+
+            // send parameters to the track effects (and the arrangement's override effects)
+            for effect_plugin in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
+                Self::apply_plugin_param_events(effect_plugin, &param_events);
+            }
+        }
+    }
+
+    /// Apply plugin parameter (automation) events to a single live plugin instance,
+    /// filtered by the instance's plugin uuid.
+    fn apply_plugin_param_events(plugin: &mut BackgroundProcessorAudioPluginType, param_events: &[PluginParameter]) {
+        match plugin {
+            BackgroundProcessorAudioPluginType::Vst24(plugin) => {
+                let plugin_uuid = plugin.uuid().to_string();
+                let vst_plugin_instance = plugin.vst_plugin_instance_mut();
+                let param_object = vst_plugin_instance.get_parameter_object();
+                for event in param_events.iter() {
+                    if event.plugin_uuid() == plugin_uuid {
+                        param_object.set_parameter(event.index, event.value());
                     }
                 }
             }
-
-            // send parameters to the track effects
-            for effect_plugin in self.effect_plugin_instances.iter_mut() {
-                match effect_plugin {
-                    BackgroundProcessorAudioPluginType::Vst24(effect_plugin) => {
-                        let vst_plugin_instance = effect_plugin.vst_plugin_instance_mut();
-                        let param_object = vst_plugin_instance.get_parameter_object();
-                        for event in param_events.iter() {
-                            if event.plugin_uuid() == effect_plugin.uuid().to_string() {
-                                param_object.set_parameter(event.index, event.value());
-                            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
+                vst3_plugin.process_param_events(&plugin_param_events);
+            }
+            BackgroundProcessorAudioPluginType::Clap(plugin) => {
+                if let Some(params) = plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
+                    match params.info(plugin.plugin()) {
+                        Ok(param_info) => {
+                            let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == plugin.uuid().to_string()).collect();
+                            plugin.process_param_events(&plugin_param_events, &param_info);
                         }
-                    }
-                    BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
-                        let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == vst3_plugin.uuid().to_string()).collect();
-                        vst3_plugin.process_param_events(&plugin_param_events);
-                    }
-                    BackgroundProcessorAudioPluginType::Clap(effect_plugin) => {
-                        if let Some(params) = effect_plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
-                            match params.info(effect_plugin.plugin()) {
-                                Ok(param_info) => {
-                                    let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == effect_plugin.uuid().to_string()).collect();
-                                    effect_plugin.process_param_events(&plugin_param_events, &param_info);
-                                }
-                                Err(_) => {}
-                            }
-                        }
+                        Err(_) => {}
                     }
                 }
             }
@@ -5213,23 +5661,9 @@ impl TrackBackgroundProcessorHelper {
         }
 
         if !param_events.is_empty() && !self.mute {
-            // send parameters to the track effects
-            for effect_plugin in self.effect_plugin_instances.iter_mut() {
-                match effect_plugin {
-                    BackgroundProcessorAudioPluginType::Vst24(effect_plugin) => {
-                        let vst_plugin_instance = effect_plugin.vst_plugin_instance_mut();
-                        let param_object = vst_plugin_instance.get_parameter_object();
-                        for event in param_events.iter() {
-                            if event.plugin_uuid() == effect_plugin.uuid().to_string() {
-                                param_object.set_parameter(event.index, event.value());
-                            }
-                        }
-                    }
-                    BackgroundProcessorAudioPluginType::Vst3(_vst3_plugin) => {}
-                    BackgroundProcessorAudioPluginType::Clap(_effect_plugin) => {
-
-                    }
-                }
+            // send parameters to the track effects (and the arrangement's override effects)
+            for effect_plugin in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
+                Self::apply_plugin_param_events(effect_plugin, &param_events);
             }
         }
     }
@@ -5655,7 +6089,16 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     let ppq_pos = ((track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64  * current_tempo / (60.0 * current_sample_rate)) + 1.0;
                     let sample_position = (track_background_processor_helper.event_processor.block_index() * (track_background_processor_helper.block_size as i32)) as f64;
 
-                    if let Some(instrument_plugin) = track_background_processor_helper.instrument_plugin_instances.get_mut(0) {
+                    // the riff arrangement instrument override instance is processed in
+                    // place of the track's own instrument while the override is switched on
+                    let use_override_instrument = track_background_processor_helper.override_instrument_active && !track_background_processor_helper.override_instrument_plugin_instances.is_empty();
+                    let instrument_plugin = if use_override_instrument {
+                        track_background_processor_helper.override_instrument_plugin_instances.get_mut(0)
+                    }
+                    else {
+                        track_background_processor_helper.instrument_plugin_instances.get_mut(0)
+                    };
+                    if let Some(instrument_plugin) = instrument_plugin {
                         match instrument_plugin {
                             BackgroundProcessorAudioPluginType::Vst24(instrument_plugin) => {
                                 if let Ok(mut vst_host) = instrument_plugin.host_mut().lock() {
@@ -5683,8 +6126,29 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         }
                     }
 
+                    // the instrument instance that is not routed for audio in this block
+                    // (the arrangement override while it is not switched in, or the
+                    // track's own instrument while the override is routed) still needs
+                    // its CLAP GUI pumped so its editor paints and resizes properly
+                    let idle_instrument_plugin_instances = if use_override_instrument {
+                        &mut track_background_processor_helper.instrument_plugin_instances
+                    }
+                    else {
+                        &mut track_background_processor_helper.override_instrument_plugin_instances
+                    };
+                    TrackBackgroundProcessorHelper::pump_idle_clap_plugin_guis(idle_instrument_plugin_instances);
+
+                    // the arrangement's override effects chain processes the instrument audio
+                    // in place of the track's own effects while the override is switched on
+                    let use_override_effects = track_background_processor_helper.override_effects_active && !track_background_processor_helper.override_effect_plugin_instances.is_empty();
+                    let active_effect_plugin_instances = if use_override_effects {
+                        &mut track_background_processor_helper.override_effect_plugin_instances
+                    }
+                    else {
+                        &mut track_background_processor_helper.effect_plugin_instances
+                    };
                     let mut swap = true;
-                    for effect in track_background_processor_helper.effect_plugin_instances.iter_mut() {
+                    for effect in active_effect_plugin_instances.iter_mut() {
                         // handle audio data routed to this effect
                         for audio_route_uuid in track_background_processor_helper.audio_inward_routings.iter().find(|(_, audio_route)| match &audio_route.destination {
                             AudioRoutingNodeType::Track(_) => false,
@@ -5755,6 +6219,17 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             }
                         }
                     }
+
+                    // the effect chain that is not routed for audio in this block (the
+                    // override effects while they are not switched in, or the track's own
+                    // effects while they are) still needs its CLAP GUIs pumped
+                    let idle_effect_plugin_instances = if use_override_effects {
+                        &mut track_background_processor_helper.effect_plugin_instances
+                    }
+                    else {
+                        &mut track_background_processor_helper.override_effect_plugin_instances
+                    };
+                    TrackBackgroundProcessorHelper::pump_idle_clap_plugin_guis(idle_effect_plugin_instances);
 
                     let mode = match track_thread_coast.lock() {
                         Ok(mode) => match *mode {
@@ -6016,8 +6491,17 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         track_background_processor_helper.process_sample(&mut audio_buffer, current_block_size, left_pan, right_pan);
                     }
 
+                    // the arrangement's override effects chain processes the track audio in
+                    // place of the track's own effects while the override is switched on
+                    let use_override_effects = track_background_processor_helper.override_effects_active && !track_background_processor_helper.override_effect_plugin_instances.is_empty();
+                    let active_effect_plugin_instances = if use_override_effects {
+                        &mut track_background_processor_helper.override_effect_plugin_instances
+                    }
+                    else {
+                        &mut track_background_processor_helper.effect_plugin_instances
+                    };
                     let mut swap = true;
-                    for effect in track_background_processor_helper.effect_plugin_instances.iter_mut() {
+                    for effect in active_effect_plugin_instances.iter_mut() {
                         let audio_buffer_in_use = if swap {
                             &mut audio_buffer_swapped
                         }
@@ -7123,7 +7607,11 @@ impl Song {
         self.riff_sets.iter_mut().for_each(|riff_set| riff_set.remove_track(track_uuid.clone()));
 
         // update the riff arrangements
-        self.riff_arrangements.iter_mut().for_each(|riff_arrangement| riff_arrangement.remove_track_automation(&track_uuid));
+        self.riff_arrangements.iter_mut().for_each(|riff_arrangement| {
+            riff_arrangement.remove_track_automation(&track_uuid);
+            riff_arrangement.remove_track_instrument_override(&track_uuid);
+            riff_arrangement.remove_track_effects_override(&track_uuid);
+        });
     }
 
     /// Get a reference to the song's tempo.
@@ -7158,7 +7646,11 @@ impl Song {
         self.riff_sets.iter_mut().for_each(|riff_set| riff_set.set_riff_ref_for_track(track_uuid.clone(), RiffReference::new(track_empty_riff_uuid.clone(), 0.0)));
 
         // update the riff arrangements
-        self.riff_arrangements.iter_mut().for_each(|riff_arrangement| riff_arrangement.add_track_automation(track_uuid.clone()));
+        self.riff_arrangements.iter_mut().for_each(|riff_arrangement| {
+            riff_arrangement.add_track_automation(track_uuid.clone());
+            riff_arrangement.add_track_instrument_override(track_uuid.clone());
+            riff_arrangement.add_track_effects_override(track_uuid.clone());
+        });
     }
 
     /// Get a reference to the song's loops.

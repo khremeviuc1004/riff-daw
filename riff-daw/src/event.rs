@@ -165,6 +165,14 @@ pub enum TrackChangeType {
     InstrumentChanged(String),
     ShowInstrument,
 
+    // riff arrangement instrument/effects override changes - applied to the currently
+    // selected riff arrangement for the track these events are sent with
+    InstrumentOverride(bool),                            // turn the arrangement's instrument override on/off
+    EffectsOverride(bool),                               // turn the arrangement's effects override on/off
+    OverrideInstrumentChanged(String),                   // scanned instrument plugin key
+    OverrideEffectAdded(Uuid, String, String),           // uuid, name, scanned effect plugin key
+    OverrideEffectDeleted(String),                       // override effect plugin uuid
+
     TrackNameChanged(String), // new track name
     CopyTrack,
 
@@ -410,6 +418,8 @@ pub enum DAWEvents {
 
     RiffArrangementToggleOverview{show: bool},
 
+    RiffArrangementOverridesChanged,
+
     MasterChannelChange(MasterChannelChangeType), // channel change type
 
     PianoRollSetTrackName(String),
@@ -484,6 +494,23 @@ pub enum TrackBackgroundProcessorInwardEvent {
     SetInstrumentWindowId(u32),
     SetInstrumentParameter(i32, f32), // parameter index, value
 
+    // riff arrangement instrument/effects override plugin instances - these sit beside the
+    // track's own instrument/effects and are switched in when the arrangement plays with
+    // overrides enabled
+    SetOverrideInstrument(
+        Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+        Arc<Mutex<HashMap<String, PluginLibrary>>>,
+        Option<(Uuid, ScannedPlugin, String)>, // instrument uuid, plugin details, preset data - None removes the override instrument instance
+    ),
+    SetOverrideInstrumentWindowId(u32), // window id for the override instrument's plugin editor
+    SetOverrideEffects(
+        Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
+        Arc<Mutex<HashMap<String, PluginLibrary>>>,
+        Vec<(Uuid, ScannedPlugin, String)>, // effect uuid, plugin details, preset data - replaces the override effects (instances with matching uuids are kept)
+    ),
+    SetOverrideInstrumentActive(bool),
+    SetOverrideEffectsActive(bool),
+
     SetPresetData(String, Vec<String>), // instrument preset data, vector of effect preset data
     // The response travels on its own dedicated channel (not the multiplexed
     // outward event channel) so a save can never pick up an unrelated queued
@@ -529,18 +556,22 @@ pub struct TrackPluginPresetResponse {
     pub track_uuid: String,
     pub instrument_preset_data: String,
     pub effect_presets: Vec<(String, String)>, // effect plugin uuid, base64 preset data
+    pub override_instrument_plugin_uuid: String,
+    pub override_instrument_preset_data: String,
+    pub override_effect_presets: Vec<(String, String)>, // override effect plugin uuid, base64 preset data
 }
 
 pub enum TrackBackgroundProcessorOutwardEvent {
     InstrumentParameters(Vec<(i32, String, Uuid, String, String, f32, String)>), // param index, track uuid, instrument uuid, param name, param label, param value, param text
     InstrumentName(String),
     EffectParameters(Vec<(String, i32, String, String, f32, String)>), // vector of plugin uuid, param index, param name, param label, param value, param text
-    InstrumentPluginWindowSize(String, i32, i32), // track uuid, width, height
+    InstrumentPluginWindowSize(String, String, i32, i32), // track uuid, instrument uuid, width, height
     EffectPluginWindowSize(String, String, i32, i32), // track uuid, plugin uuid, width, height
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0
     TrackRenderAudioConsumer(AudioConsumerDetails<AudioBlock>),
     ChannelLevels(String, f32, f32), // track_uuid, left channel level, right channel_level
 }
+
 
 pub enum AudioLayerOutwardEvent {
     MidiControlEvent(MidiEvent),

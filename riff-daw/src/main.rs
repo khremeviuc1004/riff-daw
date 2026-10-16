@@ -171,7 +171,6 @@ fn main() {
 
     start_autosave(state.clone(), autosave_keep_alive.clone());
 
-
     let _wnd_main = gui.ui.wnd_main.clone();
     let application = gui.application.clone();
 
@@ -217,6 +216,7 @@ fn main() {
                 &mut audio_plugin_windows,
                 &mut state,
                 &mut gui,
+                &clap_plugin_loaders,
             );
             do_progress_dialogue_pulse(&mut gui, &mut progress_bar_pulse_delay_count);
             process_application_events(
@@ -16775,6 +16775,7 @@ fn process_track_background_processor_events(
     vst_audio_plugin_windows: &mut HashMap<String, Window>,
     state: &mut Arc<Mutex<DAWState>>,
     gui: &mut MainWindow,
+    clap_plugin_loaders: &Arc<Mutex<HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>,
 ) {
     match state.lock() {
         Ok(mut state) => {
@@ -16885,6 +16886,32 @@ fn process_track_background_processor_events(
                                 mixer_blade.mixer_blade_channel_level_drawing_area.queue_draw();
                             }
                         },
+                        TrackBackgroundProcessorOutwardEvent::ClapInstanceCreate(track_uuid, plugin_uuid, library_path, clap_id, audio_thread_id, sample_rate, block_size, tempo, time_signature_numerator, time_signature_denominator, tx_reply) => {
+                            // CLAP plugin instances are created on this (application main)
+                            // thread: plugins bind their lifecycle/main-thread checks to the
+                            // thread that creates them and JUCE based GUIs deadlock when made
+                            // on realtime audio threads. The plugin itself stays in the main
+                            // thread's registry; only the audio-side parts go back.
+                            debug!("Creating CLAP plugin instance on the main thread for track {}.", track_uuid);
+                            let (host_tx, _host_rx) = std::sync::mpsc::channel::<AudioPluginHostOutwardEvent>();
+                            let result = match create_clap_audio_plugin(clap_plugin_loaders.clone(), library_path.as_str(), track_uuid, plugin_uuid.to_string(), clap_id, host_tx, false, sample_rate, block_size, tempo, time_signature_numerator, time_signature_denominator) {
+                                Ok((plugin, process_data, host_receiver)) => {
+                                    // grab the audio-thread handle before the instance moves into the registry
+                                    let raw_plugin = plugin.raw_handle();
+                                    let _plugin_ptr = clap_registry_add(plugin, audio_thread_id);
+                                    Ok(ClapInstanceParts { plugin: raw_plugin, process_data, host_receiver })
+                                },
+                                Err(error) => Err(error),
+                            };
+                            let _ = tx_reply.send(result);
+                        },
+                        TrackBackgroundProcessorOutwardEvent::ClapCall(plugin_ptr, call, tx_reply) => {
+                            let reply = clap_registry_execute(plugin_ptr, call);
+                            let _ = tx_reply.send(reply);
+                        },
+                        TrackBackgroundProcessorOutwardEvent::ClapInstanceRelease(plugin_ptr) => {
+                            clap_registry_release(plugin_ptr);
+                        },
                     }
                 }
 
@@ -16985,6 +17012,11 @@ fn process_track_background_processor_events(
         },
         Err(_) => (),
     }
+
+    // keep any open CLAP plugin editors alive: the plugins' timer/posix-fd callbacks
+    // (and on_main_thread for pending request_callbacks) are main-thread calls that
+    // drive the plugin GUI event loops - this pump runs every UI tick.
+    clap_registry_pump();
 }
 
 fn scroll_notes_into_view(gui: &MainWindow, riff: &Riff) {

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, SyncSender};
 
 use jack::{MidiOut, Port};
 use rb::{Consumer, Producer, SpscRb};
@@ -570,7 +570,77 @@ pub enum TrackBackgroundProcessorOutwardEvent {
     Automation(String, String, bool, i32, f32), // track uuid, vst plugin uuid, is instrument, param index, param value - 0.0 to 1.0
     TrackRenderAudioConsumer(AudioConsumerDetails<AudioBlock>),
     ChannelLevels(String, f32, f32), // track_uuid, left channel level, right channel_level
+    // create a CLAP plugin instance on the application main thread (track uuid, plugin
+    // uuid, library path, clap factory id, the requesting track's thread id - to be
+    // registered as the plugin's CLAP audio thread, audio configuration, and the reply
+    // channel carrying the created instance parts or the load error)
+    ClapInstanceCreate(String, Uuid, String, Option<String>, std::thread::ThreadId, f64, i64, f64, i32, i32, SyncSender<Result<ClapInstanceParts, String>>),
+    // a CLAP plugin function call that must be executed on the application main
+    // thread (clap_plugin pointer, the call, and the reply channel)
+    ClapCall(usize, ClapPluginCall, SyncSender<ClapCallReply>),
+    // release the main thread's ownership of a CLAP plugin instance (clap_plugin
+    // pointer) so it can be deactivated/destroyed on that thread
+    ClapInstanceRelease(usize),
 }
+
+/// The pieces of a main-thread-created CLAP plugin instance that the track
+/// background processor needs: the process data (audio buffers + event queues -
+/// self-referential but heap pinned, so moving the struct keeps every pointer valid)
+/// and the host callback receiver. The plugin instance itself stays registered with
+/// the main thread.
+pub struct ClapInstanceParts {
+    pub plugin: simple_clap_host_helper_lib::plugin::instance::PluginRawHandle,
+    pub process_data: simple_clap_host_helper_lib::plugin::instance::process::ProcessData,
+    pub host_receiver: crossbeam_channel::Receiver<simple_clap_host_helper_lib::host::DAWCallback>,
+}
+
+// SAFETY: CLAP explicitly splits the plugin's use across two threads - everything
+// except the audio-functions runs on the host main thread (which owns the instance)
+// and process()/event-queues run on the track background thread. ProcessData owns
+// plain buffers and Pin<Box> event queues whose internal pointers are heap stable.
+unsafe impl Send for ClapInstanceParts {}
+
+/// A CLAP plugin call that must run on the application main thread. Plugins enforce
+/// this themselves (clap-helpers thread checks via the host's thread-check
+/// extension), and JUCE based GUIs only pump on a real GUI thread - so the track
+/// background processor forwards these over the outward channel instead of calling
+/// into the plugin directly.
+pub enum ClapPluginCall {
+    CreateShowGui(u64), // create the gui, parent it to the embedding window and show it -> GuiResult
+    ReparentShowGui(u64), // re-parent an already-created gui to a new embedding window -> GuiResult
+    DestroyGui, // hide + destroy the gui (before the instance is released or replaced)
+    GuiSize, // the gui's current size -> Size
+    ApplyResize(u32, u32), // answer a plugin request_resize with set_size -> ResizeResult
+    // CLAP's activate/deactivate are main-thread functions; start/stop_processing are
+    // audio-thread functions and so are run by the track thread directly
+    Deactivate,
+    Activate(f64, i64), // (sample rate, block size)
+    RecreateBuffers(i64), // (block size) new audio buffers for a reconfiguration -> Buffers
+    SavePreset, // -> Preset
+    LoadPreset(Vec<u8>),
+    EnumerateParams, // -> Params
+}
+
+/// The reply to a `ClapPluginCall`.
+pub enum ClapCallReply {
+    GuiResult(bool, i32, i32), // (succeeded, width, height)
+    Size(i32, i32),
+    ResizeResult(u32, u32),
+    Buffers(Box<Vec<Vec<Vec<f32>>>>, Box<Vec<Vec<Vec<f32>>>>),
+    Preset(Vec<u8>),
+    Params(SendParamInfo, Vec<(i32, String, f32)>), // (plugin parameter info, param id/name/value rows)
+    Done,
+    Failed,
+}
+
+/// The plugin's parameter info map - plain data with plugin-owned cookie pointers,
+/// handed to the track thread so per-block parameter events can be converted without
+/// calling back into the plugin (get_extension/params::info are main-thread functions).
+pub struct SendParamInfo(pub simple_clap_host_helper_lib::plugin::ext::params::ParamInfo);
+
+// SAFETY: BTreeMap of parameter descriptors; the only pointers are stable plugin-owned
+// cookies that are never dereferenced by the track thread (only compared/copied as ids).
+unsafe impl Send for SendParamInfo {}
 
 
 pub enum AudioLayerOutwardEvent {

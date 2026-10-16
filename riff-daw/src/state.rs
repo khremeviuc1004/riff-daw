@@ -1896,19 +1896,32 @@ impl DAWState {
         let bpm = self.project().song().tempo();
         let sample_rate = self.configuration.audio.sample_rate as f64;
         let block_size = self.configuration.audio.block_size as f64;
-        let song_length_in_beats = self.project().song().length_in_beats() as f64;
+        let song_length_in_beats = {
+            // the riff grid's own content determines the play length - the song length
+            // is independent of the grid (it can be shorter or even zero in the riff
+            // grid view), so deriving it from the song could produce no blocks at all
+            let grid_length = if let Some(riff_grid) = self.project().song().riff_grid(riff_grid_uuid.clone()) {
+                DAWUtils::get_riff_grid_length(riff_grid, self)
+            }
+            else {
+                0.0
+            };
+            if grid_length > 0.0 { grid_length } else { 400.0 }
+        };
         let mut start_block = 0;
         let _end_block = 0;
         let already_playing = self.playing();
 
         self.set_playing(true);
-        self.set_play_mode(PlayMode::Song);
+        self.set_play_mode(PlayMode::RiffGrid);
 
         let song = self.project().song();
         let time_signature_numerator = song.time_signature_numerator();
         let time_signature_denominator = song.time_signature_denominator();
 
-        let play_position_in_frames = self.play_position_in_frames();
+        // like the riff set and riff sequence previews, the grid preview always plays
+        // from its own start - not from a stale song-mode play position
+        let play_position_in_frames = 0;
         start_block = (play_position_in_frames as f64 / block_size) as i32;
 
         let tracks = song.tracks();

@@ -13,7 +13,7 @@ use parking_lot::RwLock;
 use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
 use samplerate_rs::{convert, ConverterType};
 use serde::{Deserialize, Serialize};
-use simple_clap_host_helper_lib::{host::DAWCallback, plugin::{ext::{posix_fd_support::PosixFDSupport, timer_support::TimerSupport}, ext::params::Params, instance::process::ProcessData, library::PluginLibrary}};
+use simple_clap_host_helper_lib::{host::DAWCallback, plugin::{instance::process::ProcessData, library::PluginLibrary}};
 use sndfile::*;
 use state::InitCell;
 use strum_macros::{Display, EnumString};
@@ -24,7 +24,7 @@ use simple_clap_host_helper_lib::plugin::ext::params::ParamInfo;
 use simple_clap_host_helper_lib::plugin::instance::process::Event::{ParamGestureBegin, ParamGestureEnd, ParamValue};
 use vst::{api::{TimeInfo, TimeInfoFlags}, buffer::{AudioBuffer, SendEventBuffer}, editor::Editor, event::MidiEvent, host::{Host, HostBuffer, PluginInstance, PluginLoader}, plugin::{HostCanDo, Plugin}};
 
-use crate::{audio_plugin_util::*, constants::CONFIGURATION_FILE_NAME, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse}, GeneralTrackType};
+use crate::{audio_plugin_util::*, constants::CONFIGURATION_FILE_NAME, DAWUtils, event::{AudioLayerInwardEvent, AudioPluginHostOutwardEvent, ClapCallReply, ClapInstanceParts, ClapPluginCall, SendParamInfo, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse}, GeneralTrackType};
 use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE};
 use crate::event::EventProcessorType;
 use crate::state::MidiPolyphonicExpressionNoteId;
@@ -2971,14 +2971,29 @@ impl Drop for BackgroundProcessorVst24AudioPlugin {
 
 
 #[derive()]
+/// The track background processor's handle for a CLAP plugin instance. CLAP splits a
+/// plugin's use across two threads: every function except the audio ones
+/// (`process`/event queues) - lifecycle, parameters, state, gui - must run on the
+/// host's main thread, and plugins enforce this themselves (clap-helpers thread
+/// checks answered by the host's thread-check extension; JUCE based GUIs additionally
+/// deadlock when created off a real GUI message thread). The instance itself is
+/// therefore owned by the application main thread (see `CLAP_REGISTRY` below); this
+/// handle keeps only the raw plugin pointer, the audio-side `ProcessData` (safe for
+/// the audio thread) and an RPC channel to the main thread.
 pub struct BackgroundProcessorClapAudioPlugin {
     track_uuid: String,
     uuid: Uuid,
+    // raw plugin handle - the instance itself is owned by the main thread registry
+    // (and released via ClapInstanceRelease); only the CLAP audio-thread functions
+    // (process/start/stop) are invoked through this on the track thread
+    plugin: simple_clap_host_helper_lib::plugin::instance::PluginRawHandle,
     xid: Option<u32>,
     gui_created: bool,
+    // parameter descriptors fetched on the main thread at creation so per-block
+    // parameter events can be converted without any plugin calls
+    param_info: Option<SendParamInfo>,
     tx_from_clap_host: Sender<AudioPluginHostOutwardEvent>,
     rx_from_host: Receiver<AudioPluginHostOutwardEvent>,
-    plugin: simple_clap_host_helper_lib::plugin::instance::Plugin, 
     process_data: ProcessData,
     host_receiver: crossbeam_channel::Receiver<DAWCallback>,
     tempo: f64,
@@ -2986,6 +3001,254 @@ pub struct BackgroundProcessorClapAudioPlugin {
     block_size: i64,
     stop_now: bool,
     param_gesture_begin: HashMap<i32, bool>,
+    // outward channel to the application main thread (the RPC bus for ClapCall)
+    tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+}
+
+/// An entry of the main thread's CLAP plugin registry: the owning wrapper (keeps the
+/// host-side instance registered and destroys the plugin on the main thread when
+/// removed) plus the state the main thread needs to drive the GUI event loop.
+struct ClapRegistryEntry {
+    plugin: simple_clap_host_helper_lib::plugin::instance::Plugin,
+    gui_open: bool,
+}
+
+thread_local! {
+    /// CLAP plugin instances, keyed by their raw `clap_plugin` pointer. Only ever
+    /// touched from the application main (GTK) thread - the thread_local makes that
+    /// a hard guarantee.
+    static CLAP_REGISTRY: std::cell::RefCell<HashMap<usize, ClapRegistryEntry>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Takes ownership of a freshly created CLAP instance on the current (main) thread,
+/// records which thread the track background processor runs on (so the plugin's
+/// `process()` passes the CLAP audio-thread check), and returns the raw pointer the
+/// track side uses as the registry key.
+pub fn clap_registry_add(plugin: simple_clap_host_helper_lib::plugin::instance::Plugin, audio_thread: std::thread::ThreadId) -> usize {
+    // the helper captured the creating (main) thread as the audio thread at
+    // construction; correct it to the real track background thread
+    plugin.state.audio_thread.store(Some(audio_thread));
+    let plugin_ptr = plugin.as_ptr() as usize;
+    CLAP_REGISTRY.with(|registry| registry.borrow_mut().insert(plugin_ptr, ClapRegistryEntry { plugin, gui_open: false }));
+    plugin_ptr
+}
+
+/// Hands a CLAP plugin instance back to its main thread owner to be destroyed.
+pub fn clap_registry_release(plugin_ptr: usize) {
+    CLAP_REGISTRY.with(|registry| { registry.borrow_mut().remove(&plugin_ptr); });
+}
+
+/// Executes one main-thread CLAP plugin call on behalf of a track background
+/// processor. Called from the application main thread's event pump.
+pub fn clap_registry_execute(plugin_ptr: usize, call: ClapPluginCall) -> ClapCallReply {
+    use simple_clap_host_helper_lib::plugin::ext::gui::Gui;
+    CLAP_REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        let entry = match registry.get_mut(&plugin_ptr) {
+            Some(entry) => entry,
+            None => {
+                debug!("CLAP call for an unknown plugin instance {:#x}.", plugin_ptr);
+                return ClapCallReply::Failed;
+            }
+        };
+        let plugin = &entry.plugin;
+        match call {
+            ClapPluginCall::CreateShowGui(xid) => {
+                let Some(gui) = plugin.get_extension::<Gui>() else {
+                    debug!("CLAP plugin has no gui extension.");
+                    return ClapCallReply::GuiResult(false, 0, 0);
+                };
+                if !gui.create(plugin, CLAP_WINDOW_API_X11, false) {
+                    debug!("CLAP gui: create() failed.");
+                    return ClapCallReply::GuiResult(false, 0, 0);
+                }
+                entry.gui_open = true;
+                if !gui.set_scale(plugin, 1.0) {
+                    debug!("Failed to successfully set the scale.");
+                }
+                if gui.can_resize(plugin) {
+                    debug!("GIU can resize.");
+                }
+                else {
+                    debug!("GIU can not resize.");
+                }
+                let window = clap_window {
+                    api: CLAP_WINDOW_API_X11.as_ptr(),
+                    specific: clap_window_handle { x11: xid }
+                };
+                if !gui.set_parent(plugin, &window) {
+                    debug!("Failed to successfully call clap gui set parent function.");
+                }
+                if !gui.show(plugin) {
+                    debug!("Failed to successfully show the plugin window.");
+                }
+                let (mut width, mut height) = (0u32, 0u32);
+                gui.get_size(plugin, &mut width, &mut height);
+                ClapCallReply::GuiResult(true, width as i32, height as i32)
+            },
+            ClapPluginCall::ReparentShowGui(xid) => {
+                let Some(gui) = plugin.get_extension::<Gui>() else {
+                    return ClapCallReply::GuiResult(false, 0, 0);
+                };
+                let window = clap_window {
+                    api: CLAP_WINDOW_API_X11.as_ptr(),
+                    specific: clap_window_handle { x11: xid }
+                };
+                if !gui.set_parent(plugin, &window) {
+                    debug!("Failed to re-parent the clap gui onto the new plugin window.");
+                }
+                if !gui.show(plugin) {
+                    debug!("Failed to re-show the plugin window.");
+                }
+                let (mut width, mut height) = (0u32, 0u32);
+                gui.get_size(plugin, &mut width, &mut height);
+                ClapCallReply::GuiResult(true, width as i32, height as i32)
+            },
+            ClapPluginCall::DestroyGui => {
+                if let Some(gui) = plugin.get_extension::<Gui>() {
+                    let _ = gui.hide(plugin);
+                    gui.destroy(plugin);
+                }
+                entry.gui_open = false;
+                ClapCallReply::Done
+            },
+            ClapPluginCall::GuiSize => {
+                if let Some(gui) = plugin.get_extension::<Gui>() {
+                    let (mut width, mut height) = (400u32, 300u32);
+                    if gui.get_size(plugin, &mut width, &mut height) {
+                        return ClapCallReply::Size(width as i32, height as i32);
+                    }
+                }
+                ClapCallReply::Size(400, 300)
+            },
+            ClapPluginCall::ApplyResize(width, height) => {
+                let Some(gui) = plugin.get_extension::<Gui>() else {
+                    return ClapCallReply::ResizeResult(width, height);
+                };
+                // set_size()/adjust_size() are only valid while the GUI is resizable: a
+                // fixed-size GUI resizes itself and only asks the host to follow
+                if !gui.can_resize(plugin) {
+                    return ClapCallReply::ResizeResult(width, height);
+                }
+                let mut width = width;
+                let mut height = height;
+                if !gui.adjust_size(plugin, &mut width, &mut height) {
+                    debug!("CLAP gui {}x{} resize request could not be adjusted by the plugin, applying it as requested.", width, height);
+                }
+                if !gui.set_size(plugin, width, height) {
+                    debug!("CLAP gui rejected the requested size of {}x{}, keeping its current size.", width, height);
+                    let (mut current_width, mut current_height) = (width, height);
+                    if gui.get_size(plugin, &mut current_width, &mut current_height) {
+                        return ClapCallReply::ResizeResult(current_width, current_height);
+                    }
+                }
+                ClapCallReply::ResizeResult(width, height)
+            },
+            ClapPluginCall::Deactivate => {
+                plugin.deactivate();
+                ClapCallReply::Done
+            },
+            ClapPluginCall::Activate(sample_rate, block_size) => {
+                match plugin.activate(sample_rate, 1, block_size as usize) {
+                    Ok(_) => (),
+                    Err(error) => debug!("CLAP: problem reactivating the plugin with the new audio configuration: {:?}", error),
+                }
+                ClapCallReply::Done
+            },
+            ClapPluginCall::RecreateBuffers(block_size) => {
+                use simple_clap_host_helper_lib::plugin::ext::audio_ports::AudioPorts;
+                match plugin.get_extension::<AudioPorts>() {
+                    Some(audio_ports) => match audio_ports.config(plugin) {
+                        Ok(audio_ports_config) => {
+                            let (input_buffers, output_buffers) = audio_ports_config.create_buffers(block_size as usize);
+                            ClapCallReply::Buffers(input_buffers, output_buffers)
+                        },
+                        Err(error) => {
+                            debug!("CLAP: problem getting the 'audio-ports' config for the new block size: {:?}", error);
+                            ClapCallReply::Failed
+                        }
+                    },
+                    None => ClapCallReply::Failed,
+                }
+            },
+            ClapPluginCall::SavePreset => {
+                use simple_clap_host_helper_lib::plugin::ext::state::State;
+                match plugin.get_extension::<State>() {
+                    Some(plugin_state) => match plugin_state.save(plugin) {
+                        Ok(preset_data) => ClapCallReply::Preset(preset_data),
+                        Err(_) => ClapCallReply::Preset(vec![]),
+                    },
+                    None => ClapCallReply::Preset(vec![]),
+                }
+            },
+            ClapPluginCall::LoadPreset(preset_data) => {
+                use simple_clap_host_helper_lib::plugin::ext::state::State;
+                if let Some(plugin_state) = plugin.get_extension::<State>() {
+                    let _ = plugin_state.load(plugin, &preset_data);
+                }
+                ClapCallReply::Done
+            },
+            ClapPluginCall::EnumerateParams => {
+                match params_snapshot(plugin) {
+                    Some((info, rows)) => ClapCallReply::Params(SendParamInfo(info), rows),
+                    None => ClapCallReply::Failed,
+                }
+            }
+        }
+    })
+}
+
+/// The plugin's parameter info map plus (id, name, value) rows - fetched on the main
+/// thread where the `params` extension functions may be called.
+fn params_snapshot(plugin: &simple_clap_host_helper_lib::plugin::instance::Plugin) -> Option<(simple_clap_host_helper_lib::plugin::ext::params::ParamInfo, Vec<(i32, String, f32)>)> {
+    use simple_clap_host_helper_lib::plugin::ext::params::Params;
+    let params = plugin.get_extension::<Params>()?;
+    let info = params.info(plugin).ok()?;
+    let mut rows = vec![];
+    for (param_id, param) in info.iter() {
+        rows.push((*param_id as i32, param.name.clone(), params.get(plugin, *param_id).unwrap_or(0.0) as f32));
+    }
+    Some((info, rows))
+}
+
+/// Drives the GUI side of every registered CLAP plugin whose editor is open. Must be
+/// called periodically from the application main thread: CLAP's timer and posix fd
+/// support callbacks (and `on_main_thread` for plugin request_callback calls) belong
+/// on the host's main/GUI thread - this is what keeps JUCE based plugin editors
+/// painting and handling input.
+pub fn clap_registry_pump() {
+    use simple_clap_host_helper_lib::plugin::ext::{posix_fd_support::PosixFDSupport, timer_support::TimerSupport};
+    CLAP_REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        for entry in registry.values_mut() {
+            if !entry.gui_open {
+                // still honour pending on_main_thread callbacks even with no gui open
+                if entry.plugin.state.requested_callback.compare_exchange(true, false, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_ok() {
+                    unsafe {
+                        let plugin_ptr = entry.plugin.as_ptr();
+                        if let Some(on_main_thread) = (*plugin_ptr).on_main_thread {
+                            on_main_thread(plugin_ptr);
+                        }
+                    }
+                }
+                continue;
+            }
+            if let Some(timer_support) = entry.plugin.get_extension::<TimerSupport>() {
+                timer_support.on_timer(&entry.plugin, 0);
+            }
+            if let Some(posix_fd_support) = entry.plugin.get_extension::<PosixFDSupport>() {
+                posix_fd_support.on_fd(&entry.plugin, 0, 0);
+            }
+            if entry.plugin.state.requested_callback.compare_exchange(true, false, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_ok() {
+                unsafe {
+                    let plugin_ptr = entry.plugin.as_ptr();
+                    if let Some(on_main_thread) = (*plugin_ptr).on_main_thread {
+                        on_main_thread(plugin_ptr);
+                    }
+                }
+            }
+        }
+    });
 }
 
 impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
@@ -2995,7 +3258,9 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         self.xid
     }
 
-    /// Set the vst effect's xid.
+    /// Set the vst effect's xid. The GUI calls themselves run on the application main
+    /// thread via ClapCall RPCs (CLAP gui functions are main-thread functions and the
+    /// JUCE toolkits behind them deadlock when created off a GUI message thread).
     fn set_xid(&mut self, xid: Option<u32>) {
         let previous_xid = self.xid;
         self.xid = xid;
@@ -3005,72 +3270,21 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
             return;
         };
         if self.gui_created {
-            // The GUI is already alive and parented to a window id - creating it again
-            // for a new (re-shown) host window would leak it, the plugin only supports
-            // one. If the embedding window itself changed (a different xid - e.g. two
-            // riff arrangements sharing one copied override plugin instance, each with
-            // its own host window) re-parent and re-show the existing GUI so the new
-            // window isn't left blank; the GUI would otherwise stay on the old embed.
-            if previous_xid != Some(parent_xid) {
-                if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
-                    let window_def = clap_window {
-                        api: CLAP_WINDOW_API_X11.as_ptr(),
-                        specific: clap_window_handle {
-                            x11: parent_xid as u64
-                        }
-                    };
-                    if gui.set_parent(&self.plugin, &window_def) {
-                        debug!("Successfully re-parented the clap gui onto the new plugin window.");
-                    }
-                    else {
-                        debug!("Failed to re-parent the clap gui onto the new plugin window.");
-                    }
-                    if gui.show(&self.plugin) {
-                        debug!("Successfully re-showed the plugin window.");
-                    }
-                    else {
-                        debug!("Failed to re-show the plugin window.");
-                    }
-                }
+            if previous_xid == Some(parent_xid) {
+                // The GUI is already alive and parented to this window id - creating it
+                // again for a re-shown host window would leak it, the plugin only
+                // supports one.
+                return;
             }
+            // The embedding window itself changed (e.g. the host window was recreated
+            // for another arrangement sharing this plugin instance) - re-parent and
+            // re-show the existing GUI so the new window isn't left blank.
+            self.call_clap(ClapPluginCall::ReparentShowGui(parent_xid as u64));
             return;
         }
-        if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
-            if gui.is_api_supported(&self.plugin, CLAP_WINDOW_API_X11, false) {
-                if gui.create(&self.plugin, CLAP_WINDOW_API_X11, false) {
-                    self.gui_created = true;
-                    if gui.set_scale(&self.plugin, 1.0) {
-                        debug!("Successfully set the scale.");
-                    }
-                    else {
-                        debug!("Failed to successfully set the scale.");
-                    }
-                    if gui.can_resize(&self.plugin) {
-                        debug!("GIU can resize.");
-                    }
-                    else {
-                        debug!("GIU can not resize.");
-                    }
-                    let window_def = clap_window {
-                        api: CLAP_WINDOW_API_X11.as_ptr(),
-                        specific: clap_window_handle {
-                            x11: parent_xid as u64
-                        }
-                    };
-                    if gui.set_parent(&self.plugin, &window_def) {
-                        debug!("Successfully called clap gui set parent function.");
-                    }
-                    else {
-                        debug!("Failed to successfully call set parent.");
-                    }
-                    if gui.show(&self.plugin) {
-                        debug!("Successfully showed the plugin window.");
-                    }
-                    else {
-                        debug!("Failed to successfully show the plugin window.");
-                    }
-                }
-            }
+        match self.call_clap(ClapPluginCall::CreateShowGui(parent_xid as u64)) {
+            ClapCallReply::GuiResult(true, _, _) => self.gui_created = true,
+            _ => debug!("CLAP: the gui could not be created for plugin {}.", self.uuid),
         }
     }
 
@@ -3103,27 +3317,24 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 
     fn stop_processing(&mut self) {
         self.stop_now = true;
+        // start/stop_processing are CLAP's AUDIO-thread functions - call them right
+        // here (running them on the main thread trips the plugins' thread checks)
         self.plugin.stop_processing();
     }
 
     fn shutdown(&mut self) {
-        self.plugin.deactivate();
-        // FIXME the below commented out code causes a crash
-        // unsafe {
-        //     if let Some(plugin_destroy) = self.plugin.destroy {
-        //         plugin_destroy((&self.plugin).as_ptr());
-        //         debug!("Successfully destroyed the plugin.");
-        //     }
-        // }
+        // deactivate is a main-thread function; the plugin instance itself is destroyed
+        // by the main thread when the registry entry is released (see the Drop impl
+        // below)
+        self.call_clap(ClapPluginCall::Deactivate);
     }
 
     fn close_editor(&mut self) {
         // CLAP protocol: the GUI must be destroyed (clap_plugin_gui::destroy) before the
-        // plugin instance itself is destroyed (clap_plugin::destroy runs in Plugin::drop).
-        // The helper library's Drop always calls clap_plugin::destroy, so dropping a
-        // replaced instrument whose GUI was ever created makes the plugin abort (this is
-        // what crashed u-he ACE when another instrument was selected after closing its
-        // GUI window - hiding the host window does not destroy the plugin GUI).
+        // plugin instance itself is destroyed (clap_plugin::destroy runs when the main
+        // thread drops the instance). Dropping an instance whose GUI was ever created
+        // makes the plugin abort (this crashed u-he ACE when another instrument was
+        // selected after closing its GUI window).
         self.xid = None;
         self.destroy_gui();
     }
@@ -3135,42 +3346,26 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     }
 
     fn preset_data(&mut self) -> String {
-        use simple_clap_host_helper_lib::plugin::ext::state::State;
-        if let Some(plugin_state) = self.plugin.get_extension::<State>() {
-            if let Ok(preset_data) = plugin_state.save(&self.plugin) {
-                base64::encode(preset_data)
-            }
-            else {
-                "".to_string()
-            }
-        }
-        else {
-            "".to_string()
+        match self.call_clap(ClapPluginCall::SavePreset) {
+            ClapCallReply::Preset(preset_data) => base64::encode(preset_data),
+            _ => "".to_string(),
         }
     }
 
     fn set_preset_data(&mut self, data: String) {
-        
-        
-        use simple_clap_host_helper_lib::plugin::ext::state::State;
-        if let Some(plugin_state) = self.plugin.get_extension::<State>() {
-            if let Ok(preset_data) = base64::decode(data) {
-                let _ = plugin_state.load(&self.plugin, &preset_data);
-            }
+        if let Ok(preset_data) = base64::decode(data) {
+            self.call_clap(ClapPluginCall::LoadPreset(preset_data));
         }
     }
 
     fn get_window_size(&self) -> (i32, i32) {
         // Once the GUI has been created, ask the plugin for its own idea of the window
         // size instead of guessing - the plugin may have requested a size (e.g. after a
-        // preset change) before the host window was resized. get_size() is only valid on
-        // a created GUI, plugins (u-he) abort when called on a non-existent one.
+        // preset change) before the host window was resized. get_size() is a main-thread
+        // gui call, so it runs over the RPC.
         if self.gui_created {
-            if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
-                let (mut width, mut height) = (400u32, 300u32);
-                if gui.get_size(&self.plugin, &mut width, &mut height) {
-                    return (width as i32, height as i32);
-                }
+            if let ClapCallReply::Size(width, height) = self.call_clap(ClapPluginCall::GuiSize) {
+                return (width, height);
             }
         }
         (400, 300)
@@ -3196,30 +3391,24 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     fn change_sample_rate_and_block_size(&mut self, sample_rate: f64, block_size: i64) {
         // CLAP protocol: the audio setup (sample rate and frame sizes) is given at
         // activate time - to change it the host must stop processing, deactivate the
-        // plugin and reactivate it with the new sample rate and buffer sizes. The
-        // host owned audio buffers are sized by the block size, so they must be
-        // recreated for the new size before reactivation.
-        use simple_clap_host_helper_lib::plugin::ext::audio_ports::AudioPorts;
+        // plugin and reactivate it with the new sample rate and buffer sizes. All of
+        // those are main-thread functions, so they run over the RPC; only the host
+        // audio buffers (owned by this thread's ProcessData) are rebuilt locally from
+        // the freshly sized buffers the main thread allocates.
         use simple_clap_host_helper_lib::plugin::instance::process::{AudioBuffers, OutOfPlaceAudioBuffers};
 
         self.plugin.stop_processing();
-        self.plugin.deactivate();
+        self.call_clap(ClapPluginCall::Deactivate);
 
-        if let Some(audio_ports) = self.plugin.get_extension::<AudioPorts>() {
-            if let Ok(audio_ports_config) = audio_ports.config(&self.plugin) {
-                let (input_buffers, output_buffers) = audio_ports_config.create_buffers(block_size as usize);
-                match OutOfPlaceAudioBuffers::new(input_buffers, output_buffers) {
-                    Ok(audio_buffers) => self.process_data.buffers = AudioBuffers::OutOfPlace(audio_buffers),
-                    Err(error) => debug!("CLAP: problem recreating the audio buffers for the new block size: {:?}", error),
-                }
+        if let ClapCallReply::Buffers(input_buffers, output_buffers) = self.call_clap(ClapPluginCall::RecreateBuffers(block_size)) {
+            match OutOfPlaceAudioBuffers::new(input_buffers, output_buffers) {
+                Ok(audio_buffers) => self.process_data.buffers = AudioBuffers::OutOfPlace(audio_buffers),
+                Err(error) => debug!("CLAP: problem recreating the audio buffers for the new block size: {:?}", error),
             }
         }
 
         self.process_data.config.sample_rate = sample_rate;
-        match self.plugin.activate(sample_rate, 1, block_size as usize) {
-            Ok(_) => (),
-            Err(error) => debug!("CLAP: problem reactivating the plugin with the new audio configuration: {:?}", error),
-        }
+        self.call_clap(ClapPluginCall::Activate(sample_rate, block_size));
         self.plugin.start_processing();
 
         self.sample_rate = sample_rate;
@@ -3233,49 +3422,68 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
 }
 
 impl BackgroundProcessorClapAudioPlugin {
-    pub fn new_with_uuid(
-        clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
+    /// Builds the track-side handle from the parts the application main thread
+    /// created (the plugin instance itself stays registered with the main thread).
+    /// Also fetches the parameter snapshot over the RPC so per-block parameter
+    /// events never need to call into the plugin from this thread.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_from_parts(
         track_uuid: String,
         uuid: Uuid,
-        sub_plugin_id: Option<String>,
-        library_path: String,
+        parts: ClapInstanceParts,
         sample_rate: f64,
         block_size: i64,
         tempo: f64,
-        time_signature_numerator: i32,
-        time_signature_denominator: i32,
-    ) -> Result<Self, String> {
+        tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
+    ) -> Self {
         let (tx_from_clap_host, rx_from_host) = channel::<AudioPluginHostOutwardEvent>();
-        let (plugin, process_data, host_receiver) = create_clap_audio_plugin(
-            clap_plugin_loaders, 
-            library_path.as_str(), 
-            track_uuid.clone(),
-            uuid.to_string(), 
-            sub_plugin_id, 
-            tx_from_clap_host.clone(),
-            false,
-            sample_rate,
-            block_size,
-            tempo,
-            time_signature_numerator,
-            time_signature_denominator,
-        )?;
-        Ok(Self {
+        let mut plugin = Self {
             track_uuid,
             uuid,
+            plugin: parts.plugin,
             xid: None,
             gui_created: false,
+            param_info: None,
             tx_from_clap_host,
             rx_from_host,
-            plugin, 
-            process_data,
-            host_receiver,
+            process_data: parts.process_data,
+            host_receiver: parts.host_receiver,
             tempo,
             sample_rate,
             block_size,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
-        })
+            tx_vst_thread,
+        };
+        if let ClapCallReply::Params(info, _rows) = plugin.call_clap(ClapPluginCall::EnumerateParams) {
+            plugin.param_info = Some(info);
+        }
+        plugin
+    }
+
+    /// Sends a main-thread CLAP call over the outward channel and blocks for the
+    /// reply. The plugin's non-audio functions are main-thread only; calling them
+    /// here (the realtime track thread) trips the plugins' own thread checks and,
+    /// for gui functions, deadlocks their JUCE message loops.
+    fn call_clap(&self, call: ClapPluginCall) -> ClapCallReply {
+        // bounded(1): the crossbeam SyncSender in the event keeps the reply channel
+        // Send (a std mpsc SyncSender is not), so the reply can travel over the
+        // track's crossbeam outward channel
+        let (tx_reply, rx_reply) = std::sync::mpsc::sync_channel(1);
+        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ClapCall(self.plugin.as_ptr() as usize, call, tx_reply)) {
+            Ok(_) => (),
+            Err(error) => {
+                debug!("Could not send a CLAP call to the main thread for plugin {}: {:?}", self.uuid, error);
+                return ClapCallReply::Failed;
+            }
+        }
+        match rx_reply.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(reply) => reply,
+            Err(_) => {
+                debug!("Timed out waiting for the main thread to run a CLAP call for plugin {}.", self.uuid);
+                ClapCallReply::Failed
+            }
+        }
     }
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
@@ -3299,7 +3507,11 @@ impl BackgroundProcessorClapAudioPlugin {
             return;
         }
         unsafe {
-            if let Some(process) = self.plugin.process {
+            // the process() entry point is the one plugin function that runs on the
+            // audio thread - call the raw vtable pointer directly (the main-thread-only
+            // Plugin wrapper lives in the registry, not here)
+            let clap_plugin_ptr = self.plugin.as_ptr();
+            if let Some(process) = (*clap_plugin_ptr).process {
                 if self.stop_now {
                     return;
                 }
@@ -3355,7 +3567,7 @@ impl BackgroundProcessorClapAudioPlugin {
                     return;
                 }
 
-                process((&self.plugin).as_ptr(), &process_data);
+                process(clap_plugin_ptr, &process_data);
 
                 // check for output events
                 for event in self.process_data.output_events.events.lock().iter() {
@@ -3402,19 +3614,20 @@ impl BackgroundProcessorClapAudioPlugin {
             self.process_data.advance_transport(self.block_size as u32);
         }
     }
-    pub fn plugin(&self) -> &simple_clap_host_helper_lib::plugin::instance::Plugin {
-        &self.plugin
+    /// The CLAP plugin parameter snapshot fetched from the main thread at creation -
+    /// used to convert parameter events on the audio thread without plugin calls.
+    pub fn clap_param_info(&self) -> Option<&simple_clap_host_helper_lib::plugin::ext::params::ParamInfo> {
+        self.param_info.as_ref().map(|info| &info.0)
     }
+
+
 
     /// Destroy the plugin GUI if one was created. Idempotent: plugins (u-he) are fine
     /// with destroy() on a never-created GUI but skipping it keeps the state honest.
     fn destroy_gui(&mut self) {
         if self.gui_created {
             self.gui_created = false;
-            if let Some(gui) = self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
-                let _ = gui.hide(&self.plugin);
-                gui.destroy(&self.plugin);
-            }
+            self.call_clap(ClapPluginCall::DestroyGui);
         }
     }
 
@@ -3436,45 +3649,23 @@ impl BackgroundProcessorClapAudioPlugin {
             debug!("CLAP gui resize request of {}x{} before the GUI was created, sizing the host window only.", width, height);
             return (width, height);
         }
-        match self.plugin.get_extension::<simple_clap_host_helper_lib::plugin::ext::gui::Gui>() {
-            Some(gui) => {
-                // set_size()/adjust_size() are only valid while the GUI is resizable: a
-                // fixed-size GUI resizes itself and only asks the host to follow, so for
-                // non-resizable GUIs the requested size is simply passed through to the
-                // host window.
-                if !gui.can_resize(&self.plugin) {
-                    return (width, height);
-                }
-                let mut width = width;
-                let mut height = height;
-                // snap the requested size to the plugin's min/max/aspect/step limits
-                if !gui.adjust_size(&self.plugin, &mut width, &mut height) {
-                    debug!("CLAP gui {}x{} resize request could not be adjusted by the plugin, applying it as requested.", width, height);
-                }
-                if !gui.set_size(&self.plugin, width, height) {
-                    debug!("CLAP gui rejected the requested size of {}x{}, keeping its current size.", width, height);
-                    let (mut current_width, mut current_height) = (width, height);
-                    if gui.get_size(&self.plugin, &mut current_width, &mut current_height) {
-                        return (current_width, current_height);
-                    }
-                }
-                (width, height)
-            },
-            None => {
-                debug!("CLAP gui resize request of {}x{} for a plugin without a GUI extension, ignoring.", width, height);
-                (width, height)
-            },
+        // the gui size functions are main-thread calls - apply them over the RPC and
+        // take the plugin's confirmed size back
+        match self.call_clap(ClapPluginCall::ApplyResize(width, height)) {
+            ClapCallReply::ResizeResult(width, height) => (width, height),
+            _ => (width, height),
         }
     }
 }
 
 impl Drop for BackgroundProcessorClapAudioPlugin {
     fn drop(&mut self) {
-        // Safety net for every drop path: Plugin::drop dispatches clap_plugin::destroy,
-        // which aborts in plugins (u-he) while the GUI is still alive, so destroy the GUI
-        // first. Drop::drop runs before any field is dropped, so this happens before the
-        // `plugin` field is torn down.
-        let _ = BackgroundProcessorAudioPlugin::close_editor(self);
+        // hand the main thread's registry entry back so the plugin can be destroyed
+        // there (clap_plugin::destroy is a main-thread function and the plugin aborts
+        // if the instance goes away with a live GUI - close_editor already destroyed
+        // it in the explicit teardown paths). Fire and forget: the release event is
+        // queued behind this instance's other calls on the same channel.
+        let _ = self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ClapInstanceRelease(self.plugin.as_ptr() as usize));
     }
 }
 
@@ -4141,6 +4332,25 @@ impl TrackBackgroundProcessorHelper {
     /// Instantiate a live plugin instance for this track thread - shared by the
     /// track's own instrument/effects load events and the riff arrangement
     /// instrument/effects override load events.
+    /// Creates a CLAP plugin instance on the application main thread (the plugin
+    /// binds its GUI toolkit and main-thread checks to the creating thread) and
+    /// wraps the returned audio-side parts in a track-side handle. Blocks until the
+    /// main thread's event pump has loaded the plugin (a cold plugin library load
+    /// can take a moment).
+    fn create_clap_audio_plugin_instance(&self, uuid: Uuid, scanned_plugin: &ScannedPlugin) -> Result<BackgroundProcessorClapAudioPlugin, String> {
+        let (tx_reply, rx_reply) = std::sync::mpsc::sync_channel(1);
+        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ClapInstanceCreate(self.track_uuid.clone(), uuid, scanned_plugin.path.clone(), clap_plugin_id(scanned_plugin), std::thread::current().id(), self.sample_rate, self.block_size as i64, self.tempo, self.time_signature_numerator, self.time_signature_denominator, tx_reply)) {
+            Ok(_) => (),
+            Err(error) => return Err(format!("Could not send the CLAP instance creation request to the main thread: {error:?}")),
+        }
+        let parts = match rx_reply.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(Ok(parts)) => parts,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => return Err("Timed out waiting for the main thread to create the CLAP plugin instance.".to_string()),
+        };
+        Ok(BackgroundProcessorClapAudioPlugin::new_from_parts(self.track_uuid.clone(), uuid, parts, self.sample_rate, self.block_size as i64, self.tempo, self.tx_vst_thread.clone()))
+    }
+
     pub fn create_audio_plugin_instance(
         &self,
         vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
@@ -4165,18 +4375,7 @@ impl TrackBackgroundProcessorHelper {
             ).map(BackgroundProcessorAudioPluginType::Vst24)
         }
         else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
-            BackgroundProcessorClapAudioPlugin::new_with_uuid(
-                clap_plugin_loaders,
-                self.track_uuid.clone(),
-                uuid,
-                clap_plugin_id(scanned_plugin),
-                scanned_plugin.path.clone(),
-                self.sample_rate,
-                self.block_size as i64,
-                self.tempo,
-                self.time_signature_numerator,
-                self.time_signature_denominator,
-            ).map(BackgroundProcessorAudioPluginType::Clap)
+            self.create_clap_audio_plugin_instance(uuid, scanned_plugin).map(BackgroundProcessorAudioPluginType::Clap)
         }
         else {
             BackgroundProcessorVst3AudioPlugin::new_with_uuid(
@@ -4349,18 +4548,7 @@ impl TrackBackgroundProcessorHelper {
                         ).map(BackgroundProcessorAudioPluginType::Vst24)
                     }
                     else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
-                        BackgroundProcessorClapAudioPlugin::new_with_uuid(
-                            clap_plugin_loaders, 
-                            self.track_uuid.clone(), 
-                            uuid, 
-                            clap_plugin_id(&scanned_plugin),
-                            scanned_plugin.path.clone(),
-                            self.sample_rate,
-                            self.block_size as i64,
-                            self.tempo,
-                            self.time_signature_numerator,
-                            self.time_signature_denominator,
-                        ).map(BackgroundProcessorAudioPluginType::Clap)
+                        self.create_clap_audio_plugin_instance(uuid, &scanned_plugin).map(BackgroundProcessorAudioPluginType::Clap)
                     }
                     else {
                         BackgroundProcessorVst3AudioPlugin::new_with_uuid(
@@ -4454,18 +4642,7 @@ impl TrackBackgroundProcessorHelper {
                         ).map(BackgroundProcessorAudioPluginType::Vst24)
                     }
                     else if let AudioPluginType::CLAP = scanned_plugin.audio_plugin_stack {
-                        BackgroundProcessorClapAudioPlugin::new_with_uuid(
-                            clap_plugin_loaders, 
-                            self.track_uuid.clone(), 
-                            uuid, 
-                            clap_plugin_id(&scanned_plugin),
-                            scanned_plugin.path.clone(),
-                            self.sample_rate,
-                            self.block_size as i64,
-                            self.tempo,
-                            self.time_signature_numerator,
-                            self.time_signature_denominator,
-                        ).map(BackgroundProcessorAudioPluginType::Clap)
+                        self.create_clap_audio_plugin_instance(uuid, &scanned_plugin).map(BackgroundProcessorAudioPluginType::Clap)
                     }
                     else {
                         BackgroundProcessorVst3AudioPlugin::new_with_uuid(
@@ -5037,28 +5214,6 @@ impl TrackBackgroundProcessorHelper {
     /// editors must not go quiescent: VST2 editors need editor_idle pumping and CLAP/VST3
     /// windows need their timer callbacks, both of which are tied to the plugin being
     /// processed. VST3/CLAP only expose a sticky xid, so this is conservative for them.
-    /// Drives the CLAP GUI event loops (timer and posix fd callbacks) of plugin
-    /// instances that are not being processed for audio in the current block. A CLAP
-    /// editor only paints and handles input while the host pumps these callbacks, so
-    /// an instance whose window is open but that sits outside the audio chain (e.g.
-    /// the arrangement override instrument while browsing, or the track's own
-    /// instrument/effects while the override is routed) would otherwise show a
-    /// frozen or blank editor.
-    fn pump_idle_clap_plugin_guis(plugin_instances: &mut Vec<BackgroundProcessorAudioPluginType>) {
-        for plugin_instance in plugin_instances.iter_mut() {
-            if let BackgroundProcessorAudioPluginType::Clap(clap_plugin) = plugin_instance {
-                if clap_plugin.xid().is_some() {
-                    if let Some(timer_support) = clap_plugin.plugin.get_extension::<TimerSupport>() {
-                        timer_support.on_timer(&clap_plugin.plugin, 0);
-                    }
-                    if let Some(posix_fd_support) = clap_plugin.plugin.get_extension::<PosixFDSupport>() {
-                        posix_fd_support.on_fd(&clap_plugin.plugin, 0, 0);
-                    }
-                }
-            }
-        }
-    }
-
     pub fn plugin_editor_open(&mut self) -> bool {
         for instrument_plugin in self.instrument_plugin_instances.iter_mut().chain(self.override_instrument_plugin_instances.iter_mut()) {
             match instrument_plugin {
@@ -5331,20 +5486,19 @@ impl TrackBackgroundProcessorHelper {
                     }
                 }
                 BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
-                    if let Some(params) = instrument_plugin.plugin.get_extension::<Params>() {
-                        if let Ok(info) = params.info(&instrument_plugin.plugin) {
-                            for (param_id, param) in info.iter() {
-                                debug!("Parameter: index={}, param={:?}", param_id, param);
-                                plugin_parameters.push((
-                                    *param_id as i32, 
-                                    self.track_uuid.clone(), 
-                                    instrument_plugin.uuid(), 
-                                    param.name.clone(), 
-                                    param.name.clone(), 
-                                    params.get(&instrument_plugin.plugin, *param_id).unwrap() as f32, 
-                                    "".to_string()
-                                ));
-                            }
+                    // params::info()/get() are main-thread calls - fetch the rows over the RPC
+                    if let ClapCallReply::Params(_info, rows) = instrument_plugin.call_clap(ClapPluginCall::EnumerateParams) {
+                        for (param_id, name, value) in rows {
+                            debug!("Parameter: index={}, param={}", param_id, name);
+                            plugin_parameters.push((
+                                param_id,
+                                self.track_uuid.clone(),
+                                instrument_plugin.uuid(),
+                                name.clone(),
+                                name,
+                                value,
+                                "".to_string()
+                            ));
                         }
                     }
                 }
@@ -5373,20 +5527,19 @@ impl TrackBackgroundProcessorHelper {
                         }
                         BackgroundProcessorAudioPluginType::Vst3(_vst3_plugin) => {}
                         BackgroundProcessorAudioPluginType::Clap(effect) => {
-                            if let Some(params) = effect.plugin.get_extension::<Params>() {
-                                if let Ok(info) = params.info(&effect.plugin) {
-                                    for (param_id, param) in info.iter() {
-                                        debug!("Parameter: index={}, param={:?}", param_id, param);
-                                        // vector of plugin uuid, param index, param name, param label, param value, param text
-                                        plugin_parameters.push((
-                                            effect.uuid().to_string(),
-                                            *param_id as i32,
-                                            param.name.clone(),
-                                            param.name.clone(),
-                                            params.get(&effect.plugin, *param_id).unwrap() as f32,
-                                            "".to_string()
-                                        ));
-                                    }
+                            // params::info()/get() are main-thread calls - fetch the rows over the RPC
+                            if let ClapCallReply::Params(_info, rows) = effect.call_clap(ClapPluginCall::EnumerateParams) {
+                                for (param_id, name, value) in rows {
+                                    debug!("Parameter: index={}, param={}", param_id, name);
+                                    // vector of plugin uuid, param index, param name, param label, param value, param text
+                                    plugin_parameters.push((
+                                        effect.uuid().to_string(),
+                                        param_id,
+                                        name.clone(),
+                                        name,
+                                        value,
+                                        "".to_string()
+                                    ));
                                 }
                             }
                         }
@@ -5629,13 +5782,12 @@ impl TrackBackgroundProcessorHelper {
                 vst3_plugin.process_param_events(&plugin_param_events);
             }
             BackgroundProcessorAudioPluginType::Clap(plugin) => {
-                if let Some(params) = plugin.plugin().get_extension::<simple_clap_host_helper_lib::plugin::ext::params::Params>() {
-                    match params.info(plugin.plugin()) {
-                        Ok(param_info) => {
-                            let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == plugin.uuid().to_string()).collect();
-                            plugin.process_param_events(&plugin_param_events, &param_info);
-                        }
-                        Err(_) => {}
+                // params::info() is a main-thread call - use the snapshot taken at
+                // creation so parameter events stay cheap on this thread
+                let plugin_param_events: Vec<&PluginParameter> = param_events.iter().filter(|param| param.plugin_uuid() == plugin.uuid().to_string()).collect();
+                if !plugin_param_events.is_empty() {
+                    if let Some(param_info) = plugin.clap_param_info() {
+                        plugin.process_param_events(&plugin_param_events, param_info);
                     }
                 }
             }
@@ -6112,31 +6264,13 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                 vst3_plugin.process(&mut audio_buffer);
                             }
                             BackgroundProcessorAudioPluginType::Clap(instrument_plugin) => {
+                                // the CLAP gui timer/fd pumping runs on the application
+                                // main thread (clap_registry_pump) - those are main-thread
+                                // plugin calls
                                 instrument_plugin.process(&mut audio_buffer, false);
-
-                                if let Some(_xid) = instrument_plugin.xid() {
-                                    if let Some(timer_support) = instrument_plugin.plugin.get_extension::<TimerSupport>() {
-                                        timer_support.on_timer(&instrument_plugin.plugin, 0);
-                                    }
-                                    if let Some(posix_fd_support) = instrument_plugin.plugin.get_extension::<PosixFDSupport>() {
-                                        posix_fd_support.on_fd(&instrument_plugin.plugin, 0, 0);
-                                    }
-                                }
                             }
                         }
                     }
-
-                    // the instrument instance that is not routed for audio in this block
-                    // (the arrangement override while it is not switched in, or the
-                    // track's own instrument while the override is routed) still needs
-                    // its CLAP GUI pumped so its editor paints and resizes properly
-                    let idle_instrument_plugin_instances = if use_override_instrument {
-                        &mut track_background_processor_helper.instrument_plugin_instances
-                    }
-                    else {
-                        &mut track_background_processor_helper.override_instrument_plugin_instances
-                    };
-                    TrackBackgroundProcessorHelper::pump_idle_clap_plugin_guis(idle_instrument_plugin_instances);
 
                     // the arrangement's override effects chain processes the instrument audio
                     // in place of the track's own effects while the override is switched on
@@ -6206,30 +6340,12 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                 vst3_plugin.process(audio_buffer_in_use);
                             }
                             BackgroundProcessorAudioPluginType::Clap(effect) => {
+                                // the CLAP gui timer/fd pumping runs on the application
+                                // main thread (clap_registry_pump)
                                 effect.process(audio_buffer_in_use, true);
-
-                                if let Some(_xid) = effect.xid() {
-                                    if let Some(timer_support) = effect.plugin.get_extension::<TimerSupport>() {
-                                        timer_support.on_timer(&effect.plugin, 0);
-                                    }
-                                    if let Some(posix_fd_support) = effect.plugin.get_extension::<PosixFDSupport>() {
-                                        posix_fd_support.on_fd(&effect.plugin, 0, 0);
-                                    }
-                                }
                             }
                         }
                     }
-
-                    // the effect chain that is not routed for audio in this block (the
-                    // override effects while they are not switched in, or the track's own
-                    // effects while they are) still needs its CLAP GUIs pumped
-                    let idle_effect_plugin_instances = if use_override_effects {
-                        &mut track_background_processor_helper.effect_plugin_instances
-                    }
-                    else {
-                        &mut track_background_processor_helper.override_effect_plugin_instances
-                    };
-                    TrackBackgroundProcessorHelper::pump_idle_clap_plugin_guis(idle_effect_plugin_instances);
 
                     let mode = match track_thread_coast.lock() {
                         Ok(mode) => match *mode {

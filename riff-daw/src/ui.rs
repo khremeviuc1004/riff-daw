@@ -2935,6 +2935,41 @@ impl MainWindow {
         track_panel.solo_toggle_btn)
     }
 
+    // the mute/solo buttons in the riff views and the mixer blades are property-bound
+    // to the track panel buttons, but a binding only syncs the visual state - it never
+    // emits clicked, so each duplicate button needs its own click handler to send the
+    // events into the daw core, otherwise mute/solo appears to do nothing in those views
+    fn wire_duplicate_track_mute_solo_events(
+        mute_toggle_btn: &ToggleButton,
+        solo_toggle_btn: &ToggleButton,
+        tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
+        track_uuid: Uuid,
+    ) {
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            solo_toggle_btn.connect_clicked(move |solo_toggle_btn| {
+                if solo_toggle_btn.is_active() {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::SoloOn, Some(track_uuid.to_string())));
+                }
+                else {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::SoloOff, Some(track_uuid.to_string())));
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            mute_toggle_btn.connect_clicked(move |mute_toggle_btn| {
+                if mute_toggle_btn.is_active() {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Mute, Some(track_uuid.to_string())));
+                }
+                else {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Unmute, Some(track_uuid.to_string())));
+                }
+            });
+        }
+    }
+
     pub fn add_riff_set_track_panel(&mut self,
         _track_name: &str,
         track_uuid: Uuid,
@@ -2975,6 +3010,8 @@ impl MainWindow {
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_set_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_set_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_set_track_panel.mute_toggle_btn, &riff_set_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3081,6 +3118,8 @@ impl MainWindow {
         let _ = track_solo_toggle_state.bind_property("active", &riff_sequence_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_sequence_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_sequence_track_panel.mute_toggle_btn, &riff_sequence_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+
         match general_track_type {
             GeneralTrackType::AudioTrack => {
                 riff_sequence_track_panel.track_instrument_window_visibility_toggle_btn.set_sensitive(false);
@@ -3185,6 +3224,8 @@ impl MainWindow {
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_grid_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_grid_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_grid_track_panel.mute_toggle_btn, &riff_grid_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3295,6 +3336,8 @@ impl MainWindow {
         let _ = track_solo_toggle_state.bind_property("active", &riff_arrangement_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_arrangement_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_arrangement_track_panel.mute_toggle_btn, &riff_arrangement_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+
         match general_track_type {
             GeneralTrackType::AudioTrack => {
                 riff_arrangement_track_panel.track_instrument_window_visibility_toggle_btn.set_sensitive(false);
@@ -3387,6 +3430,8 @@ impl MainWindow {
 
         let _ = track_solo_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+
+        MainWindow::wire_duplicate_track_mute_solo_events(&mixer_blade.mixer_blade_track_mute_toggle_btn, &mixer_blade.mixer_blade_track_solo_toggle_btn, tx_from_ui.clone(), track_uuid);
 
         match general_track_type {
             GeneralTrackType::MasterTrack => {

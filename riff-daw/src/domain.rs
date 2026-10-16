@@ -8854,6 +8854,14 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                     if riffs.is_empty() {
                         self.block_index = -1;
                     }
+                    else if self.block_index == -1 {
+                        // real blocks have just been applied to a processor that was
+                        // parked silent (a track that had no reference in the previously
+                        // playing riff set, transitioning to one that does) - start the
+                        // new blocks from the beginning of the loop instead of staying
+                        // parked at -1 forever
+                        self.block_index = if self.play_left_block_index > -1 { self.play_left_block_index } else { 0 };
+                    }
 
                     if self.block_index > -1 {
                         let param_block_index = self.block_index;

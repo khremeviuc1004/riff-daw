@@ -2742,7 +2742,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             with_state(state, move |state| {
                                 let song = state.get_project().song_mut();
                                 if let Some(track) = song.tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
-                                    if track.riffs().iter().any(|riff| riff.uuid().to_string() == riff_uuid) {
+                                    // legacy "empty" placeholder riffs are never referenced
+                                    if track.riffs().iter().any(|riff| riff.uuid().to_string() == riff_uuid && riff.name() != "empty") {
                                         let riff_ref = RiffReference::new(riff_uuid, position);
                                         track.riff_refs_mut().push(riff_ref);
                                     }
@@ -7194,15 +7195,8 @@ win.connect_close_request(|window| {
                         let song = state.get_project().song_mut();
                         let mut riff_set = RiffSet::new_with_uuid(uuid);
                         riff_set.set_name(name);
-                        for track in song.tracks().iter() {
-                            let empty_riff_uuid = if let Some(riff) = track.riffs().iter().find(|riff| riff.name() == "empty") {
-                                riff.uuid().to_string()
-                            }
-                            else {
-                                "".to_string()
-                            };
-                            riff_set.set_riff_ref_for_track(track.uuid().to_string(), RiffReference::new(empty_riff_uuid, 0.0));
-                        }
+                        // tracks start with no riff references in the set - unoccupied
+                        // track slots are simply silent for the length of the set
                         let selected_riff_set_position = if let Some(selected_riff_set_uuid) = selected_riff_set_uuid {
                             if let Some(selected_riff_set_position) = song.riff_sets().iter().position(|riff_set| riff_set.uuid() == *selected_riff_set_uuid) {
                                 Some(selected_riff_set_position)
@@ -7714,11 +7708,19 @@ win.connect_close_request(|window| {
                                 if let Some(selected_riff_grid_uuid) = selected_riff_grid_uuid {
                                     if let Some(track_uuid) = track_uuid {
                                         if let Some(selected_riff_uuid) = selected_riff_uuid {
-                                            match state.get_project().song_mut().riff_grids_mut().iter_mut().find(|riff_grid| riff_grid.uuid().to_string() == selected_riff_grid_uuid.to_string()) {
-                                                Some(riff_grid) => {
-                                                    riff_grid.add_riff_reference_to_track(track_uuid, selected_riff_uuid.clone(), position);
+                                            // legacy "empty" placeholder riffs are never
+                                            // referenced - a click on a silent slot adds nothing
+                                            let is_empty_riff = match state.project().song().track(track_uuid.clone()) {
+                                                Some(track) => track.riffs().iter().find(|riff| riff.uuid().to_string() == selected_riff_uuid).map(|riff| riff.name() == "empty").unwrap_or(false),
+                                                None => false,
+                                            };
+                                            if !is_empty_riff {
+                                                match state.get_project().song_mut().riff_grids_mut().iter_mut().find(|riff_grid| riff_grid.uuid().to_string() == selected_riff_grid_uuid.to_string()) {
+                                                    Some(riff_grid) => {
+                                                        riff_grid.add_riff_reference_to_track(track_uuid, selected_riff_uuid.clone(), position);
+                                                    }
+                                                    None => debug!("Main - rx_ui processing loop - riff grid riff reference added - no riff grid with uuid."),
                                                 }
-                                                None => debug!("Main - rx_ui processing loop - riff grid riff reference added - no riff grid with uuid."),
                                             }
                                         }
                                     }
@@ -8423,6 +8425,15 @@ win.connect_close_request(|window| {
                             copied_riff_grid.set_name(format!("Copy of {}", riff_grid.name()));
                             for track_uuid in riff_grid.tracks() {
                                 for track_riff_ref in riff_grid.track_riff_references(track_uuid.clone()).unwrap().iter() {
+                                    // legacy "empty" placeholder references don't get carried
+                                    // into the copy - silent slots stay silent without them
+                                    let is_empty_reference = match state.project().song().track(track_uuid.clone()) {
+                                        Some(track) => track.riffs().iter().find(|riff| riff.uuid().to_string() == track_riff_ref.linked_to()).map(|riff| riff.name() == "empty").unwrap_or(false),
+                                        None => false,
+                                    };
+                                    if is_empty_reference {
+                                        continue;
+                                    }
                                     copied_riff_grid.add_riff_reference_to_track(track_uuid.clone(), track_riff_ref.linked_to(), track_riff_ref.position());
                                 }
                             }
@@ -8458,35 +8469,18 @@ win.connect_close_request(|window| {
                                 if index >= selected_riff_item_index {
                                     break;
                                 }
-                                // FIXME riff set lengths need to be determined using the lowest common factor not straight up find the largest (the largest may not be the actual lowest common factor)
+                                // the set's play length is the lowest common factor of its
+                                // resolvable references - silent track slots don't shorten it
                                 if let RiffItemType::RiffSet = riff_item.item_type() {
                                     // grab the item
                                     if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
-                                        let mut riff_lengths = vec![];
-                                        for (track_uuid, riff_set_uuid) in riff_set.riff_refs().iter().map(|(track_uuid, value)| (track_uuid.to_string(), value.linked_to().to_string())).collect::<Vec<(String, String)>>().iter() {
-                                            if let Some(track) = state.project().song().track(track_uuid.to_string()) {
-                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == *riff_set_uuid) {
-                                                    riff_lengths.push(riff.length() as i32);
-                                                }
-                                            }
-                                        }
-                                        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-                                        play_position_in_beats += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                                        play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, &state);
                                     }
                                 }
                                 else if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
                                     for riff_item in riff_sequence.riff_sets().iter() {
                                         if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
-                                            let mut riff_lengths = vec![];
-                                            for (track_uuid, riff_set_uuid) in riff_set.riff_refs().iter().map(|(track_uuid, value)| (track_uuid.to_string(), value.linked_to().to_string())).collect::<Vec<(String, String)>>().iter() {
-                                                if let Some(track) = state.project().song().track(track_uuid.to_string()) {
-                                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == *riff_set_uuid) {
-                                                        riff_lengths.push(riff.length() as i32);
-                                                    }
-                                                }
-                                            }
-                                            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-                                            play_position_in_beats += DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64;
+                                            play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, &state);
                                         }
                                     }
                                 }

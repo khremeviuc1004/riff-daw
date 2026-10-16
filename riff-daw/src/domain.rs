@@ -1488,6 +1488,12 @@ impl RiffSet {
         self.riff_refs.get_mut(&track_uuid)
     }
 
+    /// Remove a track's riff reference from the set - the track slot becomes silent.
+    /// No "empty" placeholder riff or reference is needed to represent silence.
+    pub fn remove_riff_ref_for_track(&mut self, track_uuid: String) -> Option<RiffReference> {
+        self.riff_refs.remove(&track_uuid)
+    }
+
     pub fn remove_track(&mut self, track_uuid: String) {
         self.riff_refs.remove_entry(&track_uuid);
     }
@@ -6882,8 +6888,6 @@ impl InstrumentTrack {
             audio_routings: vec![],
 		};
 
-        track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
-
         track
 	}
 
@@ -7174,7 +7178,6 @@ impl MidiTrack {
             audio_routings: vec![],
 		};
 
-        track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
 
         track
 	}
@@ -7392,7 +7395,6 @@ impl AudioTrack {
             audio_routings: vec![],
         };
 
-        track.riffs.push(Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0));
 
         track
 	}
@@ -7755,11 +7757,11 @@ impl Song {
 
     pub fn add_track(&mut self, track: TrackType) {
         let track_uuid = track.uuid().to_string();
-        let track_empty_riff_uuid = track.riffs().first().unwrap().uuid().to_string();
         self.tracks.push(track);
 
-        // update the riff sets
-        self.riff_sets.iter_mut().for_each(|riff_set| riff_set.set_riff_ref_for_track(track_uuid.clone(), RiffReference::new(track_empty_riff_uuid.clone(), 0.0)));
+        // a new track simply has no riff references in the existing riff sets - its slots
+        // are silent for the full length of each set, so no placeholder references are
+        // needed to keep the sets' timelines aligned
 
         // update the riff arrangements
         self.riff_arrangements.iter_mut().for_each(|riff_arrangement| {
@@ -9255,7 +9257,7 @@ mod tests {
         riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
 
         // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
+        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "silence".to_string(), 4.0);
         transition_riffs.push(riff_one_bar_empty.clone());
 
         // create a riff ref for the one bar empty transition riff
@@ -9356,7 +9358,7 @@ mod tests {
         riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
 
         // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
+        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "silence".to_string(), 4.0);
         transition_riffs.push(riff_one_bar_empty.clone());
 
         // create a riff ref for the one bar empty transition riff
@@ -9452,7 +9454,7 @@ mod tests {
         riff_refs.push(riff_ref_riff_four_bar_with_two_long_notes.clone());
 
         // create a 1 bar empty riff to transition to
-        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "empty".to_string(), 4.0);
+        let riff_one_bar_empty = Riff::new_with_name_and_length(Uuid::new_v4(), "silence".to_string(), 4.0);
         transition_riffs.push(riff_one_bar_empty.clone());
 
         // create a riff ref for the one bar empty transition riff

@@ -4186,6 +4186,21 @@ impl CustomPainter for RiffSetTrackCustomPainter {
                                         }
 
                                     }
+                                    else {
+                                        // a track with no riff reference in the set is a
+                                        // silent slot - no "empty" placeholder riff needed,
+                                        // just paint the slot as empty space
+                                        context.set_source_rgba(0.5, 0.5, 0.5, 1.0);
+                                        context.rectangle(0.0, 0.0, width, height);
+                                        let _ = context.fill();
+
+                                        // draw the riff set number
+                                        context.move_to(width / 2.0 - 18.0, height / 2.0 + 14.0);
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 0.1);
+                                        context.set_font_size(36.0);
+                                        let _ = context.show_text(format!("{}", riff_set_number).as_str());
+                                        let _ = context.stroke();
+                                    }
                                 },
                                 None => (),
                             }
@@ -5192,35 +5207,35 @@ impl AutomationCustomPainter {
         riff_set_uuid: String
     ) {
         if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
-            let mut riff_lengths = vec![];
-            let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, 4.0, None);
+            // the set spans the lowest common factor of its resolvable, non-empty
+            // references - silent track slots (no reference or a legacy "empty" one)
+            // still occupy the full length of the set so everything after it on the
+            // timeline is positioned correctly
+            let lowest_common_factor_in_beats = DAWUtils::get_riff_set_play_length(riff_set, state);
 
-            // get the number of repeats
-            for track in state.project().song().tracks().iter() {
-                // get the riff_ref
-                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                    // get the riff
-                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                        riff_lengths.push(riff.length() as i32);
+            // get this track's reference (if it plays anything in the set)
+            let riff_to_draw = if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track_uuid.to_string()) {
+                DAWUtils::get_riff_set_ref_riff(riff_ref, track).cloned()
+            }
+            else {
+                None
+            };
 
-                        if track_uuid.to_string() == track.uuid().to_string() {
-                            riff_to_draw = riff.clone();
-                        }
-                    }
+            // draw the riff reference x number of times
+            let set_start_in_beats = *running_position;
+            if let Some(mut riff_to_draw) = riff_to_draw {
+                for _x in 0..(lowest_common_factor_in_beats / riff_to_draw.length()) as i32 {
+                    riff_to_draw.set_position(*running_position);
+                    Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
+                    *running_position += riff_to_draw.length();
                 }
             }
 
-            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-
-            let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
-
-            // draw the riff reference x number of times
-            for _x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
-                riff_to_draw.set_position(*running_position);
-                if riff_to_draw.name() != "empty" {
-                    Self::draw_riff(context, height, entity_height_in_pixels, beat_width_in_pixels, zoom_horizontal, adjusted_beat_width_in_pixels, &riff_to_draw, &track);
-                }
-                *running_position += riff_to_draw.length();
+            // the next item on this track's lane always starts at the end of the set -
+            // silent track slots (no reference or a legacy "empty" one) still occupy
+            // the full length of the set
+            if *running_position < set_start_in_beats + lowest_common_factor_in_beats {
+                *running_position = set_start_in_beats + lowest_common_factor_in_beats;
             }
         }
     }
@@ -5570,7 +5585,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                             if let Some(track) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == track_uuid.to_string()) {
                                                                 if let Some(riff_refs) = riff_grid.track_riff_references(track_uuid.clone()) {
                                                                     for riff_ref in riff_refs.iter() {
-                                                                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty") {
                                                                             let max_rightward_position = riff_ref.position() + riff.length();
                                                                             if max_rightward_position > riff_grid_length {
                                                                                 riff_grid_length = max_rightward_position;
@@ -5583,7 +5598,7 @@ impl CustomPainter for AutomationCustomPainter {
                                                         if let Some(riff_refs) = riff_grid.track_riff_references(track_uuid.clone()) {
                                                             for riff_ref in riff_refs.iter() {
                                                                 // get the riff
-                                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty") {
                                                                     let mut riff_to_draw = riff.clone();
                                                                     riff_to_draw.set_position(running_position + riff_ref.position());
                                                                     if riff_to_draw.name() != "empty" {
@@ -6064,27 +6079,12 @@ impl RiffArrangementOverviewCustomPainter {
         state: &MutexGuard<DAWState>,
         riff_set_uuid: String
     ) -> f64 {
-        let lowest_common_factor_in_beats = if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
-            let mut riff_lengths = vec![];
-
-            // get the number of repeats
-            for track in state.project().song().tracks().iter() {
-                // get the riff_ref
-                if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                    // get the riff
-                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                        riff_lengths.push(riff.length() as i32);
-                    }
-                }
-            }
-
-            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-
-            DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64
+        if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
+            // the set length comes from its resolvable, non-empty references - silent
+            // track slots (missing or legacy "empty" references) don't shorten the set
+            DAWUtils::get_riff_set_play_length(riff_set, state)
         }
-        else { 0.0 };
-
-        lowest_common_factor_in_beats
+        else { 0.0 }
     }
 
     fn draw_riff_set_riff_refs(
@@ -6096,43 +6096,25 @@ impl RiffArrangementOverviewCustomPainter {
         riff_set_uuid: String
     ) {
         if let Some(riff_set) = state.project().song().riff_set(riff_set_uuid) {
-            let mut riff_lengths = vec![];
-            let mut riffs_to_draw = vec![];
+            let lowest_common_factor_in_beats = Self::get_riff_set_lcd(state, riff_set.uuid());
 
-            // get the number of repeats
-            for track in state.project().song().tracks().iter() {
-                // get the riff_ref
+            // draw each track's reference x number of times across the full length of
+            // the set - tracks with a silent slot simply occupy the length with no clip
+            for (index, track) in state.project().song().tracks().iter().enumerate() {
                 if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
-                    // get the riff
-                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                        riff_lengths.push(riff.length() as i32);
-                        let mut riff_to_draw = Riff::new_with_position_length_and_colour(Uuid::new_v4(), 0.0, riff.length(), Some(track.colour()));
-                        riff_to_draw.set_name(riff.name().to_string());
-                        riffs_to_draw.push(riff_to_draw);
-                    }
-                }
-            }
-
-            let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-
-            let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
-
-            // draw the riff reference x number of times
-            for (index, riff_to_draw) in riffs_to_draw.iter_mut().enumerate() {
-                let mut running_position = *running_position;
-                for _x in 0..((lowest_common_factor_in_beats as f64 / riff_to_draw.length()) as i32) {
-                    riff_to_draw.set_position(running_position);
-                    if riff_to_draw.name() != "empty" {
-                        if let Some((red, green, blue, alpha)) = riff_to_draw.colour() {
-                            context.set_source_rgba(*red, *green, *blue, *alpha);
+                    if let Some(riff) = DAWUtils::get_riff_set_ref_riff(riff_ref, track) {
+                        let riff_length = riff.length();
+                        if riff_length > 0.0 {
+                            let mut reference_running_position = *running_position;
+                            for _x in 0..(lowest_common_factor_in_beats / riff_length) as i32 {
+                                let (red, green, blue, alpha) = track.colour();
+                                context.set_source_rgba(red, green, blue, alpha);
+                                context.rectangle(reference_running_position * beat_width_in_pixels, index as f64 * entity_height_in_pixels, riff_length * beat_width_in_pixels, entity_height_in_pixels);
+                                let _ = context.fill();
+                                reference_running_position += riff_length;
+                            }
                         }
-                        else {
-                            context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
-                        }
-                        context.rectangle(riff_to_draw.position() * beat_width_in_pixels, index as f64 * entity_height_in_pixels, riff_to_draw.length() * beat_width_in_pixels, entity_height_in_pixels);
-                        let _ = context.fill();
                     }
-                    running_position += riff_to_draw.length();
                 }
             }
 
@@ -6297,7 +6279,7 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
                                         if let Some(track) =  state.project().song().track(track_uuid.clone()) {
                                             for track_riff_references in riff_grid.track_riff_references(track_uuid.clone()).iter() {
                                                 for riff_ref in track_riff_references.iter() {
-                                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                    if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty") {
                                                         let length = riff_ref.position() + riff.length();
                                                         if length > riff_grid_actual_play_length {
                                                             riff_grid_actual_play_length = length;
@@ -6348,7 +6330,7 @@ impl CustomPainter for RiffArrangementOverviewCustomPainter {
                                     for (index, track) in state.project().song().tracks().iter().enumerate() {
                                         for track_riff_references in riff_grid.track_riff_references(track.uuid().to_string()).iter() {
                                             for riff_ref in track_riff_references.iter() {
-                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                                                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty") {
                                                     let length = riff_ref.position() + riff.length();
                                                     if length > riff_grid_actual_play_length {
                                                         riff_grid_actual_play_length = length;

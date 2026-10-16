@@ -7,7 +7,7 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, Track, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
+use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, RiffSet, Track, TrackType, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -863,24 +863,16 @@ impl DAWUtils {
                 let riff_set = state.get_project().song_mut().riff_sets_mut().iter_mut().find(|riff_set| riff_set.uuid() == uuid).map(|riff_set| riff_set.clone());
 
                 if let Some(riff_set) = riff_set {
-                    let mut riff_lengths = vec![];
+                    // the copy spans the same length as the set plays for - the lowest
+                    // common factor of its resolvable, non-empty references, so a set
+                    // copied into the track view lands exactly where it plays
+                    let lowest_common_factor_in_beats = DAWUtils::get_riff_set_play_length(&riff_set, &state);
                     for track_type in state.get_project().song_mut().tracks_mut().iter_mut() {
                         if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
-                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                                if riff.name() != "empty" {
-                                    riff_lengths.push(riff.length() as i32);
-                                }
-                            }
-                        }
-                    }
-                    let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-                    let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
-                    for track_type in state.get_project().song_mut().tracks_mut().iter_mut() {
-                        if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
-                            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                            if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
                                 let riff_length = riff.length();
-                                if riff.name() != "empty" {
-                                    let repeats = lowest_common_factor_in_beats / riff_length as i32;
+                                if riff.name() != "empty" && riff_length > 0.0 {
+                                    let repeats = (lowest_common_factor_in_beats / riff_length) as i32;
                                     for index in 0..repeats {
                                         let mut riff_ref_copy = RiffReference::new(riff_ref.linked_to(), riff_ref.position());
 
@@ -892,7 +884,7 @@ impl DAWUtils {
                         }
                     }
 
-                    position_in_beats + lowest_common_factor_in_beats as f64
+                    position_in_beats + lowest_common_factor_in_beats
                 }
                 else {
                     0.0
@@ -935,18 +927,10 @@ impl DAWUtils {
                     },
                 };
 
-                let mut riff_lengths = vec![];
-                for track_type in state.project().song().tracks().iter() {
-                    if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
-                        if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
-                            if riff.name() != "empty" {
-                                riff_lengths.push(riff.length() as i32);
-                            }
-                        }
-                    }
-                }
-                let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
-                let lowest_common_factor_in_beats = DAWState::get_lowest_common_factor(unique_riff_lengths, product);
+                // the copy spans the same length as the set plays for - the lowest
+                // common factor of its resolvable, non-empty references, so a set
+                // copied into the grid lands exactly where it plays
+                let lowest_common_factor_in_beats = DAWUtils::get_riff_set_play_length(&riff_set, &state);
 
                 // collect the riff grid riff references to add - (track uuid, riff uuid, position in beats)
                 let mut riff_grid_riff_references = vec![];
@@ -954,8 +938,8 @@ impl DAWUtils {
                     if let Some(riff_ref) = riff_set.riff_refs().get(&track_type.uuid().to_string()) {
                         if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
                             let riff_length = riff.length();
-                            if riff.name() != "empty" {
-                                let repeats = lowest_common_factor_in_beats / riff_length as i32;
+                            if riff.name() != "empty" && riff_length > 0.0 {
+                                let repeats = (lowest_common_factor_in_beats / riff_length) as i32;
                                 for index in 0..repeats {
                                     riff_grid_riff_references.push((
                                         track_type.uuid().to_string(),
@@ -1013,7 +997,7 @@ impl DAWUtils {
             if let Some(track) =  state.project().song().track(track_uuid.clone()) {
                 for track_riff_references in riff_grid.track_riff_references(track_uuid.clone()).iter() {
                     for riff_ref in track_riff_references.iter() {
-                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                        if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty") {
                             let length = riff_ref.position() + riff.length();
                             if length > riff_grid_actual_play_length {
                                 riff_grid_actual_play_length = length;
@@ -1027,6 +1011,39 @@ impl DAWUtils {
         riff_grid_actual_play_length
     }
 
+    /// The play length of a riff set in beats - the lowest common factor of the lengths
+    /// of the set's resolvable riff references. A track with no riff reference in the set
+    /// (or a reference that no longer resolves, or one that still points to a legacy
+    /// "empty" placeholder riff) simply plays silence for the whole set length, so no
+    /// empty placeholder riffs or references are needed to keep the timeline intact.
+    /// A set with nothing left to play occupies one bar.
+    pub fn get_riff_set_play_length(riff_set: &RiffSet, state: &DAWState) -> f64 {
+        let mut riff_lengths = vec![];
+        for track in state.project().song().tracks().iter() {
+            if let Some(riff_ref) = riff_set.get_riff_ref_for_track(track.uuid().to_string()) {
+                if let Some(riff) = track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to()) {
+                    if riff.name() != "empty" && riff.length() > 0.0 {
+                        riff_lengths.push(riff.length() as i32);
+                    }
+                }
+            }
+        }
+
+        if riff_lengths.is_empty() {
+            return 4.0;
+        }
+
+        let (product, unique_riff_lengths) = DAWState::get_length_product(riff_lengths);
+        DAWState::get_lowest_common_factor(unique_riff_lengths, product) as f64
+    }
+
+    /// The riff referenced by a riff set's track reference - None when the reference is
+    /// a silent track slot (missing, unresolved or a legacy "empty" placeholder
+    /// reference). Such slots simply play nothing for the length of the set.
+    pub fn get_riff_set_ref_riff<'a>(riff_ref: &RiffReference, track: &'a TrackType) -> Option<&'a Riff> {
+        track.riffs().iter().find(|riff| riff.uuid().to_string() == riff_ref.linked_to() && riff.name() != "empty")
+    }
+
     pub fn copy_riff_grid_to_position(uuid: String, position_in_beats: f64, state: Arc<Mutex<DAWState>>) -> f64 {
         let mut tracks_riff_refs = HashMap::new();
         let mut riff_grid_length = 0.0;
@@ -1036,6 +1053,18 @@ impl DAWUtils {
                     for track_uuid in riff_grid.tracks() {
                         let mut riff_references = vec![];
                         for track_riff_ref in riff_grid.track_riff_references(track_uuid.clone()).unwrap().iter() {
+                            // legacy "empty" placeholder references carry no sound and
+                            // take no space - don't copy them onto the timeline
+                            let is_empty_reference = if let Some(track) = state.project().song().track(track_uuid.clone()) {
+                                track.riffs().iter().find(|riff| riff.uuid().to_string() == track_riff_ref.linked_to()).map(|riff| riff.name() == "empty").unwrap_or(false)
+                            }
+                            else {
+                                false
+                            };
+                            if is_empty_reference {
+                                continue;
+                            }
+
                             let mut reference = track_riff_ref.clone();
                             reference.set_position(position_in_beats + track_riff_ref.position());
                             riff_references.push(reference);

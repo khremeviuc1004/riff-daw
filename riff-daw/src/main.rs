@@ -405,6 +405,15 @@ fn refresh_track_details_dialogues(gui: &MainWindow, state: &Arc<Mutex<DAWState>
     }
 }
 
+/// Refreshes the automation view combos so they follow the instrument/effects currently
+/// in effect on the selected track - the track's own plugins, or the selected riff
+/// arrangement's overrides when the riff arrangement view is active.
+fn refresh_automation_view(gui: &mut MainWindow, state: &Arc<Mutex<DAWState>>) {
+    if let Ok(mut state) = state.lock() {
+        gui.update_automation_ui_from_state(&mut state);
+    }
+}
+
 /// Syncs the live plugin instances backing the riff arrangement instrument/effects
 /// overrides with the arrangement that is currently in effect (the selected arrangement
 /// in the RiffArrangement view, none in any other view) and refreshes the track details
@@ -412,7 +421,7 @@ fn refresh_track_details_dialogues(gui: &MainWindow, state: &Arc<Mutex<DAWState>
 fn handle_riff_arrangement_overrides_sync(state: &mut Arc<Mutex<DAWState>>,
                                           vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
                                           clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>,
-                                          gui: &MainWindow,
+                                          gui: &mut MainWindow,
 ) {
     if let Ok(mut state) = state.lock() {
         let riff_arrangement_uuid = if let CurrentView::RiffArrangement = state.current_view() {
@@ -436,6 +445,10 @@ fn handle_riff_arrangement_overrides_sync(state: &mut Arc<Mutex<DAWState>>,
                 }
             }
         }
+
+        // the automation view targets the arrangement's override instrument/effects
+        // while they are in effect, so refresh its combos with the new plugin lists
+        gui.update_automation_ui_from_state(&mut state);
     }
     refresh_track_details_dialogues(gui, state);
 }
@@ -2115,6 +2128,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Err(_) => debug!("Main - rx_ui processing loop - track instrument override toggle - could not get lock on state"),
                     };
                     refresh_track_details_dialogues(&gui, state);
+                    refresh_automation_view(&mut *gui, state);
                 },
                 TrackChangeType::EffectsOverride(enabled) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
@@ -2142,6 +2156,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Err(_) => debug!("Main - rx_ui processing loop - track effects override toggle - could not get lock on state"),
                     };
                     refresh_track_details_dialogues(&gui, state);
+                    refresh_automation_view(&mut *gui, state);
                 },
                 TrackChangeType::OverrideInstrumentChanged(instrument_details) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
@@ -2175,6 +2190,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Err(_) => debug!("Main - rx_ui processing loop - track override instrument changed - could not get lock on state"),
                     };
                     refresh_track_details_dialogues(&gui, state);
+                    refresh_automation_view(&mut *gui, state);
                 },
                 TrackChangeType::OverrideEffectAdded(uuid, name, effect_details) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
@@ -2204,6 +2220,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Err(_) => debug!("Main - rx_ui processing loop - track override effect add - could not get lock on state"),
                     };
                     refresh_track_details_dialogues(&gui, state);
+                    refresh_automation_view(&mut *gui, state);
                 },
                 TrackChangeType::OverrideEffectDeleted(effect_uuid) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
@@ -2227,6 +2244,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Err(_) => debug!("Main - rx_ui processing loop - track override effect delete - could not get lock on state"),
                     };
                     refresh_track_details_dialogues(&gui, state);
+                    refresh_automation_view(&mut *gui, state);
                 }
                 TrackChangeType::TrackNameChanged(track_name) => {
                     let track_uuid = track_uuid.unwrap();
@@ -6855,7 +6873,13 @@ win.connect_close_request(|window| {
                                         } else {
                                             0
                                         };
-                                        state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel));
+                                        let track_uuid = track.uuid().to_string();
+                                        // the riff arrangement view plays keyboard previews through the
+                                        // selected arrangement's override instrument when one is in effect
+                                        if state.riff_arrangement_instrument_override(&track_uuid).is_some() {
+                                            state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(true));
+                                        }
+                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel));
                                     },
                                     None => debug!("Play note immediate: Could not find track number."),
                                 }
@@ -6879,7 +6903,13 @@ win.connect_close_request(|window| {
                                         } else {
                                             0
                                         };
-                                        state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(note, midi_channel));
+                                        let track_uuid = track.uuid().to_string();
+                                        // keep the routing switch in step with the note on so the
+                                        // note off reaches whichever instrument played the preview
+                                        if state.riff_arrangement_instrument_override(&track_uuid).is_some() {
+                                            state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(true));
+                                        }
+                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::StopNoteImmediate(note, midi_channel));
                                     },
                                     None => debug!("Stop note immediate: Could not find track number."),
                                 }
@@ -16936,6 +16966,13 @@ fn process_track_background_processor_events(
                     },
                 }
             });
+
+            // override plugin instances are loaded asynchronously on the track
+            // background processors - refresh the automation combos when new plugin
+            // parameter lists arrive so override instrument/effects parameters show up
+            if !track_to_plugins_to_plugin_params_map.is_empty() {
+                gui.update_automation_ui_from_state(&mut *state);
+            }
 
             let track_render_audio_consumer_uuids: Vec<String> = track_render_audio_consumers.iter().map(|(track_uuid, _)| track_uuid.to_string()).collect();
             for track_uuid in track_render_audio_consumer_uuids.iter() {

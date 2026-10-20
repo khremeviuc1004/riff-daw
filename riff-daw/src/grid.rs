@@ -5486,6 +5486,26 @@ impl CustomPainter for AutomationCustomPainter {
                                                             found = true;
                                                         }
                                                     }
+                                                    AutomationViewMode::AfterTouch => {
+                                                        if let TrackEvent::AfterTouch(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
+                                                    AutomationViewMode::KeyPressure => {
+                                                        if let TrackEvent::KeyPressure(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
+                                                    AutomationViewMode::ProgramChange => {
+                                                        if let TrackEvent::ProgramChange(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
+                                                    AutomationViewMode::ActiveSense => {
+                                                        if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
                                                     AutomationViewMode::Instrument => {
                                                         let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
                                                             Some(uuid) => uuid.to_string(),
@@ -5570,6 +5590,26 @@ impl CustomPainter for AutomationCustomPainter {
                                                                 }
                                                                 AutomationViewMode::PitchBend => {
                                                                     if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::AfterTouch => {
+                                                                    if let TrackEvent::AfterTouch(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::KeyPressure => {
+                                                                    if let TrackEvent::KeyPressure(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::ProgramChange => {
+                                                                    if let TrackEvent::ProgramChange(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
+                                                                AutomationViewMode::ActiveSense => {
+                                                                    if let TrackEvent::ActiveSense(_) = envelope.event_details() {
                                                                         found = true;
                                                                     }
                                                                 }
@@ -5846,6 +5886,66 @@ impl CustomPainter for AutomationCustomPainter {
                                                 match context.stroke() {
                                                     Ok(_) => (),
                                                     Err(error) => debug!("Problem drawing not pitch bend in the automation view: {:?}", error),
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::AfterTouch => {
+                                            if let TrackEvent::AfterTouch(after_touch) = track_event {
+                                                let lane_value = after_touch.value();
+                                                let note_y_pos_inverted = lane_value as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = after_touch.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+                                        
+                                                Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, lane_value as f64);
+                                        
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing AfterTouch in the automation view: {:?}", error),
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::KeyPressure => {
+                                            if let TrackEvent::KeyPressure(key_pressure) = track_event {
+                                                let lane_value = key_pressure.value();
+                                                let note_y_pos_inverted = lane_value as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = key_pressure.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+                                        
+                                                Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, lane_value as f64);
+                                        
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing KeyPressure in the automation view: {:?}", error),
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::ProgramChange => {
+                                            if let TrackEvent::ProgramChange(program_change) = track_event {
+                                                let lane_value = program_change.program();
+                                                let note_y_pos_inverted = lane_value as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = program_change.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+                                        
+                                                Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, lane_value as f64);
+                                        
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing ProgramChange in the automation view: {:?}", error),
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::ActiveSense => {
+                                            if let TrackEvent::ActiveSense(active_sense) = track_event {
+                                                let lane_value = 0;
+                                                let note_y_pos_inverted = lane_value as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = active_sense.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+                                        
+                                                Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, lane_value as f64);
+                                        
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing ActiveSense in the automation view: {:?}", error),
                                                 }
                                             }
                                         }

@@ -360,6 +360,10 @@ pub struct Ui {
     pub automation_grid_edit_note_expression: ToggleButton,
     pub automation_grid_edit_controllers: ToggleButton,
     pub automation_grid_edit_pitch_bend: ToggleButton,
+    pub automation_grid_edit_after_touch: ToggleButton,
+    pub automation_grid_edit_key_pressure: ToggleButton,
+    pub automation_grid_edit_program_change: ToggleButton,
+    pub automation_grid_edit_active_sense: ToggleButton,
     pub automation_grid_edit_instrument_parameters: ToggleButton,
     pub automation_grid_edit_effect_parameters: ToggleButton,
 
@@ -370,6 +374,10 @@ pub struct Ui {
     pub automation_grid_edit_note_expression_box: Box,
     pub automation_grid_edit_controllers_box: Box,
     pub automation_grid_edit_pitch_bend_box: Box,
+    pub automation_grid_edit_after_touch_box: Box,
+    pub automation_grid_edit_key_pressure_box: Box,
+    pub automation_grid_edit_program_change_box: Box,
+    pub automation_grid_edit_active_sense_box: Box,
     pub automation_grid_edit_instrument_parameters_box: Box,
     pub automation_grid_edit_effect_parameters_box: Box,
     pub automation_edit_panel_stack: Stack,
@@ -991,6 +999,10 @@ gtk4_builder_from!(Ui {
     automation_grid_edit_note_expression: ToggleButton,
     automation_grid_edit_controllers: ToggleButton,
     automation_grid_edit_pitch_bend: ToggleButton,
+    automation_grid_edit_after_touch: ToggleButton,
+    automation_grid_edit_key_pressure: ToggleButton,
+    automation_grid_edit_program_change: ToggleButton,
+    automation_grid_edit_active_sense: ToggleButton,
     automation_grid_edit_instrument_parameters: ToggleButton,
     automation_grid_edit_effect_parameters: ToggleButton,
     automation_grid_edit_track: ToggleButton,
@@ -999,6 +1011,10 @@ gtk4_builder_from!(Ui {
     automation_grid_edit_note_expression_box: Box,
     automation_grid_edit_controllers_box: Box,
     automation_grid_edit_pitch_bend_box: Box,
+    automation_grid_edit_after_touch_box: Box,
+    automation_grid_edit_key_pressure_box: Box,
+    automation_grid_edit_program_change_box: Box,
+    automation_grid_edit_active_sense_box: Box,
     automation_grid_edit_instrument_parameters_box: Box,
     automation_grid_edit_effect_parameters_box: Box,
     automation_edit_panel_stack: Stack,
@@ -7025,6 +7041,66 @@ impl MainWindow {
                 automation_edit_panel_stack.set_visible(true);
 
                 match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::PitchBend)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Error: {}", error),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let automation_edit_panel_stack = self.ui.automation_edit_panel_stack.clone();
+            let automation_grid_edit_after_touch_box = self.ui.automation_grid_edit_after_touch_box.clone();
+            self.ui.automation_grid_edit_after_touch.connect_clicked(move |_|{
+                automation_edit_panel_stack.set_visible_child(&automation_grid_edit_after_touch_box);
+                automation_edit_panel_stack.set_visible(true);
+
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::AfterTouch)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Error: {}", error),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let automation_edit_panel_stack = self.ui.automation_edit_panel_stack.clone();
+            let automation_grid_edit_key_pressure_box = self.ui.automation_grid_edit_key_pressure_box.clone();
+            self.ui.automation_grid_edit_key_pressure.connect_clicked(move |_|{
+                automation_edit_panel_stack.set_visible_child(&automation_grid_edit_key_pressure_box);
+                automation_edit_panel_stack.set_visible(true);
+
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::KeyPressure)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Error: {}", error),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let automation_edit_panel_stack = self.ui.automation_edit_panel_stack.clone();
+            let automation_grid_edit_program_change_box = self.ui.automation_grid_edit_program_change_box.clone();
+            self.ui.automation_grid_edit_program_change.connect_clicked(move |_|{
+                automation_edit_panel_stack.set_visible_child(&automation_grid_edit_program_change_box);
+                automation_edit_panel_stack.set_visible(true);
+
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::ProgramChange)) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Error: {}", error),
+                }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let automation_edit_panel_stack = self.ui.automation_edit_panel_stack.clone();
+            let automation_grid_edit_active_sense_box = self.ui.automation_grid_edit_active_sense_box.clone();
+            self.ui.automation_grid_edit_active_sense.connect_clicked(move |_|{
+                automation_edit_panel_stack.set_visible_child(&automation_grid_edit_active_sense_box);
+                automation_edit_panel_stack.set_visible(true);
+
+                match tx_from_ui.send(DAWEvents::AutomationViewShowTypeChange(ShowType::ActiveSense)) {
                     Ok(_) => (),
                     Err(error) => debug!("Error: {}", error),
                 }

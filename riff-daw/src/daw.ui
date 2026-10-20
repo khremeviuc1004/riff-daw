@@ -17300,6 +17300,38 @@
                                   </object>
                                 </child>
                                 <child>
+                                  <object class="GtkToggleButton" id="automation_grid_edit_after_touch">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">After Touch</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="group">automation_grid_edit_note_velocity</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkToggleButton" id="automation_grid_edit_key_pressure">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">Key Pressure</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="group">automation_grid_edit_note_velocity</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkToggleButton" id="automation_grid_edit_program_change">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">Program Change</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="group">automation_grid_edit_note_velocity</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkToggleButton" id="automation_grid_edit_active_sense">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">Active Sense</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="group">automation_grid_edit_note_velocity</property>
+                                  </object>
+                                </child>
+                                <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_instrument_parameters">
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Instrument</property>
@@ -17581,6 +17613,50 @@
                                     <child>
                                       <placeholder />
                                     </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkStackPage">
+                                <property name="name">automation_after_touch</property>
+                                <property name="title" translatable="yes">After Touch</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="automation_grid_edit_after_touch_box">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkStackPage">
+                                <property name="name">automation_key_pressure</property>
+                                <property name="title" translatable="yes">Key Pressure</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="automation_grid_edit_key_pressure_box">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkStackPage">
+                                <property name="name">automation_program_change</property>
+                                <property name="title" translatable="yes">Program Change</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="automation_grid_edit_program_change_box">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkStackPage">
+                                <property name="name">automation_active_sense</property>
+                                <property name="title" translatable="yes">Active Sense</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="automation_grid_edit_active_sense_box">
+                                    <property name="visible">True</property>
                                   </object>
                                 </property>
                               </object>

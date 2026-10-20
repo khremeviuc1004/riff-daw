@@ -39,6 +39,10 @@ pub enum ShowType {
     NoteExpression,
     Controller,
     PitchBend,
+    AfterTouch,
+    KeyPressure,
+    ProgramChange,
+    ActiveSense,
     InstrumentParameter,
     EffectParameter,
 }

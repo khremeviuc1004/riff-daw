@@ -1346,12 +1346,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     ShowType::Velocity => AutomationViewMode::NoteVelocities,
                     ShowType::Controller => AutomationViewMode::Controllers,
                     ShowType::PitchBend => AutomationViewMode::PitchBend,
+                    ShowType::AfterTouch => AutomationViewMode::AfterTouch,
+                    ShowType::KeyPressure => AutomationViewMode::KeyPressure,
+                    ShowType::ProgramChange => AutomationViewMode::ProgramChange,
+                    ShowType::ActiveSense => AutomationViewMode::ActiveSense,
                     ShowType::InstrumentParameter => AutomationViewMode::Instrument,
                     ShowType::EffectParameter => AutomationViewMode::Effect,
                     ShowType::NoteExpression => AutomationViewMode::NoteExpression,
                 };
                 match state.lock() {
-                    Ok(mut state) => state.set_automation_view_mode(type_to_show),
+                    Ok(mut state) => {
+                        // the single stream midi lanes have no sub parameter selector so
+                        // they have nothing to key on beyond their event type - set a
+                        // dummy automation type so the envelope look ups (which are gated
+                        // on a type being selected) resolve the lane envelope
+                        let single_midi_lane = matches!(type_to_show, AutomationViewMode::AfterTouch | AutomationViewMode::KeyPressure | AutomationViewMode::ProgramChange | AutomationViewMode::ActiveSense);
+                        state.set_automation_view_mode(type_to_show);
+                        if single_midi_lane {
+                            state.set_automation_type(Some(0));
+                        }
+                    },
                     Err(error) => debug!("Error: {}", error),
                 }
                 gui.ui.automation_drawing_area.queue_draw();
@@ -4312,6 +4326,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
                                     AutomationViewMode::Controllers => AutomationViewMode::Controllers,
                                     AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
+                                    AutomationViewMode::AfterTouch => AutomationViewMode::AfterTouch,
+                                    AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
+                                    AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
+                                    AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -4380,6 +4398,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                         found = true;
                                                                                     }
                                                                                 }
+                                                                                AutomationViewMode::AfterTouch => {
+                                                                                    if let TrackEvent::AfterTouch(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::KeyPressure => {
+                                                                                    if let TrackEvent::KeyPressure(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::ProgramChange => {
+                                                                                    if let TrackEvent::ProgramChange(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::ActiveSense => {
+                                                                                    if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
                                                                                 AutomationViewMode::Instrument => {
                                                                                     let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
                                                                                         Some(uuid) => uuid.to_string(),
@@ -4444,6 +4482,26 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             }
                                                                             AutomationViewMode::PitchBend => {
                                                                                 if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::AfterTouch => {
+                                                                                if let TrackEvent::AfterTouch(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::KeyPressure => {
+                                                                                if let TrackEvent::KeyPressure(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::ProgramChange => {
+                                                                                if let TrackEvent::ProgramChange(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::ActiveSense => {
+                                                                                if let TrackEvent::ActiveSense(_) = envelope.event_details() {
                                                                                     found = true;
                                                                                 }
                                                                             }
@@ -4538,6 +4596,61 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                         if time_lower <= position && position <= time_higher
                                                                             && value_lower <= pitch_bend.value() && pitch_bend.value() <= value_higher {
                                                                             selected.push(pitch_bend.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::AfterTouch => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::AfterTouch(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::KeyPressure => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::KeyPressure(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ProgramChange => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ProgramChange(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.program() && event.program() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ActiveSense => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ActiveSense(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher {
+                                                                            selected.push(event.id());
                                                                         }
                                                                     }
                                                                     _ => (),
@@ -4639,6 +4752,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
                                     AutomationViewMode::Controllers => AutomationViewMode::Controllers,
                                     AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
+                                    AutomationViewMode::AfterTouch => AutomationViewMode::AfterTouch,
+                                    AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
+                                    AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
+                                    AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -4768,6 +4885,61 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 }
                                                             })
                                                         }
+                                                        AutomationViewMode::AfterTouch => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::AfterTouch(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::KeyPressure => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::KeyPressure(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ProgramChange => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ProgramChange(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && value_lower <= event.program() && event.program() <= value_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ActiveSense => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ActiveSense(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
@@ -4863,6 +5035,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::NoteVelocities => AutomationViewMode::NoteVelocities,
                                     AutomationViewMode::Controllers => AutomationViewMode::Controllers,
                                     AutomationViewMode::PitchBend => AutomationViewMode::PitchBend,
+                                    AutomationViewMode::AfterTouch => AutomationViewMode::AfterTouch,
+                                    AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
+                                    AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
+                                    AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -4961,6 +5137,54 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                 let find_fn = |envelope: &&AutomationEnvelope| {
                                                                                     let mut found = false;
                                                                                     if let TrackEvent::PitchBend(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::AfterTouch => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::AfterTouch(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::KeyPressure => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::KeyPressure(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::ProgramChange => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::ProgramChange(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::ActiveSense => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::ActiveSense(_) = envelope.event_details() {
                                                                                         found = true;
                                                                                     }
                                                                                     return found;
@@ -5080,6 +5304,46 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 match event {
                                                                     TrackEvent::PitchBend(pitch_bend) => {
                                                                         selected.push(pitch_bend.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::AfterTouch => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::AfterTouch(event) => {
+                                                                        selected.push(event.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::KeyPressure => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::KeyPressure(event) => {
+                                                                        selected.push(event.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ProgramChange => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ProgramChange(event) => {
+                                                                        selected.push(event.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
+                                                        AutomationViewMode::ActiveSense => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::ActiveSense(event) => {
+                                                                        selected.push(event.id());
                                                                     }
                                                                     _ => (),
                                                                 }
@@ -9345,6 +9609,10 @@ fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<DAWState>>) {
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_add(time, value, &mut state),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_add(time, value, &mut state),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_add(time, value, MidiAutomationLane::AfterTouch, &mut state),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_add(time, value, MidiAutomationLane::KeyPressure, &mut state),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_add(time, value, MidiAutomationLane::ProgramChange, &mut state),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_add(time, value, MidiAutomationLane::ActiveSense, &mut state),
                 AutomationViewMode::Instrument => handle_automation_instrument_add(time, value, &mut state),
                 AutomationViewMode::Effect => handle_automation_effect_add(time, value, &mut state),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_add(time, value, &mut state),
@@ -10158,12 +10426,293 @@ fn handle_automation_pitch_bend_add(time: f64, value: i32, state: &mut DAWState)
     }
 }
 
+
+/// The midi automation lanes that hold a single stream of events - unlike the
+/// controller and plugin parameter lanes there is no sub parameter to pick, the
+/// lane is defined by its event type alone (active sensing carries no value so
+/// its events only ever sit on the base line of the lane).
+#[derive(Clone, Copy)]
+enum MidiAutomationLane {
+    AfterTouch,
+    KeyPressure,
+    ProgramChange,
+    ActiveSense,
+}
+
+impl MidiAutomationLane {
+    fn matches_event(&self, event: &TrackEvent) -> bool {
+        match (self, event) {
+            (MidiAutomationLane::AfterTouch, TrackEvent::AfterTouch(_)) |
+            (MidiAutomationLane::KeyPressure, TrackEvent::KeyPressure(_)) |
+            (MidiAutomationLane::ProgramChange, TrackEvent::ProgramChange(_)) |
+            (MidiAutomationLane::ActiveSense, TrackEvent::ActiveSense(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// The envelope prototype event for this lane.
+    fn prototype(&self) -> TrackEvent {
+        match self {
+            MidiAutomationLane::AfterTouch => TrackEvent::AfterTouch(AfterTouch::new(0.0, 0)),
+            MidiAutomationLane::KeyPressure => TrackEvent::KeyPressure(KeyPressure::new(0.0, 0, 0)),
+            MidiAutomationLane::ProgramChange => TrackEvent::ProgramChange(ProgramChange::new(0.0, 0)),
+            MidiAutomationLane::ActiveSense => TrackEvent::ActiveSense(ActiveSense::new(0.0)),
+        }
+    }
+
+    /// A new event on the lane (the value is ignored by active sensing).
+    fn make_event(&self, time: f64, value: i32) -> TrackEvent {
+        match self {
+            MidiAutomationLane::AfterTouch => TrackEvent::AfterTouch(AfterTouch::new(time, value)),
+            MidiAutomationLane::KeyPressure => TrackEvent::KeyPressure(KeyPressure::new(time, 0, value)),
+            MidiAutomationLane::ProgramChange => TrackEvent::ProgramChange(ProgramChange::new(time, value)),
+            MidiAutomationLane::ActiveSense => TrackEvent::ActiveSense(ActiveSense::new(time)),
+        }
+    }
+}
+
+/// The discrete automation events or the lane envelope's points (the envelope is
+/// created from the lane prototype when it does not exist yet).
+fn lane_events_or_envelope(automation: &mut Automation, lane: MidiAutomationLane, automation_discrete: bool) -> Option<&mut Vec<TrackEvent>> {
+    if automation_discrete {
+        return Some(automation.events_mut());
+    }
+
+    if automation.envelopes().iter().any(|envelope| lane.matches_event(&envelope.event_details())) {
+        return automation.envelopes_mut().iter_mut().find(|envelope| lane.matches_event(&envelope.event_details())).map(|envelope| envelope.events_mut());
+    }
+
+    automation.envelopes_mut().push(AutomationEnvelope::new(lane.prototype()));
+    automation.envelopes_mut().iter_mut().find(|envelope| lane.matches_event(&envelope.event_details())).map(|envelope| envelope.events_mut())
+}
+
+/// Runs an operation on the event list backing a midi automation lane for the
+/// selected track - the arrangement automation in the riff arrangement view,
+/// otherwise the track automation or the selected riff's events. Returns None
+/// when the lane has no backing list (no arrangement/riff selected).
+fn with_midi_lane_events<T>(state: &mut DAWState, lane: MidiAutomationLane, lane_op: impl FnOnce(&mut Vec<TrackEvent>) -> T) -> Option<T> {
+    let track_uuid = state.selected_track().unwrap_or("".to_string());
+    let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
+        Some(selected_riff_uuid.clone())
+    }
+    else {
+        None
+    };
+    let current_view = state.current_view().clone();
+    let automation_edit_type = state.automation_edit_type();
+    let automation_discrete = state.automation_discrete();
+
+    let events: Option<&mut Vec<TrackEvent>> = if let CurrentView::RiffArrangement = current_view {
+        let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+            Some(selected_arrangement_uuid.clone())
+        } else {
+            None
+        };
+
+        // get the arrangement
+        if let Some(selected_riff_arrangement_uuid) = selected_riff_arrangement_uuid {
+            if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_riff_arrangement_uuid) {
+                if riff_arrangement.automation(&track_uuid).is_none() {
+                    riff_arrangement.add_track_automation(track_uuid.clone());
+                }
+                if let Some(automation) = riff_arrangement.automation_mut(&track_uuid) {
+                    lane_events_or_envelope(automation, lane, automation_discrete)
+                }
+                else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+        match automation_edit_type {
+            AutomationEditType::Track => {
+                let automation = track_type.automation_mut();
+                lane_events_or_envelope(automation, lane, automation_discrete)
+            }
+            AutomationEditType::Riff => {
+                if let Some(selected_riff_uuid) = selected_riff_uuid {
+                    if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                        Some(riff.events_mut())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(events) = events {
+        Some(lane_op(events))
+    }
+    else {
+        None
+    }
+}
+
+fn handle_automation_midi_lane_add(time: f64, value: i32, lane: MidiAutomationLane, state: &mut DAWState) {
+    let _ = with_midi_lane_events(state, lane, |events| {
+        events.push(lane.make_event(time, value));
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
+fn handle_automation_midi_lane_delete(time: f64, lane: MidiAutomationLane, state: &mut DAWState) {
+    let _ = with_midi_lane_events(state, lane, |events| {
+        events.retain(|event| {
+            if lane.matches_event(event) {
+                !((time - EVENT_DELETION_BEAT_TOLERANCE) <= event.position() && event.position() <= (time + EVENT_DELETION_BEAT_TOLERANCE))
+            }
+            else {
+                true
+            }
+        });
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
+fn handle_automation_midi_lane_cut(state: &mut DAWState, edit_cursor_time_in_beats: f64, lane: MidiAutomationLane) {
+    let selected = state.selected_automation().to_vec();
+
+    let events_to_copy = with_midi_lane_events(state, lane, |events| {
+        let mut events_to_copy: Vec<TrackEvent> = vec![];
+        for event in events.iter().filter(|event| lane.matches_event(event) && selected.contains(&event.id())) {
+            let mut track_event = event.clone();
+            // adjust the position to be relative to the edit cursor
+            track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+            events_to_copy.push(track_event);
+        }
+        events.retain(|event| !(lane.matches_event(event) && selected.contains(&event.id())));
+        events_to_copy
+    });
+
+    if let Some(events_to_copy) = events_to_copy {
+        if !events_to_copy.is_empty() {
+            state.automation_event_copy_buffer_mut().clear();
+            for event in events_to_copy.iter() {
+                state.automation_event_copy_buffer_mut().push(event.clone());
+            }
+        }
+    }
+}
+
+fn handle_automation_midi_lane_copy(state: &mut DAWState, edit_cursor_time_in_beats: f64, lane: MidiAutomationLane) {
+    let selected = state.selected_automation().to_vec();
+
+    let events_to_copy = with_midi_lane_events(state, lane, |events| {
+        let mut events_to_copy: Vec<TrackEvent> = vec![];
+        for event in events.iter().filter(|event| lane.matches_event(event) && selected.contains(&event.id())) {
+            let mut track_event = event.clone();
+            // adjust the position to be relative to the edit cursor
+            track_event.set_position(track_event.position() - edit_cursor_time_in_beats);
+            events_to_copy.push(track_event);
+        }
+        events_to_copy
+    });
+
+    if let Some(events_to_copy) = events_to_copy {
+        if !events_to_copy.is_empty() {
+            state.automation_event_copy_buffer_mut().clear();
+            for event in events_to_copy.iter() {
+                state.automation_event_copy_buffer_mut().push(event.clone());
+            }
+        }
+    }
+}
+
+fn handle_automation_midi_lane_paste(state: &mut DAWState, edit_cursor_time_in_beats: f64, lane: MidiAutomationLane) {
+    let automation_event_copy_buffer = state.automation_event_copy_buffer().iter().map(|event| event.clone()).collect_vec();
+
+    let _ = with_midi_lane_events(state, lane, |events| {
+        for event in automation_event_copy_buffer.iter() {
+            if lane.matches_event(event) {
+                let mut track_event = event.clone();
+                track_event.set_id(Uuid::new_v4().to_string());
+                // adjust the position to be relative to the edit cursor
+                track_event.set_position(edit_cursor_time_in_beats + track_event.position());
+                events.push(track_event);
+            }
+        }
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
+fn handle_automation_midi_lane_translate_selected(state: &mut DAWState, translate_direction: TranslateDirection, snap_in_beats: f64, lane: MidiAutomationLane) {
+    let selected = state.selected_automation().to_vec();
+
+    let _ = with_midi_lane_events(state, lane, |events| {
+        for event in events.iter_mut().filter(|event| lane.matches_event(event) && selected.contains(&event.id())) {
+            let position = event.position();
+            match translate_direction {
+                TranslateDirection::Up => {
+                    if event.value() < 127.0 {
+                        event.set_value(event.value() + 1.0);
+                    }
+                }
+                TranslateDirection::Down => {
+                    if event.value() > 0.0 {
+                        event.set_value(event.value() - 1.0);
+                    }
+                }
+                TranslateDirection::Left => {
+                    if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                        event.set_position(position - snap_in_beats);
+                    }
+                }
+                TranslateDirection::Right => {
+                    event.set_position(position + snap_in_beats);
+                }
+            }
+        }
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
+fn handle_automation_midi_lane_quantise(state: &mut DAWState, snap_in_beats: f64, quantise_strength: f64, lane: MidiAutomationLane) {
+    let selected = state.selected_automation().to_vec();
+
+    let _ = with_midi_lane_events(state, lane, |events| {
+        for event in events.iter_mut().filter(|event| lane.matches_event(event) && selected.contains(&event.id())) {
+            let calculated_snap = DAWUtils::quantise(event.position(), snap_in_beats, quantise_strength, false);
+            if calculated_snap.snapped {
+                event.set_position(calculated_snap.snapped_value);
+            }
+        }
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
+fn handle_automation_midi_lane_change(state: &mut DAWState, changed_events: Vec<(TrackEvent, TrackEvent)>, lane: MidiAutomationLane) {
+    let _ = with_midi_lane_events(state, lane, |events| {
+        for (_, changed) in changed_events.iter() {
+            if lane.matches_event(changed) {
+                if let Some(event) = events.iter_mut().find(|event| changed.id() == event.id()) {
+                    event.set_position(changed.position());
+                    event.set_value(changed.value());
+                }
+            }
+        }
+        events.sort_by(|param1, param2| DAWUtils::sort_by_daw_position(param1, param2));
+    });
+}
+
 fn handle_automation_delete(time: f64, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
         Ok(mut state) => {
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_delete(time, &mut state),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_delete(time, &mut state),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_delete(time, MidiAutomationLane::AfterTouch, &mut state),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_delete(time, MidiAutomationLane::KeyPressure, &mut state),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_delete(time, MidiAutomationLane::ProgramChange, &mut state),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_delete(time, MidiAutomationLane::ActiveSense, &mut state),
                 AutomationViewMode::Instrument => handle_automation_instrument_delete(time, &mut state),
                 AutomationViewMode::Effect => handle_automation_effect_delete(time, &mut state),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_delete(time, &mut state),
@@ -10975,6 +11524,10 @@ fn handle_automation_cut(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beats
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_cut(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_cut(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_cut(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_cut(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_cut(&mut state, edit_cursor_time_in_beats),
@@ -11859,6 +12412,10 @@ fn handle_automation_translate_selected(state: &Arc<Mutex<DAWState>>, translate_
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_translate_selected(&mut state, translate_direction, snap_in_beats),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_translate_selected(&mut state, translate_direction, snap_in_beats),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_translate_selected(&mut state, translate_direction, snap_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_translate_selected(&mut state, translate_direction, snap_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_translate_selected(&mut state, translate_direction, snap_in_beats),
@@ -12851,6 +13408,10 @@ fn handle_automation_copy(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beat
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_copy(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_copy(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_copy(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_copy(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_copy(&mut state, edit_cursor_time_in_beats),
@@ -13689,6 +14250,10 @@ fn handle_automation_paste(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_bea
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_paste(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_paste(&mut state, edit_cursor_time_in_beats),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_paste(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_paste(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_paste(&mut state, edit_cursor_time_in_beats),
@@ -14512,6 +15077,10 @@ fn handle_automation_quantise(state: &Arc<Mutex<DAWState>>, snap_in_beats: f64, 
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_quantise(&mut state, snap_in_beats, quantise_strength),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_quantise(&mut state, snap_in_beats, quantise_strength),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_quantise(&mut state, snap_in_beats, quantise_strength),
                 AutomationViewMode::Effect => handle_automation_effect_quantise(&mut state, snap_in_beats, quantise_strength),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_quantise(&mut state, snap_in_beats, quantise_strength),
@@ -15351,6 +15920,10 @@ fn handle_automation_change(state: &Arc<Mutex<DAWState>>, changed_events: Vec<(T
             match state.automation_view_mode() {
                 AutomationViewMode::Controllers => handle_automation_controller_change(&mut state, changed_events),
                 AutomationViewMode::PitchBend => handle_automation_pitch_bend_change(&mut state, changed_events),
+                AutomationViewMode::AfterTouch => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::AfterTouch),
+                AutomationViewMode::KeyPressure => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::KeyPressure),
+                AutomationViewMode::ProgramChange => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::ProgramChange),
+                AutomationViewMode::ActiveSense => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::ActiveSense),
                 AutomationViewMode::Instrument => handle_automation_instrument_change(&mut state, changed_events),
                 AutomationViewMode::Effect => handle_automation_effect_change(&mut state, changed_events),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_change(&mut state, changed_events),

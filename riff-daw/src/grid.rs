@@ -4594,6 +4594,15 @@ impl CustomPainter for TrackGridCustomPainter {
                                             TrackEvent::AudioPluginParameter(_parameter) => (),
                                             TrackEvent::Sample(_sample) => (),
                                             TrackEvent::Measure(_) => {}
+                                            TrackEvent::Tempo(tempo) => {
+                                                let x_position = (riff_ref.position() + tempo.position()) * adjusted_beat_width_in_pixels;
+                                                let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                            
+                                                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                context.move_to(x_position, y_start);
+                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 240.0 * (tempo.bpm() as f64)));
+                                                let _ = context.stroke();
+                                            }
                                             TrackEvent::NoteExpression(_) => {}
                                         }
                                     }
@@ -4648,6 +4657,13 @@ impl CustomPainter for TrackGridCustomPainter {
                                     TrackEvent::AudioPluginParameter(_parameter) => (),
                                     TrackEvent::Sample(_sample) => (),
                                     TrackEvent::Measure(_) => {}
+                                    TrackEvent::Tempo(tempo) => {
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                        context.move_to(x_position, y_start);
+                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 240.0 * (tempo.bpm() as f64)));
+                                        let _ = context.stroke();
+                                    }
                                     TrackEvent::NoteExpression(_) => {}
                                 }
                             }
@@ -5008,6 +5024,15 @@ impl CustomPainter for RiffGridCustomPainter {
                                                 TrackEvent::AudioPluginParameter(_parameter) => (),
                                                 TrackEvent::Sample(_sample) => (),
                                                 TrackEvent::Measure(_) => {}
+                                                TrackEvent::Tempo(tempo) => {
+                                                    let x_position = (riff_ref.position() + tempo.position()) * adjusted_beat_width_in_pixels;
+                                                    let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                
+                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                    context.move_to(x_position, y_start);
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 240.0 * (tempo.bpm() as f64)));
+                                                    let _ = context.stroke();
+                                                }
                                                 TrackEvent::NoteExpression(_) => {}
                                             }
                                         }

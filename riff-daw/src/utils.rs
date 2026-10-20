@@ -447,6 +447,11 @@ impl DAWUtils {
                     program_change_event.set_position(program_change_event.position() / bpm * 60.0 * sample_rate);
                     events_all.push(TrackEvent::ProgramChange(program_change_event));
                 }
+                TrackEvent::Tempo(tempo) => {
+                    let mut tempo_event = tempo.clone();
+                    tempo_event.set_position(tempo_event.position() / bpm * 60.0 * sample_rate);
+                    events_all.push(TrackEvent::Tempo(tempo_event));
+                }
                 TrackEvent::AudioPluginParameter(parameter) => {
                     let mut param_copy = parameter.clone();
                     param_copy.set_position(param_copy.position() / bpm * 60.0 * sample_rate);

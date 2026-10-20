@@ -563,6 +563,7 @@ impl HistoryAction for RiffCutSelectedAction {
                                                     TrackEvent::AudioPluginParameter(_) => true,
                                                     TrackEvent::Sample(_sample) => true,
                                                     TrackEvent::Measure(_) => true,
+                                                    TrackEvent::Tempo(_) => true,
                                                     TrackEvent::NoteExpression(_) => true,
                                                 });
                                                 break;
@@ -744,6 +745,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                     TrackEvent::Sample(_sample) => {}
                                                     TrackEvent::Measure(_) => {}
+                                                    TrackEvent::Tempo(_) => {}
                                                     TrackEvent::NoteExpression(_) => {}
                                                 });
 
@@ -839,6 +841,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                     TrackEvent::Sample(_sample) => {}
                                                     TrackEvent::Measure(_) => {}
+                                                    TrackEvent::Tempo(_) => {}
                                                     TrackEvent::NoteExpression(_) => {}
                                                 });
 
@@ -1103,6 +1106,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                                                         TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffPasteSelectedNotes AudioPluginParameter not yet implemented!"),
                                                         TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffPasteSelectedNotes Sample not yet implemented!"),
                                                         TrackEvent::Measure(_) => {}
+                                                        TrackEvent::Tempo(_) => {}
                                                         TrackEvent::NoteExpression(_) => {}
                                                         
                                                     }
@@ -1272,6 +1276,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::AudioPluginParameter(_) => {},
                                                     TrackEvent::Sample(_sample) => {},
                                                     TrackEvent::Measure(_) => {}
+                                                    TrackEvent::Tempo(_) => {}
                                                     TrackEvent::NoteExpression(_) => {}
                                                 });
                                                 break;
@@ -1362,6 +1367,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::AudioPluginParameter(_) => {},
                                                     TrackEvent::Sample(_sample) => {},
                                                     TrackEvent::Measure(_) => {}
+                                                    TrackEvent::Tempo(_) => {}
                                                     TrackEvent::NoteExpression(_) => {}
                                                 });
                                                 break;

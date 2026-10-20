@@ -808,6 +808,13 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::SetTempo(tempo_value) => {
                                                                     tempo = tempo_value;
                                                                     debug!("Tempo: {}", tempo);
+                                                                    if tempo_value > 0 {
+                                                                        if let Some((_, ticks)) = position {
+                                                                            let position_in_beats = *ticks as f64 / ppq as f64;
+                                                                            let bpm = 60000000.0 / tempo_value as f64;
+                                                                            riff.events_mut().push(TrackEvent::Tempo(Tempo::new(position_in_beats, bpm)));
+                                                                        }
+                                                                    }
                                                                 },
                                                                 apres::MIDIEvent::SMPTEOffset(_, _, _, _, _) => (),
                                                                 apres::MIDIEvent::TimeSignature(_, _, _, _) => (),
@@ -3787,6 +3794,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                                     TrackEvent::Sample(_sample) => {}
                                                                     TrackEvent::Measure(_) => {}
+                                                                    TrackEvent::Tempo(_) => {}
                                                                     TrackEvent::NoteExpression(_) => {},
                                                                 });
                                                                 break;
@@ -3840,6 +3848,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffCopySelectedNotes AudioPluginParameter not yet implemented!"),
                                         TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffCopySelectedNotes Sample not yet implemented!"),
                                         TrackEvent::Measure(_) => {}
+                                        TrackEvent::Tempo(_) => {}
                                         TrackEvent::NoteExpression(_) => {}
                                     }
                                 });

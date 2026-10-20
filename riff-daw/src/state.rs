@@ -1511,6 +1511,7 @@ impl DAWState {
                                 TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
                                 TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
                                 TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
+                                TrackEvent::Tempo(_) => debug!("Tempo: position={}", track_event.position()),
                             }
                         }
 
@@ -1601,6 +1602,7 @@ impl DAWState {
                                     TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
                                     TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
                                     TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
+                                    TrackEvent::Tempo(_) => debug!("Tempo: position={}", track_event.position()),
                                 }
                             }
 
@@ -2778,6 +2780,9 @@ impl DAWState {
                         TrackEvent::ProgramChange(program_change) => {
                             single_track_events.push(TrackEvent::ProgramChange(program_change.clone()));
                         }
+                        TrackEvent::Tempo(tempo) => {
+                            single_track_events.push(TrackEvent::Tempo(tempo.clone()));
+                        }
                         _ => (),
                     }
                 }
@@ -2814,6 +2819,11 @@ impl DAWState {
                         }
                         TrackEvent::ActiveSense(_) => {
                             midi.insert_event(track_index, position, apres::MIDIEvent::ActiveSense);
+                        }
+                        TrackEvent::Tempo(tempo) => {
+                            if tempo.bpm() > 0.0 {
+                                midi.insert_event(track_index, position, apres::MIDIEvent::SetTempo((60000000.0 / tempo.bpm()) as u32));
+                            }
                         }
                         _ => {}
                     }
@@ -2880,6 +2890,11 @@ impl DAWState {
                                 program_change_event.set_position(start_position_in_beats);
                                 single_track_events.push(TrackEvent::ProgramChange(program_change_event));
                             }
+                            TrackEvent::Tempo(tempo) => {
+                                let mut tempo_event = tempo.clone();
+                                tempo_event.set_position(start_position_in_beats);
+                                single_track_events.push(TrackEvent::Tempo(tempo_event));
+                            }
                             _ => (),
                         }
                     }
@@ -2920,6 +2935,11 @@ impl DAWState {
                             }
                             TrackEvent::ProgramChange(program_change) => {
                                 midi.insert_event(track_number, position, apres::MIDIEvent::ProgramChange(0, program_change.program() as u8));
+                            }
+                            TrackEvent::Tempo(tempo) => {
+                                if tempo.bpm() > 0.0 {
+                                    midi.insert_event(track_number, position, apres::MIDIEvent::SetTempo((60000000.0 / tempo.bpm()) as u32));
+                                }
                             }
                             _ => {}
                         }
@@ -2997,6 +3017,7 @@ impl DAWState {
                             TrackEvent::AfterTouch(_) => single_track_events.push(event.clone()),
                             TrackEvent::KeyPressure(_) => single_track_events.push(event.clone()),
                             TrackEvent::ProgramChange(_) => single_track_events.push(event.clone()),
+                            TrackEvent::Tempo(_) => single_track_events.push(event.clone()),
                             _ => (),
                         }
                     }
@@ -3036,6 +3057,11 @@ impl DAWState {
                             }
                             TrackEvent::ProgramChange(program_change) => {
                                 midi.insert_event(0, position, apres::MIDIEvent::ProgramChange(0, program_change.program() as u8));
+                            }
+                            TrackEvent::Tempo(tempo) => {
+                                if tempo.bpm() > 0.0 {
+                                    midi.insert_event(0, position, apres::MIDIEvent::SetTempo((60000000.0 / tempo.bpm()) as u32));
+                                }
                             }
                             _ => {}
                         }

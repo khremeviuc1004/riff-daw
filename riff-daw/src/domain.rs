@@ -69,6 +69,7 @@ pub enum TrackEvent {
     AudioPluginParameter(PluginParameter),
     Sample(SampleReference),
     Measure(Measure),
+    Tempo(Tempo),
 }
 
 // the active sense variant is the default - it carries no musical data and is used
@@ -94,6 +95,7 @@ impl DAWItemID for TrackEvent {
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
             TrackEvent::Sample(_) => Uuid::nil().to_string(),
             TrackEvent::Measure(_) => Uuid::nil().to_string(),
+            TrackEvent::Tempo(tempo) => tempo.id(),
             TrackEvent::NoteExpression(note_expression) => note_expression.id(),
         }
     }
@@ -112,6 +114,7 @@ impl DAWItemID for TrackEvent {
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
             TrackEvent::Sample(_) => Uuid::nil().to_string(),
             TrackEvent::Measure(_) => Uuid::nil().to_string(),
+            TrackEvent::Tempo(tempo) => tempo.id(),
             TrackEvent::NoteExpression(note_expression) => note_expression.id(),
         }
     }
@@ -121,6 +124,7 @@ impl DAWItemID for TrackEvent {
             TrackEvent::ActiveSense(active_sense) => active_sense.set_id(uuid),
             TrackEvent::AfterTouch(after_touch) => after_touch.set_id(uuid),
             TrackEvent::ProgramChange(program_change) => program_change.set_id(uuid),
+            TrackEvent::Tempo(tempo) => tempo.set_id(uuid),
             TrackEvent::Note(note) => note.set_id(uuid),
             TrackEvent::Controller(controller) => controller.set_id(uuid),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.set_id(uuid),
@@ -147,6 +151,7 @@ impl DAWItemPosition for TrackEvent {
             TrackEvent::AudioPluginParameter(parameter) => parameter.position(),
             TrackEvent::Sample(sample_reference) => sample_reference.position(),
             TrackEvent::Measure(measure) => measure.position(),
+            TrackEvent::Tempo(tempo) => tempo.position(),
             TrackEvent::NoteExpression(note_expression) => note_expression.position(),
         }
     }
@@ -165,6 +170,7 @@ impl DAWItemPosition for TrackEvent {
             TrackEvent::AudioPluginParameter(parameter) => parameter.set_position(time),
             TrackEvent::Sample(sample_reference) => sample_reference.set_position(time),
             TrackEvent::Measure(measure) => measure.set_position(time),
+            TrackEvent::Tempo(tempo) => tempo.set_position(time),
             TrackEvent::NoteExpression(note_expression) => note_expression.set_position(time),
         }
     }
@@ -198,6 +204,7 @@ impl TrackEvent {
             TrackEvent::AfterTouch(event) => event.value() as f64,
             TrackEvent::KeyPressure(event) => event.value() as f64,
             TrackEvent::ProgramChange(event) => event.program() as f64,
+            TrackEvent::Tempo(event) => event.bpm(),
             TrackEvent::AudioPluginParameter(event) => event.value() as f64,
             _ => 0.0,
         }
@@ -214,6 +221,7 @@ impl TrackEvent {
             TrackEvent::AfterTouch(event) => event.set_value(value as i32),
             TrackEvent::KeyPressure(event) => event.set_value(value as i32),
             TrackEvent::ProgramChange(event) => event.set_program(value as i32),
+            TrackEvent::Tempo(event) => event.set_bpm(value),
             TrackEvent::AudioPluginParameter(event) => event.set_value(value as f32),
             _ => (),
         }
@@ -1297,6 +1305,63 @@ impl ActiveSense {
             position,
             id: Uuid::new_v4(),
         }
+    }
+}
+
+/// A tempo event - carries a new tempo in beats per minute. On playback it is
+/// applied to the track's plugin instances (there is no midi message for it)
+/// just like the inward tempo event does.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Tempo {
+    #[serde(skip_serializing, skip_deserializing, default)]
+    id: Uuid,
+    position: f64,
+    bpm: f64,
+}
+
+impl DAWItemID for Tempo {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) => self.id = uuid,
+            Err(_) => {}
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
+}
+
+impl DAWItemPosition for Tempo {
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
+}
+
+impl Tempo {
+    pub fn new(position: f64, bpm: f64) -> Self {
+        Self {
+            position,
+            bpm,
+            id: Uuid::new_v4(),
+        }
+    }
+
+    /// Get the tempo's beats per minute.
+    pub fn bpm(&self) -> f64 {
+        self.bpm
+    }
+
+    /// Set the tempo's beats per minute.
+    pub fn set_bpm(&mut self, bpm: f64) {
+        self.bpm = bpm;
     }
 }
 
@@ -4148,6 +4213,9 @@ impl BackgroundProcessorVst3AudioPlugin {
                 TrackEvent::AudioPluginParameter(_) => {}
                 TrackEvent::Sample(_) => {}
                 TrackEvent::Measure(_) => {}
+                // tempo has no vst3 event type - it is applied to the plugin's
+                // process context time info by the track event processing
+                TrackEvent::Tempo(_) => {}
             }
         }
     }
@@ -5993,6 +6061,24 @@ impl TrackBackgroundProcessorHelper {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // tempo events have no midi representation - consumed here by configuring
+        // the track and its plugin instances exactly as the inward tempo event does
+        // (the events are in position order so the last one in the block wins)
+        for event in events.iter() {
+            if let TrackEvent::Tempo(tempo) = event {
+                self.tempo = tempo.bpm();
+                if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
+                    instrument_plugin.set_tempo(tempo.bpm());
+                }
+                if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
+                    instrument_plugin.set_tempo(tempo.bpm());
+                }
+                for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
+                    effect.set_tempo(tempo.bpm());
                 }
             }
         }

@@ -730,6 +730,7 @@ pub struct MainWindow {
     pub track_audio_routing_dialogues: HashMap<String, TrackAudioRoutingDialogue>,
     pub selected_style_provider: CssProvider,
     pub track_details_dialogue_track_instrument_choice_signal_handlers: HashMap<String, SignalHandlerId>,
+    pub track_details_dialogue_track_riff_choice_signal_handlers: HashMap<String, SignalHandlerId>,
     pub track_details_dialogue_track_override_instrument_choice_signal_handlers: HashMap<String, SignalHandlerId>,
     pub track_details_dialogue_instrument_override_check_button_signal_handlers: HashMap<String, SignalHandlerId>,
     pub track_details_dialogue_effects_override_check_button_signal_handlers: HashMap<String, SignalHandlerId>,
@@ -1943,6 +1944,7 @@ impl MainWindow {
             track_audio_routing_dialogues: HashMap::new(),
             selected_style_provider,
             track_details_dialogue_track_instrument_choice_signal_handlers: HashMap::new(),
+            track_details_dialogue_track_riff_choice_signal_handlers: HashMap::new(),
             track_details_dialogue_track_override_instrument_choice_signal_handlers: HashMap::new(),
             track_details_dialogue_instrument_override_check_button_signal_handlers: HashMap::new(),
             track_details_dialogue_effects_override_check_button_signal_handlers: HashMap::new(),
@@ -2294,6 +2296,7 @@ impl MainWindow {
         }
 
         self.track_details_dialogue_track_instrument_choice_signal_handlers.clear();
+        self.track_details_dialogue_track_riff_choice_signal_handlers.clear();
         self.track_details_dialogue_track_override_instrument_choice_signal_handlers.clear();
         self.track_details_dialogue_instrument_override_check_button_signal_handlers.clear();
         self.track_details_dialogue_effects_override_check_button_signal_handlers.clear();
@@ -3698,7 +3701,7 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
-            track_details_dialogue.track_riff_choice.connect_changed(move |track_riff_choice| {
+            let track_riff_choice_signal_handler_id = track_details_dialogue.track_riff_choice.connect_changed(move |track_riff_choice| {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
                         debug!("Selected riff: id={:?}, text={:?}",
@@ -3715,6 +3718,7 @@ impl MainWindow {
                     None => (),
                 }
             });
+            self.track_details_dialogue_track_riff_choice_signal_handlers.insert(track_uuid.to_string(), track_riff_choice_signal_handler_id);
         }
 
         {
@@ -11273,6 +11277,32 @@ impl MainWindow {
         }
     }
 
+    /// Reapplies the selected track's highlight css class across every track
+    /// panel - the lanes are rebuilt on refresh so the class added by the lane
+    /// click handlers is lost with the old widgets. The lane frames are named
+    /// with their track uuid so the selected track's lanes are found by widget
+    /// name.
+    fn apply_track_selection_highlight(&mut self, selected_track_uuid: Option<&String>) {
+        let track_panel_vertical_boxes = vec![
+            self.ui.top_level_vbox.clone(),
+            self.ui.riff_sets_track_panel.clone(),
+            self.ui.riff_sequences_track_panel.clone(),
+            self.ui.riff_grid_track_panel.clone(),
+            self.ui.riff_arrangement_track_panel.clone(),
+        ];
+
+        for track_panel_vertical_box in track_panel_vertical_boxes.iter() {
+            for child in track_panel_vertical_box.children() {
+                child.remove_css_class("riff-daw-selected");
+                if let Some(selected_track_uuid) = selected_track_uuid {
+                    if child.widget_name() == selected_track_uuid.as_str() {
+                        child.add_css_class("riff-daw-selected");
+                    }
+                }
+            }
+        }
+    }
+
     pub fn update_ui_from_state(&mut self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, state: &mut DAWState, state_arc: Arc<Mutex<DAWState>>) {
         let midi_input_devices: Vec<String> = state.midi_devices();
 
@@ -11408,6 +11438,32 @@ impl MainWindow {
                 first = false;
             }
         });
+
+        // maintain the track selection across the refresh - keep the currently
+        // selected track when it still exists, otherwise (deleted track, or a new
+        // opened/imported project with no selection) fall back to the first track
+        let track_uuids: Vec<String> = song.tracks().iter().map(|track| track.uuid().to_string()).collect();
+        let selected_track_still_exists = match state.selected_track() {
+            Some(selected_track_uuid) => track_uuids.contains(&selected_track_uuid),
+            None => false,
+        };
+        if !selected_track_still_exists {
+            state.set_selected_track(track_uuids.first().cloned());
+        }
+
+        // the lane widgets were rebuilt so the highlight applied by the click
+        // handlers went with the old widgets - reapply it to the selected track
+        self.apply_track_selection_highlight(state.selected_track().as_ref());
+
+        // reflect the selection in the piano roll / sample roll track name labels
+        if let Some(selected_track_uuid) = state.selected_track() {
+            if let Some(selected_track) = state.project().song().tracks().iter().find(|track| track.uuid().to_string() == selected_track_uuid) {
+                match selected_track {
+                    TrackType::AudioTrack(_) => self.set_sample_roll_selected_track_name_label(selected_track.name()),
+                    _ => self.set_piano_roll_selected_track_name_label(selected_track.name()),
+                }
+            }
+        }
 
         // update the controller view
         // get the selected track
@@ -11941,10 +11997,17 @@ impl MainWindow {
         
         match self.track_details_dialogues.get_mut(&track_uuid) {
             Some(track_details_dialogue) => {
-                // clear and add the riffs
+                // clear and add the riffs - the signals are blocked while the combo is
+                // repopulated so programmatic selections do not queue a RiffSelect event
+                // per track (which would walk the track selection through the list on
+                // every refresh)
                 let track_details_riff_choice_entry = track_details_dialogue.track_details_riff_choice_entry.clone();
                 let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
+                let track_riff_choice_signal_handler_id = self.track_details_dialogue_track_riff_choice_signal_handlers.get(&track_uuid);
                 track_riff_choice.remove_all();
+                if let Some(signal_handler_id) = track_riff_choice_signal_handler_id {
+                    track_riff_choice.block_signal(signal_handler_id);
+                }
                 let mut first_riff = true;
                 for riff in track.riffs().iter() {
                     if riff.name() != "empty" {
@@ -11966,6 +12029,10 @@ impl MainWindow {
                         let selected_riff_uuid = selected_riff_uuid.as_ref();
                         track_riff_choice.set_active_id(Some(selected_riff_uuid.as_str()));
                     }
+                }
+
+                if let Some(signal_handler_id) = track_riff_choice_signal_handler_id {
+                    track_riff_choice.unblock_signal(signal_handler_id);
                 }
 
                 if let Some(active_text) = track_riff_choice.active_text() {

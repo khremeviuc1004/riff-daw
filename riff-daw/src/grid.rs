@@ -5458,7 +5458,26 @@ impl CustomPainter for AutomationCustomPainter {
                             // draw the track name
                             Self::draw_track_name(context, name.as_str());
 
-                            let events = match current_view {
+                            // the tempo lane draws from the song/arrangement tempo
+                            // automation - it is not backed by per track automation
+                            let events: Option<&Vec<TrackEvent>> = if let AutomationViewMode::Tempo = type_to_show {
+                                match state.get_tempo_automation_for_current_view() {
+                                    Some(tempo_automation) => {
+                                        if automation_discrete {
+                                            Some(tempo_automation.events())
+                                        }
+                                        else {
+                                            tempo_automation.envelopes().iter().find(|envelope| {
+                                                if let TrackEvent::Tempo(_) = envelope.event_details() { true }
+                                                else { false }
+                                            }).map(|envelope| envelope.events())
+                                        }
+                                    }
+                                    None => None,
+                                }
+                            }
+                            else {
+                                match current_view {
                                 CurrentView::Track => if let AutomationEditType::Track = state.automation_edit_type() {
                                     let automation = track.automation();
                                     if automation_discrete {
@@ -5503,6 +5522,11 @@ impl CustomPainter for AutomationCustomPainter {
                                                     }
                                                     AutomationViewMode::ActiveSense => {
                                                         if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                            found = true;
+                                                        }
+                                                    }
+                                                    AutomationViewMode::Tempo => {
+                                                        if let TrackEvent::Tempo(_) = envelope.event_details() {
                                                             found = true;
                                                         }
                                                     }
@@ -5613,6 +5637,11 @@ impl CustomPainter for AutomationCustomPainter {
                                                                         found = true;
                                                                     }
                                                                 }
+                                                                AutomationViewMode::Tempo => {
+                                                                    if let TrackEvent::Tempo(_) = envelope.event_details() {
+                                                                        found = true;
+                                                                    }
+                                                                }
                                                                 AutomationViewMode::Instrument => {
                                                                     let plugin_uuid = match state.riff_arrangement_instrument_override_plugin_uuid(&track_uuid) {
                                                                         Some(uuid) => uuid.to_string(),
@@ -5660,6 +5689,7 @@ impl CustomPainter for AutomationCustomPainter {
                                 }
                                 else {
                                     None
+                                }
                                 }
                             };
 
@@ -5946,6 +5976,21 @@ impl CustomPainter for AutomationCustomPainter {
                                                 match context.stroke() {
                                                     Ok(_) => (),
                                                     Err(error) => debug!("Problem drawing ActiveSense in the automation view: {:?}", error),
+                                                }
+                                            }
+                                        }
+                                        crate::state::AutomationViewMode::Tempo => {
+                                            if let TrackEvent::Tempo(tempo) = track_event {
+                                                let lane_value = crate::domain::tempo_lane_bpm_to_value(tempo.bpm());
+                                                let note_y_pos_inverted = lane_value * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                                let x = tempo.position() * adjusted_beat_width_in_pixels;
+                                                let y = height - note_y_pos_inverted;
+
+                                                Self::draw_automation(context, height, automation_discrete, &mut previous_point_x, &mut previous_point_y, default_line_width, x, y, lane_value);
+
+                                                match context.stroke() {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem drawing Tempo in the automation view: {:?}", error),
                                                 }
                                             }
                                         }

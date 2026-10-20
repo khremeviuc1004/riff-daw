@@ -17332,6 +17332,14 @@
                                   </object>
                                 </child>
                                 <child>
+                                  <object class="GtkToggleButton" id="automation_grid_edit_tempo">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">Tempo</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="group">automation_grid_edit_note_velocity</property>
+                                  </object>
+                                </child>
+                                <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_instrument_parameters">
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Instrument</property>
@@ -17656,6 +17664,17 @@
                                 <property name="title" translatable="yes">Active Sense</property>
                                 <property name="child">
                                   <object class="GtkBox" id="automation_grid_edit_active_sense_box">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkStackPage">
+                                <property name="name">automation_tempo</property>
+                                <property name="title" translatable="yes">Tempo</property>
+                                <property name="child">
+                                  <object class="GtkBox" id="automation_grid_edit_tempo_box">
                                     <property name="visible">True</property>
                                   </object>
                                 </property>

@@ -37,6 +37,7 @@ pub enum AutomationViewMode {
     KeyPressure,
     ProgramChange,
     ActiveSense,
+    Tempo,
     Instrument,
     Effect,
     NoteExpression,
@@ -1260,6 +1261,8 @@ impl DAWState {
     pub fn play_song(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>) -> i32 {
         // riff arrangement instrument/effects overrides only apply to the arrangement itself
         self.deactivate_riff_arrangement_overrides();
+        // the song's tempo automation is fed to every track's event blocks
+        let tempo_automation = self.project().song().tempo_automation().clone();
 
         let bpm = self.project().song().tempo();
         let time_signature_numerator = self.project().song().time_signature_numerator();
@@ -1319,6 +1322,7 @@ impl DAWState {
                                                                                         self.automation_discrete(),
                                                                                         time_signature_numerator,
                                                                                         time_signature_denominator,
+                                                                                        Some(&tempo_automation)
                                                                                     );
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEventProcessorType(EventProcessorType::BlockEventProcessor));
             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
@@ -1417,7 +1421,8 @@ impl DAWState {
                                                                                             midi_channel,
                                                                                             self.automation_discrete(),
                                                                                             time_signature_numerator,
-                                                                                            time_signature_denominator
+                                                                                            time_signature_denominator,
+                                                                                            None
                                                                                         );
                         debug!("Riff set # of blocks: {}", track_event_blocks.0.len());
                         self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(0, track_event_blocks.0.len() as i32));
@@ -1693,6 +1698,7 @@ impl DAWState {
                                                                                             self.automation_discrete(),
                                                                                             time_signature_numerator,
                                                                                             time_signature_denominator,
+                                                                                            None
                                                                                         );
                             debug!("state.play_riff_set_update_track_in_blocks: sending message to vst - set events with data");
                             self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, true));
@@ -1851,6 +1857,7 @@ impl DAWState {
                                                                                         self.automation_discrete(),
                                                                                         time_signature_numerator,
                                                                                         time_signature_denominator,
+                                                                                        None
                                                                                     );
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
             }
@@ -1919,14 +1926,14 @@ impl DAWState {
             let automation = Automation::new();
             let vst_event_blocks = if let Some(riff_grid) = song.riff_grid(riff_grid_uuid.clone()) {
                 if let Some(track_riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
                 }
                 else {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
                 }
             }
             else {
-                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
+                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
             };
 
             if !already_playing {
@@ -2194,6 +2201,14 @@ impl DAWState {
                 song_length_in_beats = *largest_track_length;
             }
 
+            // the tempo automation fed to every track - the song tempo automation with
+            // the arrangement's own tempo automation on top of it (so the arrangement's
+            // values win where they share the same position)
+            let mut tempo_automation = self.project().song().tempo_automation().clone();
+            tempo_automation.events_mut().extend(riff_arrangement.tempo_automation().events().iter().cloned());
+            tempo_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+            tempo_automation.envelopes_mut().extend(riff_arrangement.tempo_automation().envelopes().iter().cloned());
+
             // convert and send events
             for track in self.project().song().tracks().iter() {
                 let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
@@ -2208,11 +2223,11 @@ impl DAWState {
                     Some(riff_refs) => riff_refs,
                 };
                 let vst_event_blocks = if let Some(track_automation) = riff_arrangement.automation(&track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
+                    DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, Some(&tempo_automation))
                 }
                 else {
                     let automation = Automation::new();
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator)
+                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, Some(&tempo_automation))
                 };
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
@@ -2784,9 +2799,6 @@ impl DAWState {
                         TrackEvent::ProgramChange(program_change) => {
                             single_track_events.push(TrackEvent::ProgramChange(program_change.clone()));
                         }
-                        TrackEvent::Tempo(tempo) => {
-                            single_track_events.push(TrackEvent::Tempo(tempo.clone()));
-                        }
                         _ => (),
                     }
                 }
@@ -2824,16 +2836,24 @@ impl DAWState {
                         TrackEvent::ActiveSense(_) => {
                             midi.insert_event(track_index, position, apres::MIDIEvent::ActiveSense);
                         }
-                        TrackEvent::Tempo(tempo) => {
-                            if tempo.bpm() > 0.0 {
-                                midi.insert_event(track_index, position, apres::MIDIEvent::SetTempo((60000000.0 / tempo.bpm()) as u32));
-                            }
-                        }
                         _ => {}
                     }
                 }
 
                 track_index += 1;
+            }
+
+            // tempo automation is song level data - the song's tempo events are
+            // exported as set tempo meta events on the first track
+            if track_index > 1 {
+                for event in self.project().song().tempo_automation().events().iter() {
+                    if let TrackEvent::Tempo(tempo) = event {
+                        if tempo.bpm() > 0.0 {
+                            let position = (tempo.position() * (parts_per_quarter_note as f64)) as usize;
+                            midi.insert_event(1, position, apres::MIDIEvent::SetTempo((60000000.0 / tempo.bpm()) as u32));
+                        }
+                    }
+                }
             }
 
             midi.save(absolute_path);
@@ -3275,6 +3295,38 @@ impl DAWState {
         }
         else {
             None
+        }
+    }
+
+    /// The tempo automation in effect for the current view - the selected arrangement's
+    /// tempo automation when the riff arrangement view is active, otherwise the song's
+    /// tempo automation. Tempo is song/arrangement level data, it is never per track.
+    pub fn get_tempo_automation_for_current_view(&self) -> Option<&Automation> {
+        if let crate::event::CurrentView::RiffArrangement = self.current_view() {
+            if let Some(selected_riff_arrangement_uuid) = self.selected_riff_arrangement_uuid() {
+                return self.project().song().riff_arrangement(selected_riff_arrangement_uuid.clone()).map(|riff_arrangement| riff_arrangement.tempo_automation());
+            }
+            return None;
+        }
+
+        Some(self.project().song().tempo_automation())
+    }
+
+    /// Mutable version of get_tempo_automation_for_current_view.
+    pub fn get_tempo_automation_for_current_view_mut(&mut self) -> Option<&mut Automation> {
+        let current_view = self.current_view().clone();
+        let selected_riff_arrangement_uuid = self.selected_riff_arrangement_uuid().cloned();
+
+        match current_view {
+            crate::event::CurrentView::RiffArrangement => {
+                if let Some(selected_riff_arrangement_uuid) = selected_riff_arrangement_uuid {
+                    self.get_project().song_mut().riff_arrangement_mut(selected_riff_arrangement_uuid).map(|riff_arrangement| riff_arrangement.tempo_automation_mut())
+                }
+                else {
+                    None
+                }
+            },
+            _ => Some(self.get_project().song_mut().tempo_automation_mut()),
         }
     }
 

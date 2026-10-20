@@ -233,6 +233,7 @@ impl DAWUtils {
         automation_discrete: bool,
         time_signature_numerator: f64,
         time_signature_denominator: f64,
+        tempo_automation: Option<&Automation>,
     ) -> (Vec<Vec<TrackEvent>>, Vec<Vec<PluginParameter>>) {
         debug!("Automation events for track: {}", automation.events().len());
         debug!("Automation envelopes for track: {}", automation.envelopes().len());
@@ -251,6 +252,26 @@ impl DAWUtils {
             Self::convert_automation_envelope_events(automation.envelopes(), bpm, sample_rate, block_size_in_samples, &mut track_events, passage_length_in_frames)
         };
         debug!("Number of riff ref automation parameter events extracted for track: {}", plugin_parameter_events.len());
+
+        // the song/arrangement tempo automation is fed to every track - the track
+        // background processors apply it to their plugin instances as the events are
+        // surfaced by the block (tempo has no midi representation so it never gets
+        // converted to plugin events, see TrackBackgroundProcessorHelper.process_plugin_events)
+        if let Some(tempo_automation) = tempo_automation {
+            if automation_discrete {
+                for tempo_event in tempo_automation.events().iter() {
+                    if let TrackEvent::Tempo(tempo) = tempo_event {
+                        let mut track_tempo_event = tempo.clone();
+                        track_tempo_event.set_position(track_tempo_event.position() / bpm * 60.0 * sample_rate);
+                        track_events.push(TrackEvent::Tempo(track_tempo_event));
+                    }
+                }
+            }
+            else {
+                Self::convert_automation_envelope_events(tempo_automation.envelopes(), bpm, sample_rate, block_size_in_samples, &mut track_events, passage_length_in_frames);
+            }
+            track_events.sort_by(|event1, event2| DAWUtils::sort_by_daw_position(event1, event2));
+        }
 
         let event_blocks = Self::create_track_event_blocks(block_size_in_samples, passage_length_in_frames, &mut track_events);
         let param_event_blocks = Self::create_plugin_parameter_blocks(block_size_in_samples, passage_length_in_frames, &plugin_parameter_events);
@@ -1502,7 +1523,7 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator, None);
 
         // calculate how many blocks are expected
         let expected_blocks = ((sample_rate * 60.0 /* secs */ * song_length_in_beats) / (block_size * bpm)).round() as usize;
@@ -1570,7 +1591,7 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator, None);
 
         // calculate how many blocks are expected
         let expected_blocks = ((sample_rate * 60.0 /* secs */ * song_length_in_beats) / (block_size * bpm)).round() as usize;
@@ -1612,7 +1633,7 @@ mod tests {
         let block_size = 2048.0;
 
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator, None);
 
 
         // find which block the first event appears in

@@ -776,6 +776,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             let ppq = midi.get_ppqn();
                                             let mut instrument_track_senders2 = HashMap::new();
                                             let mut instrument_track_receivers2 = HashMap::new();
+                                            // tempo is song level data - tempo events found in the
+                                            // file are collected and applied to the song's tempo
+                                            // automation once the imported tracks are in place
+                                            let mut imported_tempo_events: Vec<TrackEvent> = vec![];
 
                                             for track in midi.get_tracks().iter() {
                                                 debug!("Track: {}", track_number);
@@ -812,7 +816,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                         if let Some((_, ticks)) = position {
                                                                             let position_in_beats = *ticks as f64 / ppq as f64;
                                                                             let bpm = 60000000.0 / tempo_value as f64;
-                                                                            riff.events_mut().push(TrackEvent::Tempo(Tempo::new(position_in_beats, bpm)));
+                                                                            imported_tempo_events.push(TrackEvent::Tempo(Tempo::new(position_in_beats, bpm)));
                                                                         }
                                                                     }
                                                                 },
@@ -979,6 +983,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                             }
 
                                             state.update_track_senders_and_receivers(instrument_track_senders2, instrument_track_receivers2);
+
+                                            if !imported_tempo_events.is_empty() {
+                                                let tempo_automation = state.get_project().song_mut().tempo_automation_mut();
+                                                tempo_automation.events_mut().extend(imported_tempo_events);
+                                                tempo_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                            }
                                         },
                                         Err(error) => debug!("Couldn't read midi file: {:?}", error),
                                     }
@@ -1350,6 +1360,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     ShowType::KeyPressure => AutomationViewMode::KeyPressure,
                     ShowType::ProgramChange => AutomationViewMode::ProgramChange,
                     ShowType::ActiveSense => AutomationViewMode::ActiveSense,
+                    ShowType::Tempo => AutomationViewMode::Tempo,
                     ShowType::InstrumentParameter => AutomationViewMode::Instrument,
                     ShowType::EffectParameter => AutomationViewMode::Effect,
                     ShowType::NoteExpression => AutomationViewMode::NoteExpression,
@@ -1360,7 +1371,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         // they have nothing to key on beyond their event type - set a
                         // dummy automation type so the envelope look ups (which are gated
                         // on a type being selected) resolve the lane envelope
-                        let single_midi_lane = matches!(type_to_show, AutomationViewMode::AfterTouch | AutomationViewMode::KeyPressure | AutomationViewMode::ProgramChange | AutomationViewMode::ActiveSense);
+                        let single_midi_lane = matches!(type_to_show, AutomationViewMode::AfterTouch | AutomationViewMode::KeyPressure | AutomationViewMode::ProgramChange | AutomationViewMode::ActiveSense | AutomationViewMode::Tempo);
                         state.set_automation_view_mode(type_to_show);
                         if single_midi_lane {
                             state.set_automation_type(Some(0));
@@ -4330,6 +4341,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
                                     AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
                                     AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
+                                    AutomationViewMode::Tempo => AutomationViewMode::Tempo,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -4360,7 +4372,27 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     {
                                         match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
-                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                let events = if let AutomationViewMode::Tempo = automation_view_mode {
+                                                    // the tempo lane is backed by the song/arrangement tempo automation
+                                                    match state.get_tempo_automation_for_current_view() {
+                                                        Some(tempo_automation) => {
+                                                            if state.automation_discrete() {
+                                                                Some(tempo_automation.events())
+                                                            }
+                                                            else {
+                                                                if let Some(_automation_type_value) = automation_type {
+                                                                    tempo_automation.envelopes().iter().find(|envelope| {
+                                                                        if let TrackEvent::Tempo(_) = envelope.event_details() { true }
+                                                                        else { false }
+                                                                    }).map(|envelope| envelope.events())
+                                                                }
+                                                                else { None }
+                                                            }
+                                                        }
+                                                        None => None,
+                                                    }
+                                                }
+                                                else if let AutomationViewMode::NoteVelocities = automation_view_mode {
                                                     if let Some(selected_riff_uuid) = selected_riff_uuid {
                                                         if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
                                                             Some(riff.events_vec())
@@ -4415,6 +4447,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                 }
                                                                                 AutomationViewMode::ActiveSense => {
                                                                                     if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                }
+                                                                                AutomationViewMode::Tempo => {
+                                                                                    if let TrackEvent::Tempo(_) = envelope.event_details() {
                                                                                         found = true;
                                                                                     }
                                                                                 }
@@ -4502,6 +4539,11 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             }
                                                                             AutomationViewMode::ActiveSense => {
                                                                                 if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                                                    found = true;
+                                                                                }
+                                                                            }
+                                                                            AutomationViewMode::Tempo => {
+                                                                                if let TrackEvent::Tempo(_) = envelope.event_details() {
                                                                                     found = true;
                                                                                 }
                                                                             }
@@ -4657,6 +4699,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 }
                                                             })
                                                         }
+                                                        AutomationViewMode::Tempo => {
+                                                            let bpm_lower = tempo_lane_value_to_bpm(value_lower as f64);
+                                                            let bpm_higher = tempo_lane_value_to_bpm(value_higher as f64);
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::Tempo(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && bpm_lower <= event.bpm() && event.bpm() <= bpm_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
@@ -4756,6 +4814,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
                                     AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
                                     AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
+                                    AutomationViewMode::Tempo => AutomationViewMode::Tempo,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -4786,7 +4845,27 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     {
                                         match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
-                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                let events = if let AutomationViewMode::Tempo = automation_view_mode {
+                                                    // the tempo lane is backed by the song/arrangement tempo automation
+                                                    match state.get_tempo_automation_for_current_view() {
+                                                        Some(tempo_automation) => {
+                                                            if state.automation_discrete() {
+                                                                Some(tempo_automation.events())
+                                                            }
+                                                            else {
+                                                                if let Some(_automation_type_value) = automation_type {
+                                                                    tempo_automation.envelopes().iter().find(|envelope| {
+                                                                        if let TrackEvent::Tempo(_) = envelope.event_details() { true }
+                                                                        else { false }
+                                                                    }).map(|envelope| envelope.events())
+                                                                }
+                                                                else { None }
+                                                            }
+                                                        }
+                                                        None => None,
+                                                    }
+                                                }
+                                                else if let AutomationViewMode::NoteVelocities = automation_view_mode {
                                                     if let Some(selected_riff_uuid) = selected_riff_uuid {
                                                         if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
                                                             Some(riff.events_vec())
@@ -4940,6 +5019,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 }
                                                             })
                                                         }
+                                                        AutomationViewMode::Tempo => {
+                                                            let bpm_lower = tempo_lane_value_to_bpm(value_lower as f64);
+                                                            let bpm_higher = tempo_lane_value_to_bpm(value_higher as f64);
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::Tempo(event) => {
+                                                                        let position = event.position();
+                                                                        if time_lower <= position && position <= time_higher
+                                                                            && bpm_lower <= event.bpm() && event.bpm() <= bpm_higher {
+                                                                            selected.push(event.id());
+                                                                        }
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
@@ -5039,6 +5134,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     AutomationViewMode::KeyPressure => AutomationViewMode::KeyPressure,
                                     AutomationViewMode::ProgramChange => AutomationViewMode::ProgramChange,
                                     AutomationViewMode::ActiveSense => AutomationViewMode::ActiveSense,
+                                    AutomationViewMode::Tempo => AutomationViewMode::Tempo,
                                     AutomationViewMode::Instrument => AutomationViewMode::Instrument,
                                     AutomationViewMode::Effect => AutomationViewMode::Effect,
                                     AutomationViewMode::NoteExpression => AutomationViewMode::NoteExpression,
@@ -5069,7 +5165,27 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     {
                                         match tracks.iter().find(|track| track.uuid().to_string() == track_uuid) {
                                             Some(track_type) => {
-                                                let events = if let AutomationViewMode::NoteVelocities = automation_view_mode {
+                                                let events = if let AutomationViewMode::Tempo = automation_view_mode {
+                                                    // the tempo lane is backed by the song/arrangement tempo automation
+                                                    match state.get_tempo_automation_for_current_view() {
+                                                        Some(tempo_automation) => {
+                                                            if state.automation_discrete() {
+                                                                Some(tempo_automation.events())
+                                                            }
+                                                            else {
+                                                                if let Some(_automation_type_value) = automation_type {
+                                                                    tempo_automation.envelopes().iter().find(|envelope| {
+                                                                        if let TrackEvent::Tempo(_) = envelope.event_details() { true }
+                                                                        else { false }
+                                                                    }).map(|envelope| envelope.events())
+                                                                }
+                                                                else { None }
+                                                            }
+                                                        }
+                                                        None => None,
+                                                    }
+                                                }
+                                                else if let AutomationViewMode::NoteVelocities = automation_view_mode {
                                                     if let Some(selected_riff_uuid) = selected_riff_uuid {
                                                         if let Some(riff) = track_type.riffs().iter().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
                                                             Some(riff.events_vec())
@@ -5185,6 +5301,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                                 let find_fn = |envelope: &&AutomationEnvelope| {
                                                                                     let mut found = false;
                                                                                     if let TrackEvent::ActiveSense(_) = envelope.event_details() {
+                                                                                        found = true;
+                                                                                    }
+                                                                                    return found;
+                                                                                };
+                                                                                if let Some(automation_envelope) = automation.envelopes().iter().find(find_fn) {
+                                                                                    Some(automation_envelope.events())
+                                                                                } else { None }
+                                                                            }
+                                                                            AutomationViewMode::Tempo => {
+                                                                                let find_fn = |envelope: &&AutomationEnvelope| {
+                                                                                    let mut found = false;
+                                                                                    if let TrackEvent::Tempo(_) = envelope.event_details() {
                                                                                         found = true;
                                                                                     }
                                                                                     return found;
@@ -5349,6 +5477,16 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 }
                                                             })
                                                         }
+                                                        AutomationViewMode::Tempo => {
+                                                            events.iter().for_each(|event| {
+                                                                match event {
+                                                                    TrackEvent::Tempo(event) => {
+                                                                        selected.push(event.id());
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            })
+                                                        }
                                                         AutomationViewMode::Instrument => {
                                                             if let Some(automation_type_value) = automation_type {
                                                                 // get the instrument plugin uuid
@@ -5435,7 +5573,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationAdd(automation) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation add", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation add", automation_mutation_scope(state, scoped_track_uuid));
                     for automation_item in automation.iter() {
                         handle_automation_add(automation_item.0, automation_item.1, &state);
                     }
@@ -5444,14 +5582,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationDelete(time) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation delete", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation delete", automation_mutation_scope(state, scoped_track_uuid));
                     handle_automation_delete(time, &state);
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
                 }
                 TrackChangeType::AutomationTranslateSelected(_translation_entity_type, translate_direction) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation translate selected", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation translate selected", automation_mutation_scope(state, scoped_track_uuid));
                     let mut snap_in_beats = 1.0;
                     match gui.automation_grid() {
                         Some(controller_grid) => match controller_grid.lock() {
@@ -5466,7 +5604,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationChange(change) => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation change", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation change", automation_mutation_scope(state, scoped_track_uuid));
                     debug!("TrackChangeType::AutomationChange");
                     handle_automation_change(&state, change);
                     gui.ui.track_drawing_area.queue_draw();
@@ -5474,7 +5612,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationQuantiseSelected => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation quantise selected", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation quantise selected", automation_mutation_scope(state, scoped_track_uuid));
                     let mut snap_in_beats = 1.0;
                     let mut quantise_strength = 1.0;
                     match gui.automation_grid() {
@@ -5494,7 +5632,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationCut => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation cut", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation cut", automation_mutation_scope(state, scoped_track_uuid));
                     let edit_cursor_time_in_beats = if let Some(grid) = gui.automation_grid() {
                         match grid.lock() {
                             Ok(grid) => grid.edit_cursor_time_in_beats(),
@@ -5518,7 +5656,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
                 TrackChangeType::AutomationPaste => {
                     let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
-                    scoped_mutation = begin_scoped_mutation(state, "automation paste", Scope::TrackAutomation(scoped_track_uuid));
+                    scoped_mutation = begin_scoped_mutation(state, "automation paste", automation_mutation_scope(state, scoped_track_uuid));
                     let edit_cursor_time_in_beats = if let Some(grid) = gui.automation_grid() {
                         match grid.lock() {
                             Ok(grid) => grid.edit_cursor_time_in_beats(),
@@ -9603,6 +9741,22 @@ win.connect_close_request(|window| {
 //     (track_uuid, automation_type, selected_riff_uuid, current_view, automation_edit_type, events, plugin_uuid)
 // }
 
+/// The undo scope for automation view changes - the tempo lane edits the song's
+/// tempo automation when the riff arrangement view is not active, and that is not
+/// covered by the track automation scope, so switch to the song tempo scope for
+/// those edits (the arrangement's tempo automation is covered by the track scope
+/// because it also snapshots the arrangements).
+fn automation_mutation_scope(state: &Arc<Mutex<DAWState>>, track_uuid: String) -> Scope {
+    if let Ok(state) = state.lock() {
+        if matches!(state.automation_view_mode(), AutomationViewMode::Tempo)
+            && !matches!(state.current_view(), CurrentView::RiffArrangement) {
+            return Scope::SongTempoAutomation;
+        }
+    }
+
+    Scope::TrackAutomation(track_uuid)
+}
+
 fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<DAWState>>) {
     match state.lock() {
         Ok(mut state) => {
@@ -9613,6 +9767,7 @@ fn handle_automation_add(time: f64, value: i32, state: &Arc<Mutex<DAWState>>) {
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_add(time, value, MidiAutomationLane::KeyPressure, &mut state),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_add(time, value, MidiAutomationLane::ProgramChange, &mut state),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_add(time, value, MidiAutomationLane::ActiveSense, &mut state),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_add(time, value, MidiAutomationLane::Tempo, &mut state),
                 AutomationViewMode::Instrument => handle_automation_instrument_add(time, value, &mut state),
                 AutomationViewMode::Effect => handle_automation_effect_add(time, value, &mut state),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_add(time, value, &mut state),
@@ -10437,6 +10592,7 @@ enum MidiAutomationLane {
     KeyPressure,
     ProgramChange,
     ActiveSense,
+    Tempo,
 }
 
 impl MidiAutomationLane {
@@ -10445,7 +10601,8 @@ impl MidiAutomationLane {
             (MidiAutomationLane::AfterTouch, TrackEvent::AfterTouch(_)) |
             (MidiAutomationLane::KeyPressure, TrackEvent::KeyPressure(_)) |
             (MidiAutomationLane::ProgramChange, TrackEvent::ProgramChange(_)) |
-            (MidiAutomationLane::ActiveSense, TrackEvent::ActiveSense(_)) => true,
+            (MidiAutomationLane::ActiveSense, TrackEvent::ActiveSense(_)) |
+            (MidiAutomationLane::Tempo, TrackEvent::Tempo(_)) => true,
             _ => false,
         }
     }
@@ -10457,16 +10614,19 @@ impl MidiAutomationLane {
             MidiAutomationLane::KeyPressure => TrackEvent::KeyPressure(KeyPressure::new(0.0, 0, 0)),
             MidiAutomationLane::ProgramChange => TrackEvent::ProgramChange(ProgramChange::new(0.0, 0)),
             MidiAutomationLane::ActiveSense => TrackEvent::ActiveSense(ActiveSense::new(0.0)),
+            MidiAutomationLane::Tempo => TrackEvent::Tempo(Tempo::new(0.0, 120.0)),
         }
     }
 
-    /// A new event on the lane (the value is ignored by active sensing).
+    /// A new event on the lane (the value is ignored by active sensing, and the
+    /// tempo lane maps its 0-127 automation value onto the lane's bpm scale).
     fn make_event(&self, time: f64, value: i32) -> TrackEvent {
         match self {
             MidiAutomationLane::AfterTouch => TrackEvent::AfterTouch(AfterTouch::new(time, value)),
             MidiAutomationLane::KeyPressure => TrackEvent::KeyPressure(KeyPressure::new(time, 0, value)),
             MidiAutomationLane::ProgramChange => TrackEvent::ProgramChange(ProgramChange::new(time, value)),
             MidiAutomationLane::ActiveSense => TrackEvent::ActiveSense(ActiveSense::new(time)),
+            MidiAutomationLane::Tempo => TrackEvent::Tempo(Tempo::new(time, tempo_lane_value_to_bpm(value as f64))),
         }
     }
 }
@@ -10491,6 +10651,14 @@ fn lane_events_or_envelope(automation: &mut Automation, lane: MidiAutomationLane
 /// otherwise the track automation or the selected riff's events. Returns None
 /// when the lane has no backing list (no arrangement/riff selected).
 fn with_midi_lane_events<T>(state: &mut DAWState, lane: MidiAutomationLane, lane_op: impl FnOnce(&mut Vec<TrackEvent>) -> T) -> Option<T> {
+    // the tempo lane is backed by the song/arrangement tempo automation rather than
+    // any per track automation
+    if matches!(lane, MidiAutomationLane::Tempo) {
+        let automation_discrete = state.automation_discrete();
+        let events = state.get_tempo_automation_for_current_view_mut().map(|automation| lane_events_or_envelope(automation, lane, automation_discrete)).flatten();
+        return if let Some(events) = events { Some(lane_op(events)) } else { None };
+    }
+
     let track_uuid = state.selected_track().unwrap_or("".to_string());
     let selected_riff_uuid = if let Some(selected_riff_uuid) = state.selected_riff_uuid(track_uuid.clone()) {
         Some(selected_riff_uuid.clone())
@@ -10713,6 +10881,7 @@ fn handle_automation_delete(time: f64, state: &Arc<Mutex<DAWState>>) {
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_delete(time, MidiAutomationLane::KeyPressure, &mut state),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_delete(time, MidiAutomationLane::ProgramChange, &mut state),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_delete(time, MidiAutomationLane::ActiveSense, &mut state),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_delete(time, MidiAutomationLane::Tempo, &mut state),
                 AutomationViewMode::Instrument => handle_automation_instrument_delete(time, &mut state),
                 AutomationViewMode::Effect => handle_automation_effect_delete(time, &mut state),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_delete(time, &mut state),
@@ -11528,6 +11697,7 @@ fn handle_automation_cut(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beats
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_cut(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_cut(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_cut(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_cut(&mut state, edit_cursor_time_in_beats),
@@ -12416,6 +12586,7 @@ fn handle_automation_translate_selected(state: &Arc<Mutex<DAWState>>, translate_
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_translate_selected(&mut state, translate_direction, snap_in_beats, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_translate_selected(&mut state, translate_direction, snap_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_translate_selected(&mut state, translate_direction, snap_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_translate_selected(&mut state, translate_direction, snap_in_beats),
@@ -13412,6 +13583,7 @@ fn handle_automation_copy(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_beat
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_copy(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_copy(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_copy(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_copy(&mut state, edit_cursor_time_in_beats),
@@ -14254,6 +14426,7 @@ fn handle_automation_paste(state: &Arc<Mutex<DAWState>>, edit_cursor_time_in_bea
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_paste(&mut state, edit_cursor_time_in_beats, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_paste(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::Effect => handle_automation_effect_paste(&mut state, edit_cursor_time_in_beats),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_paste(&mut state, edit_cursor_time_in_beats),
@@ -15081,6 +15254,7 @@ fn handle_automation_quantise(state: &Arc<Mutex<DAWState>>, snap_in_beats: f64, 
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_quantise(&mut state, snap_in_beats, quantise_strength, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_quantise(&mut state, snap_in_beats, quantise_strength),
                 AutomationViewMode::Effect => handle_automation_effect_quantise(&mut state, snap_in_beats, quantise_strength),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_quantise(&mut state, snap_in_beats, quantise_strength),
@@ -15924,6 +16098,7 @@ fn handle_automation_change(state: &Arc<Mutex<DAWState>>, changed_events: Vec<(T
                 AutomationViewMode::KeyPressure => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::KeyPressure),
                 AutomationViewMode::ProgramChange => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::ProgramChange),
                 AutomationViewMode::ActiveSense => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::ActiveSense),
+                AutomationViewMode::Tempo => handle_automation_midi_lane_change(&mut state, changed_events, MidiAutomationLane::Tempo),
                 AutomationViewMode::Instrument => handle_automation_instrument_change(&mut state, changed_events),
                 AutomationViewMode::Effect => handle_automation_effect_change(&mut state, changed_events),
                 AutomationViewMode::NoteExpression => handle_automation_note_expression_change(&mut state, changed_events),

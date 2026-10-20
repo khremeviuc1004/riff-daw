@@ -43,6 +43,7 @@ pub enum ShowType {
     KeyPressure,
     ProgramChange,
     ActiveSense,
+    Tempo,
     InstrumentParameter,
     EffectParameter,
 }

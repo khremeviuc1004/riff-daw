@@ -1871,6 +1871,7 @@ pub fn set_track_order(state: &mut DAWState, _scope_id: &str, order: &Vec<String
 #[derive(Clone)]
 pub enum Scope {
     SongProperties,                                   // tempo + time signature
+    SongTempoAutomation,                              // the song level tempo automation (tempo lane edits outside the arrangement view)
     Loops,
     RiffSets,
     RiffSequences,
@@ -1894,6 +1895,7 @@ pub enum Scope {
 #[derive(Clone, serde::Serialize)]
 pub enum ScopeValue {
     SongProperties((f64, f64, f64)),
+    SongTempoAutomation(Box<crate::domain::Automation>),
     Loops(Vec<crate::domain::Loop>),
     RiffSets(Vec<crate::domain::RiffSet>),
     RiffSequences(Vec<crate::domain::RiffSequence>),
@@ -1923,6 +1925,7 @@ pub struct ScopedMutation {
 pub fn read_scope(state: &DAWState, scope: &Scope) -> ScopeValue {
     match scope {
         Scope::SongProperties => ScopeValue::SongProperties((state.project().song().tempo(), state.project().song().time_signature_numerator(), state.project().song().time_signature_denominator())),
+        Scope::SongTempoAutomation => ScopeValue::SongTempoAutomation(Box::new(state.project().song().tempo_automation().clone())),
         Scope::Loops => ScopeValue::Loops(state.project().song().loops().to_vec()),
         Scope::RiffSets => ScopeValue::RiffSets(state.project().song().riff_sets().clone()),
         Scope::RiffSequences => ScopeValue::RiffSequences(state.project().song().riff_sequences().clone()),
@@ -1976,6 +1979,7 @@ fn write_scope(state: &mut DAWState, scope: &Scope, value: &ScopeValue) {
                 state.send_to_track_background_processor(track_uuid, crate::event::TrackBackgroundProcessorInwardEvent::TimeSignatureChange(*numerator as u32, *denominator as u32));
             }
         }
+        (Scope::SongTempoAutomation, ScopeValue::SongTempoAutomation(automation)) => { *state.get_project().song_mut().tempo_automation_mut() = automation.as_ref().clone(); },
         (Scope::Loops, ScopeValue::Loops(loops)) => { *state.get_project().song_mut().loops_mut() = loops.clone(); },
         (Scope::RiffSets, ScopeValue::RiffSets(riff_sets)) => { *state.get_project().song_mut().riff_sets_mut() = riff_sets.clone(); },
         (Scope::RiffSequences, ScopeValue::RiffSequences(riff_sequences)) => { *state.get_project().song_mut().riff_sequences_mut() = riff_sequences.clone(); },

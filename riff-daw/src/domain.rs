@@ -1310,7 +1310,9 @@ impl ActiveSense {
 
 /// A tempo event - carries a new tempo in beats per minute. On playback it is
 /// applied to the track's plugin instances (there is no midi message for it)
-/// just like the inward tempo event does.
+/// just like the inward tempo event does. Tempo automation is song/riff
+/// arrangement level data that gets fed to every track when the song or the
+/// arrangement is played.
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Tempo {
     #[serde(skip_serializing, skip_deserializing, default)]
@@ -1363,6 +1365,20 @@ impl Tempo {
     pub fn set_bpm(&mut self, bpm: f64) {
         self.bpm = bpm;
     }
+}
+
+/// The tempo automation lane is a 0-127 automation lane like the other midi
+/// lanes - this is the bpm that the top of the lane maps to (and from).
+pub const TEMPO_LANE_MAX_BPM: f64 = 240.0;
+
+/// Converts an automation lane value (0-127) to a tempo bpm.
+pub fn tempo_lane_value_to_bpm(value: f64) -> f64 {
+    value * TEMPO_LANE_MAX_BPM / 127.0
+}
+
+/// Converts a tempo bpm to an automation lane value (0-127).
+pub fn tempo_lane_bpm_to_value(bpm: f64) -> f64 {
+    bpm * 127.0 / TEMPO_LANE_MAX_BPM
 }
 
 
@@ -2057,6 +2073,8 @@ pub struct RiffArrangement {
     items: Vec<RiffItem>,
     track_automation: HashMap<String, Automation>,
     #[serde(default)]
+    tempo_automation: Automation,
+    #[serde(default)]
     track_instrument_overrides: HashMap<String, InstrumentOverride>,
     #[serde(default)]
     track_effects_overrides: HashMap<String, EffectsOverride>,
@@ -2148,6 +2166,7 @@ impl RiffArrangement {
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
+            tempo_automation: Automation::new(),
             track_instrument_overrides: HashMap::new(),
             track_effects_overrides: HashMap::new(),
         }
@@ -2159,6 +2178,7 @@ impl RiffArrangement {
             name: "Unknown".to_owned(),
             items: vec![],
             track_automation: HashMap::new(),
+            tempo_automation: Automation::new(),
             track_instrument_overrides: HashMap::new(),
             track_effects_overrides: HashMap::new(),
         }
@@ -2214,6 +2234,18 @@ impl RiffArrangement {
 
     pub fn remove_track_automation(&mut self, track_uuid: &String) {
         self.track_automation.remove(track_uuid);
+    }
+
+    /// Get a reference to this arrangement's tempo automation. Tempo is not a per
+    /// track thing - the arrangement's tempo automation is fed to every track when
+    /// the arrangement is played.
+    pub fn tempo_automation(&self) -> &Automation {
+        &self.tempo_automation
+    }
+
+    /// Get a mutable reference to this arrangement's tempo automation.
+    pub fn tempo_automation_mut(&mut self) -> &mut Automation {
+        &mut self.tempo_automation
     }
 
     pub fn instrument_override(&self, track_uuid: &String) -> Option<&InstrumentOverride> {
@@ -2291,6 +2323,12 @@ pub struct Automation {
 	events: Vec<TrackEvent>, // discrete events
     #[serde(default = "Vec::new")]
     envelopes: Vec<AutomationEnvelope>, // continuous events
+}
+
+impl Default for Automation {
+    fn default() -> Self {
+        Automation::new()
+    }
 }
 
 impl Automation {
@@ -8059,6 +8097,8 @@ pub struct Song {
     #[serde(default)]
     riff_grids: Vec<RiffGrid>,
     riff_arrangements: Vec<RiffArrangement>,
+    #[serde(default)]
+    tempo_automation: Automation,
     samples: HashMap<String, Sample>,
 }
 
@@ -8076,6 +8116,7 @@ impl Song {
             riff_sequences: vec![],
             riff_grids: vec![],
             riff_arrangements: vec![],
+            tempo_automation: Automation::new(),
             samples: HashMap::new(),
 		}
 	}
@@ -8127,6 +8168,17 @@ impl Song {
     /// Set the song's tempo.
     pub fn set_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
+    }
+
+    /// Get a reference to the song's tempo automation. Tempo is a song level thing -
+    /// the song's tempo automation is fed to every track when the song is played.
+    pub fn tempo_automation(&self) -> &Automation {
+        &self.tempo_automation
+    }
+
+    /// Get a mutable reference to the song's tempo automation.
+    pub fn tempo_automation_mut(&mut self) -> &mut Automation {
+        &mut self.tempo_automation
     }
 
     pub fn track_mut(&mut self, uuid: &Uuid) -> Option<&mut TrackType> {
@@ -9566,11 +9618,11 @@ mod tests {
 
         // do the conversion
         let (event_blocks, _param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+            DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator, None);
 
         // do the transition conversion
         let (transition_event_blocks, _transition_param_event_blocks) =
-            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator);
+            DAWUtils::convert_to_event_blocks(&transition_automation, &transition_riffs, &transition_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, true, time_signature_numerator, time_signature_denominator, None);
 
         track_helper.event_processor.set_track_event_blocks(Some(event_blocks.clone()));
         track_helper.event_processor.set_play(true);

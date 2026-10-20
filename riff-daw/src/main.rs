@@ -608,7 +608,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         {
                             let mut time_info = vst_host_time_info.write();
                             time_info.sample_pos = 0.0;
-                            time_info.sample_rate = state.configuration.audio.sample_rate as f64;; // FIXME is sample rate and block size part of a song or should it be part of configuration???
+                            time_info.sample_rate = state.configuration.audio.sample_rate as f64; // FIXME is sample rate and block size part of a song or should it be part of configuration???
                             time_info.nanoseconds = 0.0;
                             time_info.ppq_pos = 0.0;
                             time_info.tempo = tempo;
@@ -762,8 +762,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                         match state.lock() {
                             Ok(mut state) => {
-                                let sample_rate = state.configuration.audio.sample_rate as f64;;
-                                let block_size = state.configuration.audio.block_size as f64;;
+                                let sample_rate = state.configuration.audio.sample_rate as f64;
+                                let block_size = state.configuration.audio.block_size as f64;
                                 let time_signature_numerator = state.project().song().time_signature_numerator();
                                 let time_signature_denominator = state.project().song().time_signature_denominator();
                                 let tracks = state.get_project().song_mut().tracks_mut();
@@ -1376,6 +1376,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         if single_midi_lane {
                             state.set_automation_type(Some(0));
                         }
+                        gui.refresh_tempo_lane_indicator(&state);
                     },
                     Err(error) => debug!("Error: {}", error),
                 }
@@ -1661,7 +1662,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             let mut instrument_track_senders_local = HashMap::new();
                             let mut instrument_track_receivers_local = HashMap::new();
                             let sample_rate = state.configuration.audio.sample_rate as f64;
-                            let block_size = state.configuration.audio.block_size as f64;;
+                            let block_size = state.configuration.audio.block_size as f64;
                             let tempo = state.project().song().tempo();
                             let time_signature_numerator = state.project().song().time_signature_numerator();
                             let time_signature_denominator = state.project().song().time_signature_denominator();
@@ -6028,8 +6029,8 @@ win.connect_close_request(|window| {
                                     let mut new_track = InstrumentTrack::new();
                                     let mut instrument_track_senders2 = HashMap::new();
                                     let mut instrument_track_receivers2 = HashMap::new();
-                                    let sample_rate = state.configuration.audio.sample_rate as f64;;
-                                    let block_size = state.configuration.audio.block_size as f64;;
+                                    let sample_rate = state.configuration.audio.sample_rate as f64;
+                                    let block_size = state.configuration.audio.block_size as f64;
                                     let tempo = state.project().song().tempo();
                                     let time_signature_numerator = state.project().song().time_signature_numerator();
                                     let time_signature_denominator = state.project().song().time_signature_denominator();
@@ -6936,7 +6937,7 @@ win.connect_close_request(|window| {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
                         let time_signature_numerator = state.get_project().song().time_signature_numerator();
-                        let sample_rate = state.configuration.audio.sample_rate as f64;;
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
                         let play_position_in_frames = 0.0;
                         let play_position_in_beats = play_position_in_frames / sample_rate * bpm / 60.0;
                         let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
@@ -6995,7 +6996,7 @@ win.connect_close_request(|window| {
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
-                        let sample_rate = state.configuration.audio.sample_rate as f64;;
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
                         let block_size = state.configuration.audio.block_size as f64;
                         let time_signature_numerator = state.project().song().time_signature_numerator();
                         let beats_per_bar = time_signature_numerator;
@@ -7213,7 +7214,7 @@ win.connect_close_request(|window| {
                 match state.lock() {
                     Ok(mut state) => {
                         let bpm = state.get_project().song().tempo();
-                        let sample_rate = state.configuration.audio.sample_rate as f64;;
+                        let sample_rate = state.configuration.audio.sample_rate as f64;
                         let block_size = state.configuration.audio.block_size as f64;
                         let time_signature_numerator = state.project().song().time_signature_numerator();
                         let beats_per_bar = time_signature_numerator;
@@ -8993,6 +8994,7 @@ win.connect_close_request(|window| {
                 match state.lock() {
                     Ok(mut state) => {
                         state.set_selected_riff_arrangement_uuid(Some(riff_arrangement_uuid));
+                        gui.refresh_tempo_lane_indicator(&state);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff arrangement selected - could not get lock on state"),
                 };
@@ -9004,6 +9006,9 @@ win.connect_close_request(|window| {
             }
             DAWEvents::RiffArrangementOverridesChanged => {
                 handle_riff_arrangement_overrides_sync(state, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), gui);
+                if let Ok(state) = state.lock() {
+                    gui.refresh_tempo_lane_indicator(&state);
+                }
             }
             DAWEvents::RiffArrangementNameChange(riff_arrangement_uuid, name) => {
             scoped_mutation = begin_scoped_mutation(state, "riff arrangement name change", Scope::RiffArrangements);
@@ -17089,7 +17094,7 @@ fn create_jack_time_critical_event_processing_thread(
                                     match state.lock() {
                                         Ok(mut state) => {
                                             let tempo = state.project().song().tempo();
-                                            let sample_rate = state.configuration.audio.sample_rate as f64;;
+                                            let sample_rate = state.configuration.audio.sample_rate as f64;
                                             let current_view = state.current_view().clone();
                                             let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                                                 Some(selected_riff_arrangement_uuid.to_string())

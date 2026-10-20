@@ -17676,6 +17676,12 @@
                                 <property name="child">
                                   <object class="GtkBox" id="automation_grid_edit_tempo_box">
                                     <property name="visible">True</property>
+                                    <child>
+                                      <object class="GtkLabel" id="automation_tempo_target_label">
+                                        <property name="visible">True</property>
+                                        <property name="label" translatable="yes">Tempo automation: Song</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </property>
                               </object>

@@ -380,6 +380,7 @@ pub struct Ui {
     pub automation_grid_edit_program_change_box: Box,
     pub automation_grid_edit_active_sense_box: Box,
     pub automation_grid_edit_tempo_box: Box,
+    pub automation_tempo_target_label: Label,
     pub automation_grid_edit_instrument_parameters_box: Box,
     pub automation_grid_edit_effect_parameters_box: Box,
     pub automation_edit_panel_stack: Stack,
@@ -1020,6 +1021,7 @@ gtk4_builder_from!(Ui {
     automation_grid_edit_program_change_box: Box,
     automation_grid_edit_active_sense_box: Box,
     automation_grid_edit_tempo_box: Box,
+    automation_tempo_target_label: Label,
     automation_grid_edit_instrument_parameters_box: Box,
     automation_grid_edit_effect_parameters_box: Box,
     automation_edit_panel_stack: Stack,
@@ -11296,6 +11298,23 @@ impl MainWindow {
         }
     }
 
+    /// Reflects in the tempo lane's label which tempo automation is being edited -
+    /// the song's outside the riff arrangement view, or the selected arrangement's
+    /// when the riff arrangement view is active.
+    pub fn refresh_tempo_lane_indicator(&self, state: &DAWState) {
+        let label = match state.current_view() {
+            CurrentView::RiffArrangement => {
+                match state.selected_riff_arrangement_uuid().and_then(|riff_arrangement_uuid| state.project().song().riff_arrangement(riff_arrangement_uuid.clone())) {
+                    Some(riff_arrangement) => format!("Tempo automation: Arrangement \"{}\"", riff_arrangement.name()),
+                    None => "Tempo automation: Arrangement (none selected)".to_string(),
+                }
+            },
+            _ => "Tempo automation: Song".to_string(),
+        };
+
+        self.ui.automation_tempo_target_label.set_text(label.as_str());
+    }
+
     /// Reapplies the selected track's highlight css class across every track
     /// panel - the lanes are rebuilt on refresh so the class added by the lane
     /// click handlers is lost with the old widgets. The lane frames are named
@@ -11473,6 +11492,7 @@ impl MainWindow {
         // the lane widgets were rebuilt so the highlight applied by the click
         // handlers went with the old widgets - reapply it to the selected track
         self.apply_track_selection_highlight(state.selected_track().as_ref());
+        self.refresh_tempo_lane_indicator(state);
 
         // reflect the selection in the piano roll / sample roll track name labels
         if let Some(selected_track_uuid) = state.selected_track() {

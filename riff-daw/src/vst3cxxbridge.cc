@@ -1054,6 +1054,46 @@ bool Vst3PluginHandler::addEvent(EventType eventType, int32_t blockPosition, uin
                 }
                 break;
             }
+            case EventType::AfterTouch:
+            {
+                std::cout << "Vst3PluginHandler::addEvent - after touch (channel pressure)" << std::endl;
+                // need to get the channel after touch mapping
+                Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
+                if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
+                {
+                    Steinberg::Vst::ParamID id = 0;
+                    midiMapping->getMidiControllerAssignment(0, 0, Steinberg::Vst::ControllerNumbers::kAfterTouch, id);
+                    int32_t index = 0;
+                    Steinberg::Vst::IParamValueQueue *parameterQueue = processData.inputParameterChanges->addParameterData(id , index);
+                    std::cout << "Parameter: blockPosition=" << blockPosition << ", value=" << (static_cast<double>(data1) / 127.0) << ", index=" << index << ", id=" << id << std::endl;
+                    if (parameterQueue && parameterQueue->addPoint(blockPosition, (static_cast<double>(data1) / 127.0), index))
+                    {
+                        std::cout << "Problem adding parameter to the queue." << std::endl;
+                    }
+                    midiMapping->release();
+                }
+                break;
+            }
+            case EventType::ProgramChange:
+            {
+                std::cout << "Vst3PluginHandler::addEvent - program change" << std::endl;
+                // need to get the program change mapping
+                Steinberg::Vst::IMidiMapping* midiMapping = nullptr;
+                if (editController.get()->queryInterface(Steinberg::Vst::IMidiMapping::iid, (void**)&midiMapping) == Steinberg::kResultOk)
+                {
+                    Steinberg::Vst::ParamID id = 0;
+                    midiMapping->getMidiControllerAssignment(0, 0, Steinberg::Vst::ControllerNumbers::kCtrlProgramChange, id);
+                    int32_t index = 0;
+                    Steinberg::Vst::IParamValueQueue *parameterQueue = processData.inputParameterChanges->addParameterData(id , index);
+                    std::cout << "Parameter: blockPosition=" << blockPosition << ", value=" << (static_cast<double>(data1) / 127.0) << ", index=" << index << ", id=" << id << std::endl;
+                    if (parameterQueue && parameterQueue->addPoint(blockPosition, (static_cast<double>(data1) / 127.0), index))
+                    {
+                        std::cout << "Problem adding parameter to the queue." << std::endl;
+                    }
+                    midiMapping->release();
+                }
+                break;
+            }
             case EventType::Parameter:
             {
                 int32_t index = 0;

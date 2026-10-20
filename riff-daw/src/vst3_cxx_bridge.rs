@@ -10,6 +10,8 @@ pub mod ffi {
         Controller,
         KeyPressureAfterTouch,
         PitchBend,
+        AfterTouch,
+        ProgramChange,
         Parameter
     }
 

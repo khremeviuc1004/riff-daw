@@ -54,36 +54,43 @@ pub enum PlayMode {
     RiffArrangement,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum TrackEvent {
-    #[default]
-    ActiveSense,
-    AfterTouch,
-    ProgramChange,
+    ActiveSense(ActiveSense),
+    AfterTouch(AfterTouch),
+    ProgramChange(ProgramChange),
     Note(Note),
     NoteOn(NoteOn),
     NoteOff(NoteOff),
     NoteExpression(NoteExpression),
     Controller(Controller),
     PitchBend(PitchBend),
-    KeyPressure,
+    KeyPressure(KeyPressure),
     AudioPluginParameter(PluginParameter),
     Sample(SampleReference),
     Measure(Measure),
 }
 
+// the active sense variant is the default - it carries no musical data and is used
+// as the sentinel value in the event routing ring buffers.
+impl Default for TrackEvent {
+    fn default() -> Self {
+        TrackEvent::ActiveSense(ActiveSense::default())
+    }
+}
+
 impl DAWItemID for TrackEvent {
     fn id(&self) -> String {
         match self {
-            TrackEvent::ActiveSense => Uuid::nil().to_string(),
-            TrackEvent::AfterTouch => Uuid::nil().to_string(),
-            TrackEvent::ProgramChange => Uuid::nil().to_string(),
+            TrackEvent::ActiveSense(active_sense) => active_sense.id(),
+            TrackEvent::AfterTouch(after_touch) => after_touch.id(),
+            TrackEvent::ProgramChange(program_change) => program_change.id(),
             TrackEvent::Note(note) => note.id(),
             TrackEvent::NoteOn(_) => Uuid::nil().to_string(),
             TrackEvent::NoteOff(_) => Uuid::nil().to_string(),
             TrackEvent::Controller(controller) => controller.id(),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
-            TrackEvent::KeyPressure => Uuid::nil().to_string(),
+            TrackEvent::KeyPressure(key_pressure) => key_pressure.id(),
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
             TrackEvent::Sample(_) => Uuid::nil().to_string(),
             TrackEvent::Measure(_) => Uuid::nil().to_string(),
@@ -93,15 +100,15 @@ impl DAWItemID for TrackEvent {
 
     fn id_mut(&mut self) -> String {
         match self {
-            TrackEvent::ActiveSense => Uuid::nil().to_string(),
-            TrackEvent::AfterTouch => Uuid::nil().to_string(),
-            TrackEvent::ProgramChange => Uuid::nil().to_string(),
+            TrackEvent::ActiveSense(active_sense) => active_sense.id(),
+            TrackEvent::AfterTouch(after_touch) => after_touch.id(),
+            TrackEvent::ProgramChange(program_change) => program_change.id(),
             TrackEvent::Note(note) => note.id(),
             TrackEvent::NoteOn(_) => Uuid::nil().to_string(),
             TrackEvent::NoteOff(_) => Uuid::nil().to_string(),
             TrackEvent::Controller(controller) => controller.id(),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.id(),
-            TrackEvent::KeyPressure => Uuid::nil().to_string(),
+            TrackEvent::KeyPressure(key_pressure) => key_pressure.id(),
             TrackEvent::AudioPluginParameter(parameter) => parameter.id(),
             TrackEvent::Sample(_) => Uuid::nil().to_string(),
             TrackEvent::Measure(_) => Uuid::nil().to_string(),
@@ -111,9 +118,13 @@ impl DAWItemID for TrackEvent {
 
     fn set_id(&mut self, uuid: String) {
         match self {
+            TrackEvent::ActiveSense(active_sense) => active_sense.set_id(uuid),
+            TrackEvent::AfterTouch(after_touch) => after_touch.set_id(uuid),
+            TrackEvent::ProgramChange(program_change) => program_change.set_id(uuid),
             TrackEvent::Note(note) => note.set_id(uuid),
             TrackEvent::Controller(controller) => controller.set_id(uuid),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.set_id(uuid),
+            TrackEvent::KeyPressure(key_pressure) => key_pressure.set_id(uuid),
             TrackEvent::AudioPluginParameter(parameter) => parameter.set_id(uuid),
             TrackEvent::NoteExpression(note_expression) => note_expression.set_id(uuid),
             _ => {}
@@ -124,15 +135,15 @@ impl DAWItemID for TrackEvent {
 impl DAWItemPosition for TrackEvent {
     fn position(&self) -> f64 {
         match self {
-            TrackEvent::ActiveSense => 0.0,
-            TrackEvent::AfterTouch => 0.0,
-            TrackEvent::ProgramChange => 0.0,
+            TrackEvent::ActiveSense(active_sense) => active_sense.position(),
+            TrackEvent::AfterTouch(after_touch) => after_touch.position(),
+            TrackEvent::ProgramChange(program_change) => program_change.position(),
             TrackEvent::Note(note) => note.position(),
             TrackEvent::NoteOn(note_on) => note_on.position(),
             TrackEvent::NoteOff(note_off) => note_off.position(),
             TrackEvent::Controller(controller) => controller.position(),
             TrackEvent::PitchBend(pitch_bend) => pitch_bend.position(),
-            TrackEvent::KeyPressure => 0.0,
+            TrackEvent::KeyPressure(key_pressure) => key_pressure.position(),
             TrackEvent::AudioPluginParameter(parameter) => parameter.position(),
             TrackEvent::Sample(sample_reference) => sample_reference.position(),
             TrackEvent::Measure(measure) => measure.position(),
@@ -142,15 +153,15 @@ impl DAWItemPosition for TrackEvent {
 
     fn set_position(&mut self, time: f64) {
         match self {
-            TrackEvent::ActiveSense => {}
-            TrackEvent::AfterTouch => {}
-            TrackEvent::ProgramChange => {}
+            TrackEvent::ActiveSense(active_sense) => active_sense.set_position(time),
+            TrackEvent::AfterTouch(after_touch) => after_touch.set_position(time),
+            TrackEvent::ProgramChange(program_change) => program_change.set_position(time),
             TrackEvent::Note(note) => note.set_position(time),
             TrackEvent::NoteOn(note_on) => note_on.set_position(time),
             TrackEvent::NoteOff(note_off) => note_off.set_position(time),
             TrackEvent::Controller(controller) => controller.set_position(time),
             TrackEvent::PitchBend(_pitch_bend) => {}
-            TrackEvent::KeyPressure => {}
+            TrackEvent::KeyPressure(key_pressure) => key_pressure.set_position(time),
             TrackEvent::AudioPluginParameter(parameter) => parameter.set_position(time),
             TrackEvent::Sample(sample_reference) => sample_reference.set_position(time),
             TrackEvent::Measure(measure) => measure.set_position(time),
@@ -184,6 +195,9 @@ impl TrackEvent {
             TrackEvent::NoteExpression(event) => event.value(),
             TrackEvent::Controller(event) => event.value() as f64,
             TrackEvent::PitchBend(event) => event.value() as f64,
+            TrackEvent::AfterTouch(event) => event.value() as f64,
+            TrackEvent::KeyPressure(event) => event.value() as f64,
+            TrackEvent::ProgramChange(event) => event.program() as f64,
             TrackEvent::AudioPluginParameter(event) => event.value() as f64,
             _ => 0.0,
         }
@@ -197,6 +211,9 @@ impl TrackEvent {
             TrackEvent::NoteExpression(event) => event.set_value(value),
             TrackEvent::Controller(event) => event.set_value(value as i32),
             TrackEvent::PitchBend(event) => event.set_value(value as i32),
+            TrackEvent::AfterTouch(event) => event.set_value(value as i32),
+            TrackEvent::KeyPressure(event) => event.set_value(value as i32),
+            TrackEvent::ProgramChange(event) => event.set_program(value as i32),
             TrackEvent::AudioPluginParameter(event) => event.set_value(value as f32),
             _ => (),
         }
@@ -1056,6 +1073,230 @@ impl PitchBend {
         let msb: u8 = (value >> 7) as u8;
 
         (lsb, msb)
+    }
+}
+
+/// MIDI channel pressure (channel aftertouch) - a single pressure value (0-127)
+/// applied to the whole channel (status byte 0xDn).
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct AfterTouch {
+    #[serde(skip_serializing, skip_deserializing, default)]
+    id: Uuid,
+    position: f64,
+    value: i32,
+}
+
+impl DAWItemID for AfterTouch {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) => self.id = uuid,
+            Err(_) => {}
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
+}
+
+impl DAWItemPosition for AfterTouch {
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
+}
+
+impl AfterTouch {
+    pub fn new(position: f64, value: i32) -> Self {
+        Self {
+            position,
+            value,
+            id: Uuid::new_v4(),
+        }
+    }
+
+    /// Get the after touch's value.
+    pub fn value(&self) -> i32 {
+        self.value
+    }
+
+    /// Set the after touch's value.
+    pub fn set_value(&mut self, value: i32) {
+        self.value = value;
+    }
+}
+
+/// MIDI polyphonic key pressure (per note aftertouch) - a pressure value (0-127)
+/// for a specific key (status byte 0xAn).
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct KeyPressure {
+    #[serde(skip_serializing, skip_deserializing, default)]
+    id: Uuid,
+    position: f64,
+    note: i32,
+    value: i32,
+}
+
+impl DAWItemID for KeyPressure {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) => self.id = uuid,
+            Err(_) => {}
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
+}
+
+impl DAWItemPosition for KeyPressure {
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
+}
+
+impl KeyPressure {
+    pub fn new(position: f64, note: i32, value: i32) -> Self {
+        Self {
+            position,
+            note,
+            value,
+            id: Uuid::new_v4(),
+        }
+    }
+
+    /// Get the key pressure's note.
+    pub fn note(&self) -> i32 {
+        self.note
+    }
+
+    /// Get the key pressure's value.
+    pub fn value(&self) -> i32 {
+        self.value
+    }
+
+    /// Set the key pressure's note.
+    pub fn set_note(&mut self, note: i32) {
+        self.note = note;
+    }
+
+    /// Set the key pressure's value.
+    pub fn set_value(&mut self, value: i32) {
+        self.value = value;
+    }
+}
+
+/// MIDI program change - selects an instrument program (0-127) on the channel
+/// (status byte 0xCn).
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ProgramChange {
+    #[serde(skip_serializing, skip_deserializing, default)]
+    id: Uuid,
+    position: f64,
+    program: i32,
+}
+
+impl DAWItemID for ProgramChange {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) => self.id = uuid,
+            Err(_) => {}
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
+}
+
+impl DAWItemPosition for ProgramChange {
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
+}
+
+impl ProgramChange {
+    pub fn new(position: f64, program: i32) -> Self {
+        Self {
+            position,
+            program,
+            id: Uuid::new_v4(),
+        }
+    }
+
+    /// Get the program change's program.
+    pub fn program(&self) -> i32 {
+        self.program
+    }
+
+    /// Set the program change's program.
+    pub fn set_program(&mut self, program: i32) {
+        self.program = program;
+    }
+}
+
+/// MIDI active sensing (system real time 0xFE) - a keep alive marker showing the
+/// MIDI stream is still running. Carries no data so it only has a position.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ActiveSense {
+    #[serde(skip_serializing, skip_deserializing, default)]
+    id: Uuid,
+    position: f64,
+}
+
+impl DAWItemID for ActiveSense {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn set_id(&mut self, uuid: String) {
+        match Uuid::parse_str(uuid.as_str()) {
+            Ok(uuid) => self.id = uuid,
+            Err(_) => {}
+        }
+    }
+
+    fn id_mut(&mut self) -> String {
+        return self.id.to_string()
+    }
+}
+
+impl DAWItemPosition for ActiveSense {
+    fn position(&self) -> f64 {
+        self.position
+    }
+    fn set_position(&mut self, time: f64) {
+        self.position = time;
+    }
+}
+
+impl ActiveSense {
+    pub fn new(position: f64) -> Self {
+        Self {
+            position,
+            id: Uuid::new_v4(),
+        }
     }
 }
 
@@ -3870,9 +4111,15 @@ impl BackgroundProcessorVst3AudioPlugin {
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
         for event in events {
             match event {
-                TrackEvent::ActiveSense => {}
-                TrackEvent::AfterTouch => {}
-                TrackEvent::ProgramChange => {}
+                TrackEvent::ActiveSense(_) => {}
+                TrackEvent::AfterTouch(after_touch) => {
+                    debug!("After touch: value={}", after_touch.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::AfterTouch, event.position() as i32, after_touch.value() as u32, 0, 0, 0.0);
+                }
+                TrackEvent::ProgramChange(program_change) => {
+                    debug!("Program change: program={}", program_change.program());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::ProgramChange, event.position() as i32, program_change.program() as u32, 0, 0, 0.0);
+                }
                 TrackEvent::Note(_) => {}
                 TrackEvent::NoteOn(note) => {
                     debug!("Note on: note={}, velocity={}", note.note, note.velocity);
@@ -3894,7 +4141,10 @@ impl BackgroundProcessorVst3AudioPlugin {
                     debug!("Pitch Bend: value={}", pitch_bend.value());
                     ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::PitchBend, event.position() as i32, 0, 0, pitch_bend.value(), 0.0);
                 }
-                TrackEvent::KeyPressure => {}
+                TrackEvent::KeyPressure(key_pressure) => {
+                    debug!("Key pressure: note={}, value={}", key_pressure.note(), key_pressure.value());
+                    ffi::addEvent(self.daw_plugin_uuid.to_string(), ffi::EventType::KeyPressureAfterTouch, event.position() as i32, key_pressure.note() as u32, key_pressure.value() as u32, 0, 0.0);
+                }
                 TrackEvent::AudioPluginParameter(_) => {}
                 TrackEvent::Sample(_) => {}
                 TrackEvent::Measure(_) => {}
@@ -4968,6 +5218,57 @@ impl TrackBackgroundProcessorHelper {
                         note_off_velocity: 0,
                     };
                     self.jack_midi_out_immediate_events.push(pitch_bend);
+                }
+                TrackBackgroundProcessorInwardEvent::PlayAfterTouchImmediate(value, midi_channel) => {
+                    debug!("Track background processor: Received play after touch immediate.");
+
+                    let after_touch = AfterTouch::new(0.0, value);
+                    self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::AfterTouch(after_touch));
+
+                    let after_touch = MidiEvent {
+                        data: [208 + (midi_channel as u8), value as u8, 0],
+                        delta_frames: 0,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    self.jack_midi_out_immediate_events.push(after_touch);
+                }
+                TrackBackgroundProcessorInwardEvent::PlayKeyPressureImmediate(note, value, midi_channel) => {
+                    debug!("Track background processor: Received play key pressure immediate.");
+
+                    let key_pressure = KeyPressure::new(0.0, note, value);
+                    self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::KeyPressure(key_pressure));
+
+                    let key_pressure = MidiEvent {
+                        data: [160 + (midi_channel as u8), note as u8, value as u8],
+                        delta_frames: 0,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    self.jack_midi_out_immediate_events.push(key_pressure);
+                }
+                TrackBackgroundProcessorInwardEvent::PlayProgramChangeImmediate(program, midi_channel) => {
+                    debug!("Track background processor: Received play program change immediate.");
+
+                    let program_change = ProgramChange::new(0.0, program);
+                    self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::ProgramChange(program_change));
+
+                    let program_change = MidiEvent {
+                        data: [192 + (midi_channel as u8), program as u8, 0],
+                        delta_frames: 0,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    self.jack_midi_out_immediate_events.push(program_change);
                 }
                 TrackBackgroundProcessorInwardEvent::SetSample(sample_data) => {
                     self.set_sample(Some(sample_data));

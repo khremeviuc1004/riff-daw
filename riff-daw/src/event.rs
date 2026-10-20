@@ -524,6 +524,12 @@ pub enum TrackBackgroundProcessorInwardEvent {
 
     PlayPitchBendImmediate(i32, i32, i32), // lsb (7bits), msb (7bits), midi channel number
 
+    PlayAfterTouchImmediate(i32, i32), // after touch (channel pressure) value, midi channel number
+
+    PlayKeyPressureImmediate(i32, i32, i32), // key (note number), key pressure value, midi channel number
+
+    PlayProgramChangeImmediate(i32, i32), // program number, midi channel number
+
     RequestInstrumentParameters,
     RequestEffectParameters(String), // uuid
 

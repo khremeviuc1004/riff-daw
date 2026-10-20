@@ -831,7 +831,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                         }
                                                                     }
                                                                 },
-                                                                apres::MIDIEvent::AfterTouch(_, _, _) => (),
+                                                                apres::MIDIEvent::AfterTouch(_, key, value) => { // polyphonic key pressure
+                                                                    if let Some((_, ticks)) = position {
+                                                                        let position_in_beats = *ticks as f64 / ppq as f64;
+                                                                        riff.events_mut().push(TrackEvent::KeyPressure(KeyPressure::new(position_in_beats, key as i32, value as i32)));
+                                                                    }
+                                                                },
                                                                 apres::MIDIEvent::BankSelect(_, _) => (),
                                                                 apres::MIDIEvent::BankSelectLSB(_, _) => (),
                                                                 apres::MIDIEvent::ModulationWheel(_, _) => (),
@@ -904,8 +909,18 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 apres::MIDIEvent::MonophonicOperation(_, _) => (),
                                                                 apres::MIDIEvent::PolyphonicOperation(_) => (),
                                                                 apres::MIDIEvent::ControlChange(_, _, _) => (),
-                                                                apres::MIDIEvent::ProgramChange(_, _) => (),
-                                                                apres::MIDIEvent::ChannelPressure(_, _) => (),
+                                                                apres::MIDIEvent::ProgramChange(_, program) => {
+                                                                    if let Some((_, ticks)) = position {
+                                                                        let position_in_beats = *ticks as f64 / ppq as f64;
+                                                                        riff.events_mut().push(TrackEvent::ProgramChange(ProgramChange::new(position_in_beats, program as i32)));
+                                                                    }
+                                                                },
+                                                                apres::MIDIEvent::ChannelPressure(_, value) => {
+                                                                    if let Some((_, ticks)) = position {
+                                                                        let position_in_beats = *ticks as f64 / ppq as f64;
+                                                                        riff.events_mut().push(TrackEvent::AfterTouch(AfterTouch::new(position_in_beats, value as i32)));
+                                                                    }
+                                                                },
                                                                 apres::MIDIEvent::PitchWheelChange(_, _) => (),
                                                                 apres::MIDIEvent::SystemExclusive(_) => (),
                                                                 apres::MIDIEvent::MTCQuarterFrame(_, _) => (),
@@ -3758,9 +3773,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                         for riff in track.riffs().iter() {
                                                             if riff.uuid().to_string() == *riff_uuid {
                                                                 riff.events().iter().for_each(|event| match event {
-                                                                    TrackEvent::ActiveSense => {},
-                                                                    TrackEvent::AfterTouch => {},
-                                                                    TrackEvent::ProgramChange => {},
+                                                                    TrackEvent::ActiveSense(_) => {},
+                                                                    TrackEvent::AfterTouch(_) => {},
+                                                                    TrackEvent::ProgramChange(_) => {},
                                                                     TrackEvent::Note(note) => if selected.contains(&note.id()) {
                                                                         copy_buffer.push(event.clone());
                                                                     },
@@ -3768,7 +3783,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::NoteOff(_) => {}
                                                                     TrackEvent::Controller(_) => {}
                                                                     TrackEvent::PitchBend(_pitch_bend) => {}
-                                                                    TrackEvent::KeyPressure => {}
+                                                                    TrackEvent::KeyPressure(_) => {}
                                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                                     TrackEvent::Sample(_sample) => {}
                                                                     TrackEvent::Measure(_) => {}
@@ -3809,9 +3824,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 copy_buffer.iter().for_each(|event| {
                                     let value = event.clone();
                                     match value {
-                                        TrackEvent::ActiveSense => debug!("TrackChangeType::RiffCopySelectedNotes ActiveSense not yet implemented!"),
-                                        TrackEvent::AfterTouch => debug!("TrackChangeType::RiffCopySelectedNotes AfterTouch not yet implemented!"),
-                                        TrackEvent::ProgramChange => debug!("TrackChangeType::RiffCopySelectedNotes ProgramChange not yet implemented!"),
+                                        TrackEvent::ActiveSense(_) => debug!("TrackChangeType::RiffCopySelectedNotes ActiveSense not yet implemented!"),
+                                        TrackEvent::AfterTouch(_) => debug!("TrackChangeType::RiffCopySelectedNotes AfterTouch not yet implemented!"),
+                                        TrackEvent::ProgramChange(_) => debug!("TrackChangeType::RiffCopySelectedNotes ProgramChange not yet implemented!"),
                                         TrackEvent::Note(note) => {
                                             let mut note_value = note;
                                             note_value.set_position(note_value.position() - edit_cursor_position_in_beats);
@@ -3821,7 +3836,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         TrackEvent::NoteOff(_) => debug!("TrackChangeType::RiffCopySelectedNotes NoteOff not yet implemented!"),
                                         TrackEvent::Controller(_) => debug!("TrackChangeType::RiffCopySelectedNotes Controller not yet implemented!"),
                                         TrackEvent::PitchBend(_pitch_bend) => debug!("TrackChangeType::RiffCopySelectedNotes PitchBend not yet implemented!"),
-                                        TrackEvent::KeyPressure => debug!("TrackChangeType::RiffCopySelectedNotes KeyPressure not yet implemented!"),
+                                        TrackEvent::KeyPressure(_) => debug!("TrackChangeType::RiffCopySelectedNotes KeyPressure not yet implemented!"),
                                         TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffCopySelectedNotes AudioPluginParameter not yet implemented!"),
                                         TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffCopySelectedNotes Sample not yet implemented!"),
                                         TrackEvent::Measure(_) => {}
@@ -16288,11 +16303,17 @@ fn create_jack_time_critical_event_processing_thread(
                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
                                                             } else if (128..=143).contains(&midi_msg_type) {
                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
-                                                            } else if (176..=191).contains(&midi_msg_type) {
-                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                                                            } else if (224..=239).contains(&midi_msg_type) {
-                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
-                                                            } else {
+                                                             } else if (176..=191).contains(&midi_msg_type) {
+                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayControllerImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
+                                                             } else if (224..=239).contains(&midi_msg_type) {
+                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayPitchBendImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
+                                                             } else if (160..=175).contains(&midi_msg_type) {
+                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayKeyPressureImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
+                                                             } else if (208..=223).contains(&midi_msg_type) {
+                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayAfterTouchImmediate(jack_midi_event.data[1] as i32, midi_channel));
+                                                             } else if (192..=207).contains(&midi_msg_type) {
+                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayProgramChangeImmediate(jack_midi_event.data[1] as i32, midi_channel));
+                                                             } else {
                                                                 debug!("Unknown jack midi event: ");
                                                                 for event_byte in jack_midi_event.data.iter() {
                                                                     debug!(" {}", event_byte);
@@ -16388,14 +16409,35 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                         Controller::new(
                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                            } else if (224..=239).contains(&midi_msg_type) {
-                                                                                debug!("Adding pitch bend to track_automation: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                track.automation_mut().events_mut().push(
-                                                                                    TrackEvent::PitchBend(
-                                                                                        PitchBend::new_from_midi_bytes(
-                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                            }
+                                                                             } else if (224..=239).contains(&midi_msg_type) {
+                                                                                 debug!("Adding pitch bend to track_automation: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                 track.automation_mut().events_mut().push(
+                                                                                     TrackEvent::PitchBend(
+                                                                                         PitchBend::new_from_midi_bytes(
+                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                             } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
+                                                                                 debug!("Adding after touch to track_automation: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                 track.automation_mut().events_mut().push(
+                                                                                     TrackEvent::AfterTouch(
+                                                                                         AfterTouch::new(
+                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                             } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
+                                                                                 debug!("Adding key pressure to track_automation: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                 track.automation_mut().events_mut().push(
+                                                                                     TrackEvent::KeyPressure(
+                                                                                         KeyPressure::new(
+                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                             } else if (192..=207).contains(&midi_msg_type) { // program change
+                                                                                 debug!("Adding program change to track_automation: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                 track.automation_mut().events_mut().push(
+                                                                                     TrackEvent::ProgramChange(
+                                                                                         ProgramChange::new(
+                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                             }
                                                                         }
                                                                         CurrentView::RiffSet => {
                                                                             match selected_riff_uuid {
@@ -16443,14 +16485,35 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                                         Controller::new(
                                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                            } else if (224..=239).contains(&midi_msg_type) {
-                                                                                                debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                                riff.events_mut().push(
-                                                                                                    TrackEvent::PitchBend(
-                                                                                                        PitchBend::new_from_midi_bytes(
-                                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                                riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                            }
+                                                                                             } else if (224..=239).contains(&midi_msg_type) {
+                                                                                                 debug!("Adding pitch bend to riff: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                                 riff.events_mut().push(
+                                                                                                     TrackEvent::PitchBend(
+                                                                                                         PitchBend::new_from_midi_bytes(
+                                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                             } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
+                                                                                                 debug!("Adding after touch to riff: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                                 riff.events_mut().push(
+                                                                                                     TrackEvent::AfterTouch(
+                                                                                                         AfterTouch::new(
+                                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                             } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
+                                                                                                 debug!("Adding key pressure to riff: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                                 riff.events_mut().push(
+                                                                                                     TrackEvent::KeyPressure(
+                                                                                                         KeyPressure::new(
+                                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                             } else if (192..=207).contains(&midi_msg_type) { // program change
+                                                                                                 debug!("Adding program change to riff: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                                 riff.events_mut().push(
+                                                                                                     TrackEvent::ProgramChange(
+                                                                                                         ProgramChange::new(
+                                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                                 riff.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                             }
 
                                                                                             break;
                                                                                         }
@@ -16480,14 +16543,35 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                                 Controller::new(
                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                    } else if (224..=239).contains(&midi_msg_type) {
-                                                                                        debug!("Adding pitch bend to riff arrangement: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                        track_automation.events_mut().push(
-                                                                                            TrackEvent::PitchBend(
-                                                                                                PitchBend::new_from_midi_bytes(
-                                                                                                    tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                        track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                    }
+                                                                                     } else if (224..=239).contains(&midi_msg_type) {
+                                                                                         debug!("Adding pitch bend to riff arrangement: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                         track_automation.events_mut().push(
+                                                                                             TrackEvent::PitchBend(
+                                                                                                 PitchBend::new_from_midi_bytes(
+                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
+                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                     } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
+                                                                                         debug!("Adding after touch to riff arrangement: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                         track_automation.events_mut().push(
+                                                                                             TrackEvent::AfterTouch(
+                                                                                                 AfterTouch::new(
+                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                     } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
+                                                                                         debug!("Adding key pressure to riff arrangement: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                         track_automation.events_mut().push(
+                                                                                             TrackEvent::KeyPressure(
+                                                                                                 KeyPressure::new(
+                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
+                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                     } else if (192..=207).contains(&midi_msg_type) { // program change
+                                                                                         debug!("Adding program change to riff arrangement: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                         track_automation.events_mut().push(
+                                                                                             TrackEvent::ProgramChange(
+                                                                                                 ProgramChange::new(
+                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
+                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                                                                     }
                                                                                 }
                                                                             }
                                                                         }

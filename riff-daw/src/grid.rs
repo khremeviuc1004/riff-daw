@@ -4513,9 +4513,25 @@ impl CustomPainter for TrackGridCustomPainter {
                                     // draw notes
                                     for track_event in riff.events() {
                                         match track_event {
-                                            TrackEvent::ActiveSense => (),
-                                            TrackEvent::AfterTouch => (),
-                                            TrackEvent::ProgramChange => (),
+                                            TrackEvent::ActiveSense(_) => (),
+                                            TrackEvent::AfterTouch(after_touch) => {
+                                                let x_position = (riff_ref.position() + after_touch.position()) * adjusted_beat_width_in_pixels;
+                                                let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                context.move_to(x_position, y_start);
+                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (after_touch.value() as f64)));
+                                                let _ = context.stroke();
+                                            },
+                                            TrackEvent::ProgramChange(program_change) => {
+                                                let x_position = (riff_ref.position() + program_change.position()) * adjusted_beat_width_in_pixels;
+                                                let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                context.move_to(x_position, y_start);
+                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (program_change.program() as f64)));
+                                                let _ = context.stroke();
+                                            },
                                             TrackEvent::Note(note) => {
                                                 use_notes = match &riff_ref.mode() {
                                                     RiffReferenceMode::Start => {
@@ -4566,7 +4582,15 @@ impl CustomPainter for TrackGridCustomPainter {
                                                 let _ = context.stroke();
                                             },
                                             TrackEvent::PitchBend(_pitch_bend) => (),
-                                            TrackEvent::KeyPressure => (),
+                                            TrackEvent::KeyPressure(key_pressure) => {
+                                                let x_position = (riff_ref.position() + key_pressure.position()) * adjusted_beat_width_in_pixels;
+                                                let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                context.move_to(x_position, y_start);
+                                                context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (key_pressure.value() as f64)));
+                                                let _ = context.stroke();
+                                            },
                                             TrackEvent::AudioPluginParameter(_parameter) => (),
                                             TrackEvent::Sample(_sample) => (),
                                             TrackEvent::Measure(_) => {}
@@ -4588,9 +4612,21 @@ impl CustomPainter for TrackGridCustomPainter {
 
                             if x_position >= clip_x1 && x_position <= clip_x2 {
                                 match track_event {
-                                    TrackEvent::ActiveSense => (),
-                                    TrackEvent::AfterTouch => (),
-                                    TrackEvent::ProgramChange => (),
+                                    TrackEvent::ActiveSense(_) => (),
+                                    TrackEvent::AfterTouch(after_touch) => {
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                        context.move_to(x_position, y_start);
+                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (after_touch.value() as f64)));
+                                        let _ = context.stroke();
+                                    },
+                                    TrackEvent::ProgramChange(program_change) => {
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                        context.move_to(x_position, y_start);
+                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (program_change.program() as f64)));
+                                        let _ = context.stroke();
+                                    },
                                     TrackEvent::Note(_) => {},
                                     TrackEvent::NoteOn(_) => (),
                                     TrackEvent::NoteOff(_) => (),
@@ -4602,7 +4638,13 @@ impl CustomPainter for TrackGridCustomPainter {
                                         let _ = context.stroke();
                                     },
                                     TrackEvent::PitchBend(_pitch_bend) => (),
-                                    TrackEvent::KeyPressure => (),
+                                    TrackEvent::KeyPressure(key_pressure) => {
+                                        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                        let y_start = track_number as f64 * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+                                        context.move_to(x_position, y_start);
+                                        context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (key_pressure.value() as f64)));
+                                        let _ = context.stroke();
+                                    },
                                     TrackEvent::AudioPluginParameter(_parameter) => (),
                                     TrackEvent::Sample(_sample) => (),
                                     TrackEvent::Measure(_) => {}
@@ -4885,9 +4927,25 @@ impl CustomPainter for RiffGridCustomPainter {
                                         // draw notes
                                         for track_event in riff.events() {
                                             match track_event {
-                                                TrackEvent::ActiveSense => (),
-                                                TrackEvent::AfterTouch => (),
-                                                TrackEvent::ProgramChange => (),
+                                                TrackEvent::ActiveSense(_) => (),
+                                                TrackEvent::AfterTouch(after_touch) => {
+                                                    let x_position = (riff_ref.position() + after_touch.position()) * adjusted_beat_width_in_pixels;
+                                                    let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                    context.move_to(x_position, y_start);
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (after_touch.value() as f64)));
+                                                    let _ = context.stroke();
+                                                },
+                                                TrackEvent::ProgramChange(program_change) => {
+                                                    let x_position = (riff_ref.position() + program_change.position()) * adjusted_beat_width_in_pixels;
+                                                    let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                    context.move_to(x_position, y_start);
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (program_change.program() as f64)));
+                                                    let _ = context.stroke();
+                                                },
                                                 TrackEvent::Note(note) => {
                                                     use_notes = match &riff_ref.mode() {
                                                         RiffReferenceMode::Start => {
@@ -4938,7 +4996,15 @@ impl CustomPainter for RiffGridCustomPainter {
                                                     let _ = context.stroke();
                                                 },
                                                 TrackEvent::PitchBend(_pitch_bend) => (),
-                                                TrackEvent::KeyPressure => (),
+                                                TrackEvent::KeyPressure(key_pressure) => {
+                                                    let x_position = (riff_ref.position() + key_pressure.position()) * adjusted_beat_width_in_pixels;
+                                                    let y_start = track_number * adjusted_entity_height_in_pixels + adjusted_entity_height_in_pixels;
+
+                                                    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                                                    context.move_to(x_position, y_start);
+                                                    context.line_to(x_position, y_start - (adjusted_entity_height_in_pixels / 127.0 * (key_pressure.value() as f64)));
+                                                    let _ = context.stroke();
+                                                },
                                                 TrackEvent::AudioPluginParameter(_parameter) => (),
                                                 TrackEvent::Sample(_sample) => (),
                                                 TrackEvent::Measure(_) => {}

@@ -551,15 +551,15 @@ impl HistoryAction for RiffCutSelectedAction {
 
                                                 // remove the notes with in the window
                                                 riff.events_mut().retain(|event| match event {
-                                                    TrackEvent::ActiveSense => true,
-                                                    TrackEvent::AfterTouch => true,
-                                                    TrackEvent::ProgramChange => true,
+                                                    TrackEvent::ActiveSense(_) => true,
+                                                    TrackEvent::AfterTouch(_) => true,
+                                                    TrackEvent::ProgramChange(_) => true,
                                                     TrackEvent::Note(note) => !self.riff_event_uuids.contains(&note.id()),
                                                     TrackEvent::NoteOn(_) => true,
                                                     TrackEvent::NoteOff(_) => true,
                                                     TrackEvent::Controller(_) => true,
                                                     TrackEvent::PitchBend(_pitch_bend) => true,
-                                                    TrackEvent::KeyPressure => true,
+                                                    TrackEvent::KeyPressure(_) => true,
                                                     TrackEvent::AudioPluginParameter(_) => true,
                                                     TrackEvent::Sample(_sample) => true,
                                                     TrackEvent::Measure(_) => true,
@@ -696,9 +696,9 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
                                                 riff.events_mut().iter_mut().for_each(|event| match event {
-                                                    TrackEvent::ActiveSense => {},
-                                                    TrackEvent::AfterTouch => {},
-                                                    TrackEvent::ProgramChange => {},
+                                                    TrackEvent::ActiveSense(_) => {},
+                                                    TrackEvent::AfterTouch(_) => {},
+                                                    TrackEvent::ProgramChange(_) => {},
                                                     TrackEvent::Note(note) => if self.riff_event_uuids.contains(&note.id_mut()) {
                                                         let mut note_number = note.note();
                                                         let mut note_position = note.position();
@@ -740,7 +740,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                                     TrackEvent::NoteOff(_) => {}
                                                     TrackEvent::Controller(_) => {}
                                                     TrackEvent::PitchBend(_pitch_bend) => {}
-                                                    TrackEvent::KeyPressure => {}
+                                                    TrackEvent::KeyPressure(_) => {}
                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                     TrackEvent::Sample(_sample) => {}
                                                     TrackEvent::Measure(_) => {}
@@ -791,9 +791,9 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
                                                 riff.events_mut().iter_mut().for_each(|event| match event {
-                                                    TrackEvent::ActiveSense => {},
-                                                    TrackEvent::AfterTouch => {},
-                                                    TrackEvent::ProgramChange => {},
+                                                    TrackEvent::ActiveSense(_) => {},
+                                                    TrackEvent::AfterTouch(_) => {},
+                                                    TrackEvent::ProgramChange(_) => {},
                                                     TrackEvent::Note(note) => if self.riff_event_uuids.contains(&note.id_mut()) {
                                                         let mut note_number = note.note();
                                                         let mut note_position = note.position();
@@ -835,7 +835,7 @@ impl HistoryAction for RiffTranslateSelectedAction {
                                                     TrackEvent::NoteOff(_) => {}
                                                     TrackEvent::Controller(_) => {}
                                                     TrackEvent::PitchBend(_pitch_bend) => {}
-                                                    TrackEvent::KeyPressure => {}
+                                                    TrackEvent::KeyPressure(_) => {}
                                                     TrackEvent::AudioPluginParameter(_) => {}
                                                     TrackEvent::Sample(_sample) => {}
                                                     TrackEvent::Measure(_) => {}
@@ -1082,9 +1082,9 @@ impl HistoryAction for RiffPasteSelectedAction {
                                                 copy_buffer.iter_mut().for_each(|event| {
                                                     let cloned_event = event.clone();
                                                     match cloned_event {
-                                                        TrackEvent::ActiveSense => debug!("TrackChangeType::RiffPasteSelectedNotes ActiveSense not yet implemented!"),
-                                                        TrackEvent::AfterTouch => debug!("TrackChangeType::RiffPasteSelectedNotes AfterTouch not yet implemented!"),
-                                                        TrackEvent::ProgramChange => debug!("TrackChangeType::RiffPasteSelectedNotes ProgramChange not yet implemented!"),
+                                                        TrackEvent::ActiveSense(_) => debug!("TrackChangeType::RiffPasteSelectedNotes ActiveSense not yet implemented!"),
+                                                        TrackEvent::AfterTouch(_) => debug!("TrackChangeType::RiffPasteSelectedNotes AfterTouch not yet implemented!"),
+                                                        TrackEvent::ProgramChange(_) => debug!("TrackChangeType::RiffPasteSelectedNotes ProgramChange not yet implemented!"),
                                                         TrackEvent::Note(mut note) => {
                                                             if self.notes.is_empty() {
                                                                 note.set_position(note.position() + self.edit_cursor_position_in_beats);
@@ -1099,7 +1099,7 @@ impl HistoryAction for RiffPasteSelectedAction {
                                                         TrackEvent::NoteOff(_) => debug!("TrackChangeType::RiffPasteSelectedNotes NoteOff not yet implemented!"),
                                                         TrackEvent::Controller(_) => debug!("TrackChangeType::RiffPasteSelectedNotes Controller not yet implemented!"),
                                                         TrackEvent::PitchBend(_pitch_bend) => debug!("TrackChangeType::RiffPasteSelectedNotes PitchBend not yet implemented!"),
-                                                        TrackEvent::KeyPressure => debug!("TrackChangeType::RiffPasteSelectedNotes KeyPressure not yet implemented!"),
+                                                        TrackEvent::KeyPressure(_) => debug!("TrackChangeType::RiffPasteSelectedNotes KeyPressure not yet implemented!"),
                                                         TrackEvent::AudioPluginParameter(_) => debug!("TrackChangeType::RiffPasteSelectedNotes AudioPluginParameter not yet implemented!"),
                                                         TrackEvent::Sample(_sample) => debug!("TrackChangeType::RiffPasteSelectedNotes Sample not yet implemented!"),
                                                         TrackEvent::Measure(_) => {}
@@ -1237,9 +1237,9 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
                                                 riff.events_mut().iter_mut().for_each(|event| match event {
-                                                    TrackEvent::ActiveSense => {},
-                                                    TrackEvent::AfterTouch => {},
-                                                    TrackEvent::ProgramChange => {},
+                                                    TrackEvent::ActiveSense(_) => {},
+                                                    TrackEvent::AfterTouch(_) => {},
+                                                    TrackEvent::ProgramChange(_) => {},
                                                     TrackEvent::Note(note) => {
                                                         if self.riff_event_uuids.contains(&note.id_mut()) {
                                                             if self.snap_start {
@@ -1268,7 +1268,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::NoteOff(_) => {},
                                                     TrackEvent::Controller(_) => {},
                                                     TrackEvent::PitchBend(_pitch_bend) => {},
-                                                    TrackEvent::KeyPressure => {},
+                                                    TrackEvent::KeyPressure(_) => {},
                                                     TrackEvent::AudioPluginParameter(_) => {},
                                                     TrackEvent::Sample(_sample) => {},
                                                     TrackEvent::Measure(_) => {}
@@ -1319,9 +1319,9 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                         for riff in track.riffs_mut().iter_mut() {
                                             if riff.uuid().to_string() == *riff_uuid {
                                                 riff.events_mut().iter_mut().for_each(|event| match event {
-                                                    TrackEvent::ActiveSense => {},
-                                                    TrackEvent::AfterTouch => {},
-                                                    TrackEvent::ProgramChange => {},
+                                                    TrackEvent::ActiveSense(_) => {},
+                                                    TrackEvent::AfterTouch(_) => {},
+                                                    TrackEvent::ProgramChange(_) => {},
                                                     TrackEvent::Note(note) => {
                                                         if self.snap_start {
                                                             if self.riff_event_uuids.contains(&note.id_mut()) {
@@ -1358,7 +1358,7 @@ impl HistoryAction for RiffQuantiseSelectedAction {
                                                     TrackEvent::NoteOff(_) => {},
                                                     TrackEvent::Controller(_) => {},
                                                     TrackEvent::PitchBend(_pitch_bend) => {},
-                                                    TrackEvent::KeyPressure => {},
+                                                    TrackEvent::KeyPressure(_) => {},
                                                     TrackEvent::AudioPluginParameter(_) => {},
                                                     TrackEvent::Sample(_sample) => {},
                                                     TrackEvent::Measure(_) => {}

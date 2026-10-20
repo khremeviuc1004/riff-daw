@@ -616,10 +616,31 @@ impl Audio {
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(polyphonic_key_pressure));
             }
-            else if event.bytes.len() >= 3 && 208 <= event.bytes[0] && event.bytes[0]  <= 223  { // channel pressure
-                let channel_pressure = Self::create_midi_event(event, &mut delta_frames);
+            else if event.bytes.len() >= 2 && 208 <= event.bytes[0] && event.bytes[0]  <= 223  { // channel pressure (2 byte message)
+                let channel_pressure = MidiEvent {
+                    data: [event.bytes[0], event.bytes[1], 0],
+                    delta_frames,
+                    live: true,
+                    note_length: None,
+                    note_offset: None,
+                    detune: 0,
+                    note_off_velocity: 0,
+                };
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(channel_pressure));
+            }
+            else if event.bytes.len() >= 2 && 192 <= event.bytes[0] && event.bytes[0]  <= 207  { // program change (2 byte message)
+                let program_change = MidiEvent {
+                    data: [event.bytes[0], event.bytes[1], 0],
+                    delta_frames,
+                    live: true,
+                    note_length: None,
+                    note_offset: None,
+                    detune: 0,
+                    note_off_velocity: 0,
+                };
+
+                let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(program_change));
             }
         }
     }

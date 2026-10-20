@@ -1498,16 +1498,16 @@ impl DAWState {
 
                         for track_event in track_events.iter() {
                             match track_event {
-                                TrackEvent::ActiveSense => debug!("After sense: position={}", track_event.position()),
-                                TrackEvent::AfterTouch => debug!("After touch: position={}", track_event.position()),
-                                TrackEvent::ProgramChange => debug!("Program change: position={}", track_event.position()),
+                                TrackEvent::ActiveSense(_) => debug!("After sense: position={}", track_event.position()),
+                                TrackEvent::AfterTouch(_) => debug!("After touch: position={}", track_event.position()),
+                                TrackEvent::ProgramChange(_) => debug!("Program change: position={}", track_event.position()),
                                 TrackEvent::Note(_) => debug!("Note: position={}", track_event.position()),
                                 TrackEvent::NoteOn(_) => debug!("Note on: position={}", track_event.position()),
                                 TrackEvent::NoteOff(_) => debug!("Note off: position={}", track_event.position()),
                                 TrackEvent::NoteExpression(_) => debug!("Note expression: position={}", track_event.position()),
                                 TrackEvent::Controller(_) => debug!("Controller: position={}", track_event.position()),
                                 TrackEvent::PitchBend(_) => debug!("Pitch bend: position={}", track_event.position()),
-                                TrackEvent::KeyPressure => debug!("Key pressure: position={}", track_event.position()),
+                                TrackEvent::KeyPressure(_) => debug!("Key pressure: position={}", track_event.position()),
                                 TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
                                 TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
                                 TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
@@ -1588,16 +1588,16 @@ impl DAWState {
 
                             for track_event in track_events.iter() {
                                 match track_event {
-                                    TrackEvent::ActiveSense => debug!("After sense: position={}", track_event.position()),
-                                    TrackEvent::AfterTouch => debug!("After touch: position={}", track_event.position()),
-                                    TrackEvent::ProgramChange => debug!("Program change: position={}", track_event.position()),
+                                    TrackEvent::ActiveSense(_) => debug!("After sense: position={}", track_event.position()),
+                                    TrackEvent::AfterTouch(_) => debug!("After touch: position={}", track_event.position()),
+                                    TrackEvent::ProgramChange(_) => debug!("Program change: position={}", track_event.position()),
                                     TrackEvent::Note(_) => debug!("Note: position={}", track_event.position()),
                                     TrackEvent::NoteOn(_) => debug!("Note on: position={}", track_event.position()),
                                     TrackEvent::NoteOff(_) => debug!("Note off: position={}", track_event.position()),
                                     TrackEvent::NoteExpression(_) => debug!("Note expression: position={}", track_event.position()),
                                     TrackEvent::Controller(_) => debug!("Controller: position={}", track_event.position()),
                                     TrackEvent::PitchBend(_) => debug!("Pitch bend: position={}", track_event.position()),
-                                    TrackEvent::KeyPressure => debug!("Key pressure: position={}", track_event.position()),
+                                    TrackEvent::KeyPressure(_) => debug!("Key pressure: position={}", track_event.position()),
                                     TrackEvent::AudioPluginParameter(_) => debug!("Audio plugin parameter: position={}", track_event.position()),
                                     TrackEvent::Sample(_) => debug!("Sample: position={}", track_event.position()),
                                     TrackEvent::Measure(_) => debug!("Measure: position={}", track_event.position()),
@@ -2769,6 +2769,15 @@ impl DAWState {
                         TrackEvent::PitchBend(pitch_bend) => {
                             single_track_events.push(TrackEvent::PitchBend(pitch_bend.clone()));
                         }
+                        TrackEvent::AfterTouch(after_touch) => {
+                            single_track_events.push(TrackEvent::AfterTouch(after_touch.clone()));
+                        }
+                        TrackEvent::KeyPressure(key_pressure) => {
+                            single_track_events.push(TrackEvent::KeyPressure(key_pressure.clone()));
+                        }
+                        TrackEvent::ProgramChange(program_change) => {
+                            single_track_events.push(TrackEvent::ProgramChange(program_change.clone()));
+                        }
                         _ => (),
                     }
                 }
@@ -2793,6 +2802,18 @@ impl DAWState {
                         }
                         TrackEvent::PitchBend(pitch_bend) => {
                             midi.insert_event(track_index, position, apres::MIDIEvent::PitchWheelChange(0, pitch_bend.value() as f64));
+                        }
+                        TrackEvent::AfterTouch(after_touch) => {
+                            midi.insert_event(track_index, position, apres::MIDIEvent::ChannelPressure(0, after_touch.value() as u8));
+                        }
+                        TrackEvent::KeyPressure(key_pressure) => {
+                            midi.insert_event(track_index, position, apres::MIDIEvent::AfterTouch(0, key_pressure.note() as u8, key_pressure.value() as u8));
+                        }
+                        TrackEvent::ProgramChange(program_change) => {
+                            midi.insert_event(track_index, position, apres::MIDIEvent::ProgramChange(0, program_change.program() as u8));
+                        }
+                        TrackEvent::ActiveSense(_) => {
+                            midi.insert_event(track_index, position, apres::MIDIEvent::ActiveSense);
                         }
                         _ => {}
                     }
@@ -2844,6 +2865,21 @@ impl DAWState {
                                 single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(note.note_id(), start_position_in_beats, note.note(), note.velocity())));
                                 single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(note.note_id(), end_position_in_beats, note.note(), 0)));
                             }
+                            TrackEvent::AfterTouch(after_touch) => {
+                                let mut after_touch_event = after_touch.clone();
+                                after_touch_event.set_position(start_position_in_beats);
+                                single_track_events.push(TrackEvent::AfterTouch(after_touch_event));
+                            }
+                            TrackEvent::KeyPressure(key_pressure) => {
+                                let mut key_pressure_event = key_pressure.clone();
+                                key_pressure_event.set_position(start_position_in_beats);
+                                single_track_events.push(TrackEvent::KeyPressure(key_pressure_event));
+                            }
+                            TrackEvent::ProgramChange(program_change) => {
+                                let mut program_change_event = program_change.clone();
+                                program_change_event.set_position(start_position_in_beats);
+                                single_track_events.push(TrackEvent::ProgramChange(program_change_event));
+                            }
                             _ => (),
                         }
                     }
@@ -2875,6 +2911,15 @@ impl DAWState {
                             }
                             TrackEvent::PitchBend(pitch_bend) => {
                                 midi.insert_event(track_number, position, apres::MIDIEvent::PitchWheelChange(0, pitch_bend.value() as f64));
+                            }
+                            TrackEvent::AfterTouch(after_touch) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::ChannelPressure(0, after_touch.value() as u8));
+                            }
+                            TrackEvent::KeyPressure(key_pressure) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::AfterTouch(0, key_pressure.note() as u8, key_pressure.value() as u8));
+                            }
+                            TrackEvent::ProgramChange(program_change) => {
+                                midi.insert_event(track_number, position, apres::MIDIEvent::ProgramChange(0, program_change.program() as u8));
                             }
                             _ => {}
                         }
@@ -2949,6 +2994,9 @@ impl DAWState {
                                 single_track_events.push(TrackEvent::NoteOn(NoteOn::new_with_params(note.note_id(), start_position_in_beats, note.note(), note.velocity())));
                                 single_track_events.push(TrackEvent::NoteOff(NoteOff::new_with_params(note.note_id(), end_position_in_beats, note.note(), 0)));
                             }
+                            TrackEvent::AfterTouch(_) => single_track_events.push(event.clone()),
+                            TrackEvent::KeyPressure(_) => single_track_events.push(event.clone()),
+                            TrackEvent::ProgramChange(_) => single_track_events.push(event.clone()),
                             _ => (),
                         }
                     }
@@ -2979,6 +3027,15 @@ impl DAWState {
                             }
                             TrackEvent::PitchBend(pitch_bend) => {
                                 midi.insert_event(0, position, apres::MIDIEvent::PitchWheelChange(0, pitch_bend.value() as f64));
+                            }
+                            TrackEvent::AfterTouch(after_touch) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::ChannelPressure(0, after_touch.value() as u8));
+                            }
+                            TrackEvent::KeyPressure(key_pressure) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::AfterTouch(0, key_pressure.note() as u8, key_pressure.value() as u8));
+                            }
+                            TrackEvent::ProgramChange(program_change) => {
+                                midi.insert_event(0, position, apres::MIDIEvent::ProgramChange(0, program_change.program() as u8));
                             }
                             _ => {}
                         }

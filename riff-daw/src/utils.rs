@@ -7,7 +7,7 @@ use clap_sys::id::clap_id;
 use vst::event::*;
 use log::*;
 
-use crate::domain::{AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, Riff, RiffItemType, RiffReference, RiffSet, Track, TrackType, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
+use crate::domain::{ActiveSense, AfterTouch, AudioRouting, AudioRoutingNodeType, Controller, DAWItemPosition, KeyPressure, Measure, NoteOff, NoteOn, PitchBend, PluginParameter, ProgramChange, Riff, RiffItemType, RiffReference, RiffSet, Track, TrackType, TrackEvent, TrackEventRouting, TrackEventRoutingNodeType, DAWItemLength, RiffGrid, RiffReferenceMode, AutomationEnvelope, Automation};
 use crate::DAWState;
 use crate::state::MidiPolyphonicExpressionNoteId;
 
@@ -360,6 +360,45 @@ impl DAWUtils {
                     events_all.push(controller_event);
                 },
                 TrackEvent::PitchBend(_pitch_bend) => {}
+                TrackEvent::AfterTouch(after_touch) => {
+                    let position_in_frames = after_touch.position() / bpm * 60.0 * sample_rate;
+                    let after_touch_event = MidiEvent {
+                        data: [208 + (midi_channel as u8), after_touch.value() as u8, 0],
+                        delta_frames: position_in_frames as i32,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(after_touch_event);
+                },
+                TrackEvent::KeyPressure(key_pressure) => {
+                    let position_in_frames = key_pressure.position() / bpm * 60.0 * sample_rate;
+                    let key_pressure_event = MidiEvent {
+                        data: [160 + (midi_channel as u8), key_pressure.note() as u8, key_pressure.value() as u8],
+                        delta_frames: position_in_frames as i32,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(key_pressure_event);
+                },
+                TrackEvent::ProgramChange(program_change) => {
+                    let position_in_frames = program_change.position() / bpm * 60.0 * sample_rate;
+                    let program_change_event = MidiEvent {
+                        data: [192 + (midi_channel as u8), program_change.program() as u8, 0],
+                        delta_frames: position_in_frames as i32,
+                        live: true,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(program_change_event);
+                },
                 TrackEvent::AudioPluginParameter(parameter) => {
                     let mut param_copy = parameter.clone();
                     let param_position_in_frames = param_copy.position() / bpm * 60.0 * sample_rate;
@@ -392,6 +431,21 @@ impl DAWUtils {
                     let mut pitch_bend = _pitch_bend.clone();
                     pitch_bend.set_position(pitch_bend.position() / bpm * 60.0 * sample_rate);
                     events_all.push(TrackEvent::PitchBend(pitch_bend));
+                }
+                TrackEvent::AfterTouch(after_touch) => {
+                    let mut after_touch_event = after_touch.clone();
+                    after_touch_event.set_position(after_touch_event.position() / bpm * 60.0 * sample_rate);
+                    events_all.push(TrackEvent::AfterTouch(after_touch_event));
+                }
+                TrackEvent::KeyPressure(key_pressure) => {
+                    let mut key_pressure_event = key_pressure.clone();
+                    key_pressure_event.set_position(key_pressure_event.position() / bpm * 60.0 * sample_rate);
+                    events_all.push(TrackEvent::KeyPressure(key_pressure_event));
+                }
+                TrackEvent::ProgramChange(program_change) => {
+                    let mut program_change_event = program_change.clone();
+                    program_change_event.set_position(program_change_event.position() / bpm * 60.0 * sample_rate);
+                    events_all.push(TrackEvent::ProgramChange(program_change_event));
                 }
                 TrackEvent::AudioPluginParameter(parameter) => {
                     let mut param_copy = parameter.clone();
@@ -495,9 +549,21 @@ impl DAWUtils {
             else if 176 <= event.data[0] && event.data[0] <= 191 { // controller
                 track_events.push(TrackEvent::Controller(Controller::new(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
             }
+            else if 192 <= event.data[0] && event.data[0] <= 207 { // program change
+                track_events.push(TrackEvent::ProgramChange(ProgramChange::new(event.delta_frames as f64, event.data[1] as i32)));
+            }
+            else if 208 <= event.data[0] && event.data[0] <= 223 { // channel pressure (after touch)
+                track_events.push(TrackEvent::AfterTouch(AfterTouch::new(event.delta_frames as f64, event.data[1] as i32)));
+            }
+            else if 160 <= event.data[0] && event.data[0] <= 175 { // polyphonic key pressure
+                track_events.push(TrackEvent::KeyPressure(KeyPressure::new(event.delta_frames as f64, event.data[1] as i32, event.data[2] as i32)));
+            }
             else if 224 <= event.data[0] && event.data[0] <= 239 { // pitch bend
                 track_events.push(TrackEvent::PitchBend(PitchBend::new_from_midi_bytes(event.delta_frames as f64, event.data[1], event.data[2])));
             } 
+            else if event.data[0] == 254 { // active sensing
+                track_events.push(TrackEvent::ActiveSense(ActiveSense::new(event.delta_frames as f64)));
+            }
             else {
                 debug!("Attempted to convert unknown VST24 event: frame={}, midi type={}", event.delta_frames , event.data[0]);
             }
@@ -562,6 +628,54 @@ impl DAWUtils {
                         note_off_velocity: 0,
                     };
                     events_all.push(pitch_bend_event);
+                }
+                TrackEvent::AfterTouch(after_touch) => {
+                    let after_touch_event = MidiEvent {
+                        data: [208 + (midi_channel as u8), after_touch.value() as u8, 0],
+                        delta_frames: after_touch.position() as i32,
+                        live: false,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(after_touch_event);
+                }
+                TrackEvent::KeyPressure(key_pressure) => {
+                    let key_pressure_event = MidiEvent {
+                        data: [160 + (midi_channel as u8), key_pressure.note() as u8, key_pressure.value() as u8],
+                        delta_frames: key_pressure.position() as i32,
+                        live: false,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(key_pressure_event);
+                }
+                TrackEvent::ProgramChange(program_change) => {
+                    let program_change_event = MidiEvent {
+                        data: [192 + (midi_channel as u8), program_change.program() as u8, 0],
+                        delta_frames: program_change.position() as i32,
+                        live: false,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(program_change_event);
+                }
+                TrackEvent::ActiveSense(active_sense) => {
+                    let active_sense_event = MidiEvent {
+                        data: [254, 0, 0],
+                        delta_frames: active_sense.position() as i32,
+                        live: false,
+                        note_length: None,
+                        note_offset: None,
+                        detune: 0,
+                        note_off_velocity: 0,
+                    };
+                    events_all.push(active_sense_event);
                 }
                 TrackEvent::AudioPluginParameter(_) => {}
                 TrackEvent::Sample(sample) => {
@@ -698,6 +812,62 @@ impl DAWUtils {
                         data: [224 + (midi_channel as u8), lsb, msb],
                     };
                     events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(pitch_bend_clap_event));
+                }
+                TrackEvent::AfterTouch(after_touch) => {
+                    let after_touch_clap_event = clap_event_midi {
+                        header: clap_event_header {
+                            size: std::mem::size_of::<clap_event_midi>() as u32,
+                            time: after_touch.position() as u32,
+                            space_id: CLAP_CORE_EVENT_SPACE_ID,
+                            type_: CLAP_EVENT_MIDI,
+                            flags: 0,
+                        },
+                        port_index: 0,
+                        data: [208 + (midi_channel as u8), after_touch.value() as u8, 0],
+                    };
+                    events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(after_touch_clap_event));
+                }
+                TrackEvent::KeyPressure(key_pressure) => {
+                    let key_pressure_clap_event = clap_event_midi {
+                        header: clap_event_header {
+                            size: std::mem::size_of::<clap_event_midi>() as u32,
+                            time: key_pressure.position() as u32,
+                            space_id: CLAP_CORE_EVENT_SPACE_ID,
+                            type_: CLAP_EVENT_MIDI,
+                            flags: 0,
+                        },
+                        port_index: 0,
+                        data: [160 + (midi_channel as u8), key_pressure.note() as u8, key_pressure.value() as u8],
+                    };
+                    events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(key_pressure_clap_event));
+                }
+                TrackEvent::ProgramChange(program_change) => {
+                    let program_change_clap_event = clap_event_midi {
+                        header: clap_event_header {
+                            size: std::mem::size_of::<clap_event_midi>() as u32,
+                            time: program_change.position() as u32,
+                            space_id: CLAP_CORE_EVENT_SPACE_ID,
+                            type_: CLAP_EVENT_MIDI,
+                            flags: 0,
+                        },
+                        port_index: 0,
+                        data: [192 + (midi_channel as u8), program_change.program() as u8, 0],
+                    };
+                    events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(program_change_clap_event));
+                }
+                TrackEvent::ActiveSense(active_sense) => {
+                    let active_sense_clap_event = clap_event_midi {
+                        header: clap_event_header {
+                            size: std::mem::size_of::<clap_event_midi>() as u32,
+                            time: active_sense.position() as u32,
+                            space_id: CLAP_CORE_EVENT_SPACE_ID,
+                            type_: CLAP_EVENT_MIDI,
+                            flags: 0,
+                        },
+                        port_index: 0,
+                        data: [254, 0, 0],
+                    };
+                    events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Midi(active_sense_clap_event));
                 }
                 TrackEvent::AudioPluginParameter(parameter) => {
                     let param_value = clap_event_param_value{

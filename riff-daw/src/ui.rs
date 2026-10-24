@@ -515,6 +515,7 @@ pub struct TrackDetailsDialogue {
     pub track_riff_length_choice: DropDown,
     pub track_delete_riff_btn: Button,
     pub track_copy_riff_btn: Button,
+    pub track_riff_list_btn: Button,
     pub track_details_riff_save_length: Button,
     pub track_details_riff_save_name_btn: Button,
 
@@ -562,6 +563,16 @@ pub struct TrackDetailsDialogue {
     pub track_effects_scroll_window: ScrolledWindow,
 
     pub track_detail_close_button: Button,
+}
+
+#[derive(Clone)]
+pub struct RiffListDialogue {
+    pub riff_list_dialogue: Window,
+    pub riff_list_scroll_window: ScrolledWindow,
+    pub riff_list_view: ListView,
+    pub riff_list_select_all_btn: Button,
+    pub riff_list_delete_selected_btn: Button,
+    pub riff_list_close_btn: Button,
 }
 
 #[derive(Clone)]
@@ -729,6 +740,7 @@ pub struct MainWindow {
     pub automation_grid: Option<Arc<Mutex<BeatGrid>>>,
     pub automation_grid_ruler: Option<Arc<Mutex<BeatGridRuler>>>,
     pub track_details_dialogues: HashMap<String, TrackDetailsDialogue>,
+    pub riff_list_dialogues: HashMap<String, RiffListDialogue>,
     pub track_midi_routing_dialogues: HashMap<String, TrackMidiRoutingDialogue>,
     pub track_audio_routing_dialogues: HashMap<String, TrackAudioRoutingDialogue>,
     pub selected_style_provider: CssProvider,
@@ -1124,6 +1136,7 @@ gtk4_builder_from!(TrackDetailsDialogue {
     track_riff_length_choice: DropDown,
     track_delete_riff_btn: Button,
     track_copy_riff_btn: Button,
+    track_riff_list_btn: Button,
     track_details_riff_save_length: Button,
     track_details_riff_save_name_btn: Button,
     track_instrument_label: Label,
@@ -1162,6 +1175,15 @@ gtk4_builder_from!(TrackDetailsDialogue {
     track_effect_delete_btn: Button,
     track_effects_scroll_window: ScrolledWindow,
     track_detail_close_button: Button,
+});
+
+gtk4_builder_from!(RiffListDialogue {
+    riff_list_dialogue: Window,
+    riff_list_scroll_window: ScrolledWindow,
+    riff_list_view: ListView,
+    riff_list_select_all_btn: Button,
+    riff_list_delete_selected_btn: Button,
+    riff_list_close_btn: Button,
 });
 
 gtk4_builder_from!(MixerBlade {
@@ -1946,6 +1968,7 @@ impl MainWindow {
             automation_grid: None,
             automation_grid_ruler: None,
             track_details_dialogues: HashMap::new(),
+            riff_list_dialogues: HashMap::new(),
             track_midi_routing_dialogues: HashMap::new(),
             track_audio_routing_dialogues: HashMap::new(),
             selected_style_provider,
@@ -2309,6 +2332,7 @@ impl MainWindow {
 
         // clear track detail panel references
         self.track_details_dialogues.clear();
+        self.riff_list_dialogues.clear();
 
         // remove track panels
         let children = self.ui.top_level_vbox.children();
@@ -2469,6 +2493,9 @@ impl MainWindow {
                 break;
             }
         }
+
+        // remove riff list dialogue
+        self.riff_list_dialogues.remove(track_uuid.as_str());
 
         // remove riff set track panel
         let mut child_count = 1;
@@ -4156,6 +4183,62 @@ impl MainWindow {
                     debug!("No riff selected delete.");
                 }
             });
+        }
+
+        {
+            // the riff list dialogue - a scrollable multi selectable list of all the
+            // riffs for this track, opened from the track details dialogue
+            let riff_list_dialogue_glade_src = include_str!("riff_list_dialogue.ui");
+            let riff_list_dialogue: RiffListDialogue = RiffListDialogue::from_string(riff_list_dialogue_glade_src).unwrap();
+            let (riff_list_selection, _riff_list_store) = crate::gtk4_compat::setup_multi_select_text_list_view(&riff_list_dialogue.riff_list_view);
+
+            {
+                let selection = riff_list_selection.clone();
+                riff_list_dialogue.riff_list_select_all_btn.connect_clicked(move |_| {
+                    let _ = selection.select_all();
+                });
+            }
+
+            {
+                let tx_from_ui = tx_from_ui.clone();
+                let track_uuid = track_uuid.to_string();
+                let riff_list_view = riff_list_dialogue.riff_list_view.clone();
+                riff_list_dialogue.riff_list_delete_selected_btn.connect_clicked(move |_| {
+                    let riff_uuids: Vec<String> = crate::gtk4_compat::list_view_selected_rows(&riff_list_view)
+                        .iter()
+                        .filter_map(|row| row.id())
+                        .collect();
+
+                    for riff_uuid in riff_uuids {
+                        // reuse the single riff delete handling - it only deletes the riff if it
+                        // is not referenced by a riff reference anywhere, otherwise it pops up an
+                        // error identifying where the riff is being used
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffDelete(riff_uuid), Some(track_uuid.to_string()))) {
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a riff has been deleted from the riff list dialogue"),
+                            _ => {},
+                        }
+                    }
+                });
+            }
+
+            {
+                // the converted dialogue is a plain window - its close button has no
+                // response-id wiring, so it has to complete the compat run() itself
+                let dialogue = riff_list_dialogue.riff_list_dialogue.clone();
+                riff_list_dialogue.riff_list_close_btn.connect_clicked(move |_| {
+                    dialogue.respond(gtk4::ResponseType::Close);
+                });
+            }
+
+            {
+                let riff_list_dialogue = riff_list_dialogue.clone();
+                track_details_dialogue.track_riff_list_btn.connect_clicked(move |_| {
+                    riff_list_dialogue.riff_list_dialogue.run();
+                    riff_list_dialogue.riff_list_dialogue.set_visible(false);
+                });
+            }
+
+            self.riff_list_dialogues.insert(track_uuid.to_string(), riff_list_dialogue.clone());
         }
 
         {
@@ -12033,6 +12116,21 @@ impl MainWindow {
     ) {
 
         let track_uuid = track.uuid().to_string();
+
+        // repopulate the riff list dialogue for this track so it reflects the current riffs
+        if let Some(riff_list_dialogue) = self.riff_list_dialogues.get(&track_uuid) {
+            if let Some((selection, store)) = crate::gtk4_compat::list_view_multi_selection_store(&riff_list_dialogue.riff_list_view) {
+                store.remove_all();
+
+                for riff in track.riffs().iter() {
+                    if riff.name() != "empty" {
+                        store.append(&ComboItemObject::new(Some(riff.uuid().to_string().as_str()), riff.name()));
+                    }
+                }
+
+                let _ = selection.unselect_all();
+            }
+        }
         
         match self.track_details_dialogues.get_mut(&track_uuid) {
             Some(track_details_dialogue) => {
@@ -13812,6 +13910,42 @@ mod track_details_dialogue_tests {
             dialogue.track_riff_choice.active_text().as_deref(),
             Some("new riff")
         );
+    }
+
+    #[gtk4::test]
+    fn riff_list_btn_is_part_of_the_widget_tree() {
+        let dialogue: TrackDetailsDialogue =
+            TrackDetailsDialogue::from_string(include_str!("track_details_dialogue.ui"))
+                .expect("failed to build track details dialogue");
+
+        let btn = dialogue.track_riff_list_btn.clone();
+        assert!(
+            btn.ancestor(gtk4::Window::static_type()).is_some(),
+            "riff list button must be inside the dialog widget tree"
+        );
+    }
+}
+
+#[cfg(test)]
+mod riff_list_dialogue_tests {
+    use super::*;
+
+    #[gtk4::test]
+    fn riff_list_dialogue_builds_with_multi_selection() {
+        let dialogue: RiffListDialogue =
+            RiffListDialogue::from_string(include_str!("riff_list_dialogue.ui"))
+                .expect("failed to build riff list dialogue");
+
+        let (_, store) = crate::gtk4_compat::setup_multi_select_text_list_view(&dialogue.riff_list_view);
+
+        store.append(&ComboItemObject::new(Some("uuid-1"), "riff one"));
+        store.append(&ComboItemObject::new(Some("uuid-2"), "riff two"));
+
+        let selected: Vec<Option<String>> = crate::gtk4_compat::list_view_selected_rows(&dialogue.riff_list_view)
+            .iter()
+            .map(|row| row.id())
+            .collect();
+        assert!(selected.is_empty(), "no rows should be selected initially");
     }
 }
 

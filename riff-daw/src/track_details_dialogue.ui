@@ -27,7 +27,7 @@
   </object>
   <object class="GtkWindow" id="track_details_dialogue">
     <property name="vexpand">True</property>
-    <property name="width-request">470</property>
+    <property name="width-request">510</property>
     <property name="height-request">600</property>
     <property name="title" translatable="yes">Track Details</property>
     <property name="resizable">False</property>
@@ -313,6 +313,19 @@
                                       </object>
                                     </child>
                                     <child>
+                                      <object class="GtkButton" id="track_riff_list_btn">
+                                        <property name="icon-name">view-list-symbolic</property>
+                                        <property name="visible">True</property>
+                                        <property name="tooltip-text" translatable="yes">Show a list of all the riffs for this track</property>
+                                        <property name="halign">start</property>
+                                        <property name="valign">center</property>
+                                        <layout>
+                                          <property name="column">5</property>
+                                          <property name="row">0</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
                                       <object class="GtkLabel">
                                         <property name="visible">True</property>
                                         <property name="label" translatable="yes">Send midi to</property>
@@ -416,7 +429,7 @@
                                         <layout>
                                           <property name="column">0</property>
                                           <property name="row">11</property>
-                                          <property name="column-span">5</property>
+                                          <property name="column-span">6</property>
                                         </layout>
                                       </object>
                                     </child>
@@ -612,7 +625,7 @@
                                         <layout>
                                           <property name="column">0</property>
                                           <property name="row">14</property>
-                                          <property name="column-span">5</property>
+                                          <property name="column-span">6</property>
                                         </layout>
                                       </object>
                                     </child>

@@ -43,7 +43,7 @@
     <property name="stock">gtk-save</property>
   </object>
   <object class="GtkDialog" id="track_details_dialogue">
-    <property name="width-request">470</property>
+    <property name="width-request">510</property>
     <property name="height-request">600</property>
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">Track Details</property>
@@ -409,6 +409,21 @@
                                   </object>
                                   <packing>
                                     <property name="left-attach">4</property>
+                                    <property name="top-attach">0</property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="track_riff_list_btn">
+                                    <property name="visible">True</property>
+                                    <property name="can-focus">True</property>
+                                    <property name="receives-default">True</property>
+                                    <property name="tooltip-text" translatable="yes">Show a list of all the riffs for this track</property>
+                                    <property name="halign">start</property>
+                                    <property name="valign">center</property>
+                                    <property name="label" translatable="yes">Riffs</property>
+                                  </object>
+                                  <packing>
+                                    <property name="left-attach">5</property>
                                     <property name="top-attach">0</property>
                                   </packing>
                                 </child>

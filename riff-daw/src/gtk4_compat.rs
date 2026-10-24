@@ -1268,6 +1268,66 @@ pub fn list_view_selected_row(
         .and_then(|item| item.downcast().ok())
 }
 
+/// Sets up a `gtk4::ListView` with a `MultiSelection` backed by a
+/// `gio::ListStore` of `ComboItemObject` rows, rendering each row's `text`
+/// property in a plain label. Returns the selection model and the store.
+pub fn setup_multi_select_text_list_view(
+    list_view: &gtk4::ListView,
+) -> (gtk4::MultiSelection, gio::ListStore) {
+    use crate::combo_box_text_compat::ComboItemObject;
+
+    let store = gio::ListStore::new::<ComboItemObject>();
+    let selection = gtk4::MultiSelection::new(Some(store.clone()));
+    let factory = gtk4::SignalListItemFactory::new();
+    factory.connect_setup(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        let label = gtk4::Label::builder().xalign(0.0).build();
+        list_item.set_child(Some(&label));
+    });
+    factory.connect_bind(move |_, list_item| {
+        let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+        if let (Some(label), Some(row)) = (
+            list_item.child().and_then(|w| w.downcast::<gtk4::Label>().ok()),
+            list_item.item().and_then(|i| i.downcast::<ComboItemObject>().ok()),
+        ) {
+            label.set_text(row.text().as_str());
+        }
+    });
+    list_view.set_factory(Some(&factory));
+    list_view.set_model(Some(&selection));
+    (selection, store)
+}
+
+/// The `MultiSelection` (and its backing `gio::ListStore`) currently
+/// installed on a `gtk4::ListView`.
+pub fn list_view_multi_selection_store(
+    list_view: &gtk4::ListView,
+) -> Option<(gtk4::MultiSelection, gio::ListStore)> {
+    let selection = list_view.model()?.downcast::<gtk4::MultiSelection>().ok()?;
+    let store = selection.model()?.downcast::<gio::ListStore>().ok()?;
+    Some((selection, store))
+}
+
+/// The uuid (`id`) of every currently selected row of a `MultiSelection`
+/// backed `gtk4::ListView` as a `ComboItemObject`.
+pub fn list_view_selected_rows(
+    list_view: &gtk4::ListView,
+) -> Vec<crate::combo_box_text_compat::ComboItemObject> {
+    use crate::combo_box_text_compat::ComboItemObject;
+
+    let mut selected = vec![];
+    if let Some((selection, store)) = list_view_multi_selection_store(list_view) {
+        for position in 0..store.n_items() {
+            if selection.is_selected(position) {
+                if let Some(item) = store.item(position).and_then(|i| i.downcast::<ComboItemObject>().ok()) {
+                    selected.push(item);
+                }
+            }
+        }
+    }
+    selected
+}
+
 /// The embedded `GtkFileChooserWidget` was deprecated in GTK 4.10 and GTK4
 /// ships no drop-in replacement, so the sample library and scripting panels
 /// keep using it (it remains fully functional in 4.16). This alias keeps the

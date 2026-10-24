@@ -101,6 +101,14 @@ pub struct DAWState {
     playing_riff_sequence: Option<String>,
     playing_riff_grid: Option<String>,
     playing_riff_arrangement: Option<String>,
+    // the most recent thing played in each view - survives transport stop so the
+    // space bar (or the transport play button) plays the same item again, and the
+    // last-played riff item in a riff arrangement survives so playback can start
+    // at that item again.
+    last_played_riff_set: Option<String>,
+    last_played_riff_sequence: Option<String>,
+    last_played_riff_grid: Option<String>,
+    last_played_riff_arrangement: Option<String>,
     // (f64 - sequence length, Vec<(f64 - riff set ref length, String - riff set ref id, String riff set id)>)
     playing_riff_sequence_summary_data: Option<(f64, Vec<(f64, String, String)>)>,
     // TDB
@@ -169,6 +177,10 @@ impl DAWState {
             playing_riff_sequence: None,
             playing_riff_grid: None,
             playing_riff_arrangement: None,
+            last_played_riff_set: None,
+            last_played_riff_sequence: None,
+            last_played_riff_grid: None,
+            last_played_riff_arrangement: None,
             playing_riff_sequence_summary_data: None,
             playing_riff_grid_summary_data: None,
             playing_riff_arrangement_summary_data: None,
@@ -1351,6 +1363,8 @@ impl DAWState {
     pub fn play_riff_set(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_set_uuid: String) {
         debug!("Playing riff set={}", riff_set_uuid.as_str());
 
+        self.set_last_played_riff_set(Some(riff_set_uuid.clone()));
+
         // self.play_riff_set_in_blocks(tx_to_audio, riff_set_uuid);
         self.play_riff_set_as_riff(tx_to_audio, riff_set_uuid);
     }
@@ -1791,6 +1805,8 @@ impl DAWState {
     pub fn play_riff_sequence(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_sequence_uuid: String) {
         let song_length_in_beats = 400.0;
 
+        self.set_last_played_riff_sequence(Some(riff_sequence_uuid.clone()));
+
         // riff arrangement instrument/effects overrides only apply to the arrangement itself
         self.deactivate_riff_arrangement_overrides();
 
@@ -1882,6 +1898,8 @@ impl DAWState {
 
 
     pub fn play_riff_grid(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_grid_uuid: String) -> i32 {
+        self.set_last_played_riff_grid(Some(riff_grid_uuid.clone()));
+
         // riff arrangement instrument/effects overrides only apply to the arrangement itself
         self.deactivate_riff_arrangement_overrides();
 
@@ -2155,6 +2173,8 @@ impl DAWState {
 
     pub fn play_riff_arrangement(&mut self, tx_to_audio: crossbeam_channel::Sender<AudioLayerInwardEvent>, riff_arrangement_uuid: String, play_position_in_beats: f64, vst24_plugin_loaders: Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>, clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>>) -> i32 {
         let mut song_length_in_beats = 400.0;
+
+        self.set_last_played_riff_arrangement(Some(riff_arrangement_uuid.clone()));
 
         let already_playing = self.playing();
 
@@ -3184,6 +3204,38 @@ impl DAWState {
     pub fn set_playing_riff_arrangement(&mut self, playing_riff_arrangement: Option<String>) {
         self.playing_riff_arrangement = playing_riff_arrangement;
     }
+
+    pub fn last_played_riff_set(&self) -> Option<&String> {
+        self.last_played_riff_set.as_ref()
+    }
+
+    pub fn set_last_played_riff_set(&mut self, last_played_riff_set: Option<String>) {
+        self.last_played_riff_set = last_played_riff_set;
+    }
+
+    pub fn last_played_riff_sequence(&self) -> Option<&String> {
+        self.last_played_riff_sequence.as_ref()
+    }
+
+    pub fn set_last_played_riff_sequence(&mut self, last_played_riff_sequence: Option<String>) {
+        self.last_played_riff_sequence = last_played_riff_sequence;
+    }
+
+    pub fn last_played_riff_grid(&self) -> Option<&String> {
+        self.last_played_riff_grid.as_ref()
+    }
+
+    pub fn set_last_played_riff_grid(&mut self, last_played_riff_grid: Option<String>) {
+        self.last_played_riff_grid = last_played_riff_grid;
+    }
+
+    pub fn last_played_riff_arrangement(&self) -> Option<&String> {
+        self.last_played_riff_arrangement.as_ref()
+    }
+
+    pub fn set_last_played_riff_arrangement(&mut self, last_played_riff_arrangement: Option<String>) {
+        self.last_played_riff_arrangement = last_played_riff_arrangement;
+    }
     pub fn centre_split_pane_position(&self) -> i32 {
         self.centre_split_pane_position
     }
@@ -3695,6 +3747,10 @@ impl DAWState {
         self.playing_riff_set = None;
         self.playing_riff_sequence = None;
         self.playing_riff_arrangement = None;
+        self.last_played_riff_set = None;
+        self.last_played_riff_sequence = None;
+        self.last_played_riff_grid = None;
+        self.last_played_riff_arrangement = None;
     }
 
     pub fn set_playing_riff_arrangement_summary_data(&mut self, playing_riff_arrangement_summary_data: Option<(f64, Vec<(f64, RiffItem, Vec<(f64, RiffItem)>)>)>) {

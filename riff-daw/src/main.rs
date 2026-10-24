@@ -453,6 +453,44 @@ fn handle_riff_arrangement_overrides_sync(state: &mut Arc<Mutex<DAWState>>,
     refresh_track_details_dialogues(gui, state);
 }
 
+/// The play position (in beats) at which a riff arrangement preview should
+/// start when the riff item at `selected_riff_item_index` (a riff set, riff
+/// sequence or riff grid within the arrangement) is the selected blade item -
+/// the sum of the play lengths of all the items before it. Used by both the
+/// arrangement blade play button and the transport play/space bar dispatch.
+fn selected_riff_arrangement_play_position_in_beats(state: &DAWState, riff_arrangement_uuid: &str, selected_riff_item_index: usize) -> f64 {
+    if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.to_string()) {
+        let mut play_position_in_beats = 0.0;
+        for (index, riff_item) in riff_arrangement.items().iter().enumerate() {
+            if index >= selected_riff_item_index {
+                break;
+            }
+            // the set's play length is the lowest common factor of its
+            // resolvable references - silent track slots don't shorten it
+            if let RiffItemType::RiffSet = riff_item.item_type() {
+                // grab the item
+                if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                    play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, state);
+                }
+            }
+            else if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
+                for riff_item in riff_sequence.riff_sets().iter() {
+                    if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
+                        play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, state);
+                    }
+                }
+            }
+            else if let Some(riff_grid) = state.project().song().riff_grid(riff_item.item_uuid().to_string()) {
+                play_position_in_beats += DAWUtils::get_riff_grid_length(&riff_grid, state);
+            }
+        }
+        play_position_in_beats
+    }
+    else {
+        0.0
+    }
+}
+
 fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                               tx_from_ui: Sender<DAWEvents>,
                               audio_plugin_windows: &mut HashMap<String, Window>,
@@ -7136,49 +7174,127 @@ win.connect_close_request(|window| {
                         } else if track_riffs_stack_visible_name == "Riffs" {
                             let riffs_stack_visible_name = gui.get_riffs_stack_visible_name();
                             if riffs_stack_visible_name == "riff_sets" {
-                                let riff_set_uuid = if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
-                                    playing_riff_set_uuid.to_string()
-                                }
-                                else if let Some(riff_set) = state.get_project().song_mut().riff_sets_mut().get_mut(0) {
-                                    riff_set.uuid()
+                                // whichever riff set was playing, then the last one played,
+                                // then the selected blade, then the first riff set
+                                let mut riff_set_uuid = if let Some(playing_riff_set_uuid) = state.playing_riff_set() {
+                                    Some(playing_riff_set_uuid.to_string())
                                 } else {
-                                    "".to_string()
+                                    None
                                 };
-                                state.set_playing_riff_set(Some(riff_set_uuid.clone()));
-                                state.play_riff_set(tx_to_audio, riff_set_uuid);
+                                if riff_set_uuid.is_none() {
+                                    if let Some(last_played_riff_set_uuid) = state.last_played_riff_set().cloned() {
+                                        if state.project().song().riff_set(last_played_riff_set_uuid.clone()).is_some() {
+                                            riff_set_uuid = Some(last_played_riff_set_uuid);
+                                        }
+                                    }
+                                }
+                                if riff_set_uuid.is_none() {
+                                    if let Some(riff_set_selected_uuid) = state.riff_set_selected_uuid().clone() {
+                                        if state.project().song().riff_set(riff_set_selected_uuid.clone()).is_some() {
+                                            riff_set_uuid = Some(riff_set_selected_uuid);
+                                        }
+                                    }
+                                }
+                                if riff_set_uuid.is_none() {
+                                    if let Some(riff_set) = state.get_project().song_mut().riff_sets_mut().get_mut(0) {
+                                        riff_set_uuid = Some(riff_set.uuid());
+                                    }
+                                }
+                                if let Some(riff_set_uuid) = riff_set_uuid {
+                                    state.set_playing_riff_set(Some(riff_set_uuid.clone()));
+                                    state.play_riff_set(tx_to_audio, riff_set_uuid);
+                                }
                             } else if riffs_stack_visible_name == "riff_sequences" {
-                                let riff_sequence_uuid = if let Some(selected_riff_sequence_uuid) = state.selected_riff_sequence_uuid() {
-                                    selected_riff_sequence_uuid.to_string()
-                                }
-                                else if let Some(riff_sequence) = state.get_project().song_mut().riff_sequences_mut().get_mut(0) {
-                                    riff_sequence.uuid()
+                                let mut riff_sequence_uuid = if let Some(playing_riff_sequence_uuid) = state.playing_riff_sequence() {
+                                    Some(playing_riff_sequence_uuid.to_string())
                                 } else {
-                                    "".to_string()
+                                    None
                                 };
-                                state.set_playing_riff_sequence(Some(riff_sequence_uuid.clone()));
-                                state.play_riff_sequence(tx_to_audio, riff_sequence_uuid);
+                                if riff_sequence_uuid.is_none() {
+                                    if let Some(last_played_riff_sequence_uuid) = state.last_played_riff_sequence().cloned() {
+                                        if state.project().song().riff_sequence(last_played_riff_sequence_uuid.clone()).is_some() {
+                                            riff_sequence_uuid = Some(last_played_riff_sequence_uuid);
+                                        }
+                                    }
+                                }
+                                if riff_sequence_uuid.is_none() {
+                                    if let Some(selected_riff_sequence_uuid) = state.selected_riff_sequence_uuid() {
+                                        if state.project().song().riff_sequence(selected_riff_sequence_uuid.clone()).is_some() {
+                                            riff_sequence_uuid = Some(selected_riff_sequence_uuid.to_string());
+                                        }
+                                    }
+                                }
+                                if riff_sequence_uuid.is_none() {
+                                    if let Some(riff_sequence) = state.get_project().song_mut().riff_sequences_mut().get_mut(0) {
+                                        riff_sequence_uuid = Some(riff_sequence.uuid());
+                                    }
+                                }
+                                if let Some(riff_sequence_uuid) = riff_sequence_uuid {
+                                    state.set_playing_riff_sequence(Some(riff_sequence_uuid.clone()));
+                                    state.play_riff_sequence(tx_to_audio, riff_sequence_uuid);
+                                }
                             } else if riffs_stack_visible_name == "riff_grids" {
-                                let riff_grid_uuid = if let Some(riff_grid_uuid) = state.selected_riff_grid_uuid() {
-                                    riff_grid_uuid.to_string()
-                                }
-                                else if let Some(riff_grid) = state.get_project().song_mut().riff_grids_mut().get_mut(0) {
-                                    riff_grid.uuid()
+                                let mut riff_grid_uuid = if let Some(playing_riff_grid_uuid) = state.playing_riff_grid() {
+                                    Some(playing_riff_grid_uuid.to_string())
                                 } else {
-                                    "".to_string()
+                                    None
                                 };
-                                state.set_playing_riff_grid(Some(riff_grid_uuid.clone()));
-                                state.play_riff_grid(tx_to_audio, riff_grid_uuid);
+                                if riff_grid_uuid.is_none() {
+                                    if let Some(last_played_riff_grid_uuid) = state.last_played_riff_grid().cloned() {
+                                        if state.project().song().riff_grid(last_played_riff_grid_uuid.clone()).is_some() {
+                                            riff_grid_uuid = Some(last_played_riff_grid_uuid);
+                                        }
+                                    }
+                                }
+                                if riff_grid_uuid.is_none() {
+                                    if let Some(selected_riff_grid_uuid) = state.selected_riff_grid_uuid() {
+                                        if state.project().song().riff_grid(selected_riff_grid_uuid.clone()).is_some() {
+                                            riff_grid_uuid = Some(selected_riff_grid_uuid.to_string());
+                                        }
+                                    }
+                                }
+                                if riff_grid_uuid.is_none() {
+                                    if let Some(riff_grid) = state.get_project().song_mut().riff_grids_mut().get_mut(0) {
+                                        riff_grid_uuid = Some(riff_grid.uuid());
+                                    }
+                                }
+                                if let Some(riff_grid_uuid) = riff_grid_uuid {
+                                    state.set_playing_riff_grid(Some(riff_grid_uuid.clone()));
+                                    state.play_riff_grid(tx_to_audio, riff_grid_uuid);
+                                }
                             } else if riffs_stack_visible_name == "riff_arrangement" {
-                                let riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
-                                    selected_riff_arrangement_uuid.to_string()
-                                }
-                                else if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangements_mut().get_mut(0) {
-                                    riff_arrangement.uuid()
+                                let mut riff_arrangement_uuid = if let Some(playing_riff_arrangement_uuid) = state.playing_riff_arrangement() {
+                                    Some(playing_riff_arrangement_uuid.to_string())
                                 } else {
-                                    "".to_string()
+                                    None
                                 };
-                                state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
-                                state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid, 0.0, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                if riff_arrangement_uuid.is_none() {
+                                    if let Some(last_played_riff_arrangement_uuid) = state.last_played_riff_arrangement().cloned() {
+                                        if state.project().song().riff_arrangement(last_played_riff_arrangement_uuid.clone()).is_some() {
+                                            riff_arrangement_uuid = Some(last_played_riff_arrangement_uuid);
+                                        }
+                                    }
+                                }
+                                if riff_arrangement_uuid.is_none() {
+                                    if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
+                                        if state.project().song().riff_arrangement(selected_riff_arrangement_uuid.clone()).is_some() {
+                                            riff_arrangement_uuid = Some(selected_riff_arrangement_uuid.to_string());
+                                        }
+                                    }
+                                }
+                                if riff_arrangement_uuid.is_none() {
+                                    if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangements_mut().get_mut(0) {
+                                        riff_arrangement_uuid = Some(riff_arrangement.uuid());
+                                    }
+                                }
+                                if let Some(riff_arrangement_uuid) = riff_arrangement_uuid {
+                                    // start at the selected riff set/riff sequence/riff grid
+                                    // within the arrangement, just like the blade play button -
+                                    // 0.0 when nothing is selected
+                                    let selected_riff_arrangement_play_position = selected_riff_arrangement_play_position_in_beats(&state, &riff_arrangement_uuid, gui.get_selected_riff_arrangement_play_position());
+                                    state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
+                                    state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid, selected_riff_arrangement_play_position, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                                }
                             }
                         }
                     },
@@ -7906,6 +8022,7 @@ win.connect_close_request(|window| {
                         new_riff_sequence.set_uuid(Uuid::new_v4());
 
                         state.set_selected_riff_sequence_uuid(Some(new_riff_sequence.uuid()));
+                        state.set_last_played_riff_sequence(Some(new_riff_sequence.uuid().to_string()));
                         state.get_project().song_mut().add_riff_sequence(new_riff_sequence);
                     }
                 }
@@ -7985,7 +8102,8 @@ win.connect_close_request(|window| {
             DAWEvents::RiffSequenceSelected(riff_sequence_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        state.set_selected_riff_sequence_uuid(Some(riff_sequence_uuid));
+                        state.set_selected_riff_sequence_uuid(Some(riff_sequence_uuid.clone()));
+                        state.set_last_played_riff_sequence(Some(riff_sequence_uuid));
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff sequence selected - could not get lock on state"),
                 };
@@ -8161,6 +8279,7 @@ win.connect_close_request(|window| {
                 match state.lock() {
                     Ok(mut state) => {
                         state.set_selected_riff_grid_uuid(Some(riff_grid_uuid.clone()));
+                        state.set_last_played_riff_grid(Some(riff_grid_uuid.clone()));
                         if let Some(riff_grid) = state.project().song().riff_grid(riff_grid_uuid) {
                             gui.ui.selected_riff_grid_name_entry.set_text(riff_grid.name());
                         }
@@ -8921,6 +9040,8 @@ win.connect_close_request(|window| {
                             }
                         }
                         state.set_selected_riff_grid_uuid(Some(copied_riff_grid.uuid()));
+                        let copied_riff_grid_uuid = copied_riff_grid.uuid().to_string();
+                        state.set_last_played_riff_grid(Some(copied_riff_grid_uuid));
                         state.get_project().song_mut().add_riff_grid(copied_riff_grid);
                         gui.update_available_riff_grids_in_riff_arrangement_blades(&state);
                         gui.update_riff_grids_combobox_in_riff_grid_view(&state, false);
@@ -8944,37 +9065,7 @@ win.connect_close_request(|window| {
             DAWEvents::RiffArrangementPlay(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        let selected_riff_arrangement_play_position = if let Some(riff_arrangement) = state.project().song().riff_arrangement(riff_arrangement_uuid.clone()) {
-                            let selected_riff_item_index = gui.get_selected_riff_arrangement_play_position();
-                            let mut play_position_in_beats = 0.0;
-                            for (index, riff_item) in riff_arrangement.items().iter().enumerate() {
-                                if index >= selected_riff_item_index {
-                                    break;
-                                }
-                                // the set's play length is the lowest common factor of its
-                                // resolvable references - silent track slots don't shorten it
-                                if let RiffItemType::RiffSet = riff_item.item_type() {
-                                    // grab the item
-                                    if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
-                                        play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, &state);
-                                    }
-                                }
-                                else if let Some(riff_sequence) = state.project().song().riff_sequence(riff_item.item_uuid().to_string()) {
-                                    for riff_item in riff_sequence.riff_sets().iter() {
-                                        if let Some(riff_set) = state.project().song().riff_set(riff_item.item_uuid().to_string()) {
-                                            play_position_in_beats += DAWUtils::get_riff_set_play_length(riff_set, &state);
-                                        }
-                                    }
-                                }
-                                else if let Some(riff_grid) = state.project().song().riff_grid(riff_item.item_uuid().to_string()) {
-                                    play_position_in_beats += DAWUtils::get_riff_grid_length(&riff_grid, &state);
-                                }
-                            }
-                            play_position_in_beats
-                        }
-                        else {
-                            0.0
-                        };
+                        let selected_riff_arrangement_play_position = selected_riff_arrangement_play_position_in_beats(&state, &riff_arrangement_uuid, gui.get_selected_riff_arrangement_play_position());
                         state.play_riff_arrangement(tx_to_audio, riff_arrangement_uuid.clone(), selected_riff_arrangement_play_position, vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
                         state.set_playing_riff_arrangement(Some(riff_arrangement_uuid.clone()));
                         if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
@@ -9018,7 +9109,8 @@ win.connect_close_request(|window| {
             DAWEvents::RiffArrangementSelected(riff_arrangement_uuid) => {
                 match state.lock() {
                     Ok(mut state) => {
-                        state.set_selected_riff_arrangement_uuid(Some(riff_arrangement_uuid));
+                        state.set_selected_riff_arrangement_uuid(Some(riff_arrangement_uuid.clone()));
+                        state.set_last_played_riff_arrangement(Some(riff_arrangement_uuid));
                         gui.refresh_tempo_lane_indicator(&state);
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff arrangement selected - could not get lock on state"),
@@ -9441,6 +9533,8 @@ win.connect_close_request(|window| {
                         new_riff_arrangement.set_uuid(Uuid::new_v4());
 
                         state.set_selected_riff_arrangement_uuid(Some(new_riff_arrangement.uuid()));
+                        let new_riff_arrangement_uuid = new_riff_arrangement.uuid().to_string();
+                        state.set_last_played_riff_arrangement(Some(new_riff_arrangement_uuid));
                         state.get_project().song_mut().add_riff_arrangement(new_riff_arrangement);
                     }
                 }
@@ -9469,7 +9563,8 @@ win.connect_close_request(|window| {
                     Ok(mut state) => {
                         let mut set_selection_to_none = false;
                         if selected {
-                            state.set_riff_set_selected_uuid(Some(riff_set_uuid));
+                            state.set_riff_set_selected_uuid(Some(riff_set_uuid.clone()));
+                            state.set_last_played_riff_set(Some(riff_set_uuid));
                         }
                         else if let Some(riff_set_selected_uuid) = state.riff_set_selected_uuid() {
                             if riff_set_uuid == *riff_set_selected_uuid {
@@ -9478,6 +9573,7 @@ win.connect_close_request(|window| {
                         }
                         if set_selection_to_none {
                             state.set_riff_set_selected_uuid(None);
+                            state.set_last_played_riff_set(None);
                         }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - riff set selected uuid - could not get lock on state"),

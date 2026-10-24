@@ -36,6 +36,21 @@ unsafe extern "C" {
 }
 pub static TRANSPORT: InitCell<RwLock<Transport>> = InitCell::new();
 
+/// Locks VST2 plugin lifecycle work (instantiation, teardown, preset chunk
+/// loading, sample rate/block size changes, editor window creation - all of
+/// which happen inside `handle_incoming_events` on a track's background
+/// thread) against every thread's per-block plugin dispatch calls.
+///
+/// Some VST2 frameworks (u-he's shared engine behind Hive/DiscoveryPro etc)
+/// re-initialise process-wide state when an entry point is called or a patch
+/// is loaded, so a lifecycle call overlapping audio processing of another
+/// instance corrupts the framework's internal buffers and segfaults in
+/// `processReplacing` (seen just after loading a file, when every track
+/// thread is creating plugins and processing at once). Lifecycle takes the
+/// write lock, per-block plugin work takes the read lock, so instances of
+/// different libraries can still process in parallel with each other.
+pub static VST24_PLUGIN_LIFECYCLE_LOCK: std::sync::LazyLock<RwLock<()>> = std::sync::LazyLock::new(|| RwLock::new(()));
+
 pub struct Transport {
     pub playing: bool,
     pub bpm: f64,
@@ -6606,17 +6621,30 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 let mut quiescent = false;
 
                 loop {
-                    let had_inbound_events = track_background_processor_helper.handle_incoming_events();
+                    // lifecycle events (plugin instantiate/teardown/preset/configure) hold
+                    // the write lock so no other track thread can be dispatching to a VST2
+                    // plugin while process-wide plugin state is being (re)initialised.
+                    let had_inbound_events = {
+                        let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
+                        track_background_processor_helper.handle_incoming_events()
+                    };
 
-                    if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
-                        track_background_processor_helper.refresh_instrument_plugin_editor();
-                        track_background_processor_helper.refresh_effect_plugin_editors();
+                    {
+                        // editor idling and preset/parameter fetches are non-audio plugin
+                        // calls - keep them out the way of any lifecycle work in progress.
+                        let _vst24_dispatch_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
+
+                        if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
+                            track_background_processor_helper.refresh_instrument_plugin_editor();
+                            track_background_processor_helper.refresh_effect_plugin_editors();
+                        }
+
+                        track_background_processor_helper.handle_request_plugin_preset_data();
+                        track_background_processor_helper.handle_request_effect_plugins_parameters();
                     }
                     iteration_count += 1;
 
                     let had_plugin_host_events = track_background_processor_helper.handle_host_events_from_plugins();
-                    track_background_processor_helper.handle_request_plugin_preset_data();
-                    track_background_processor_helper.handle_request_effect_plugins_parameters();
 
                     if quiescent {
                         let track_wakeup_needed = had_inbound_events
@@ -6659,8 +6687,13 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     }
                     // track_background_processor_helper.dump_play_info();
                     // track_background_processor_helper.process_plugin_events();
+                    let mut swap = true;
+                    {
+                    // the per-block plugin dispatch calls read (and are read by) the same
+                    // framework state lifecycle work re-initialises - read lock while any
+                    // track thread might be instantiating or loading a VST2 plugin.
+                    let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
                     track_background_processor_helper.process_plugin_events();
-                    // track_background_processor_helper.process_plugin_audio(); - having problems with life times
 
                     // couldn't push the following into a member method because of lifetime issues
                     // the audio configuration (sample rate, block size) and tempo are read from
@@ -6705,6 +6738,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                     // the arrangement's override effects chain processes the instrument audio
                     // in place of the track's own effects while the override is switched on
+                    let mut swap = true;
                     let use_override_effects = track_background_processor_helper.override_effects_active && !track_background_processor_helper.override_effect_plugin_instances.is_empty();
                     let active_effect_plugin_instances = if use_override_effects {
                         &mut track_background_processor_helper.override_effect_plugin_instances
@@ -6712,7 +6746,6 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     else {
                         &mut track_background_processor_helper.effect_plugin_instances
                     };
-                    let mut swap = true;
                     for effect in active_effect_plugin_instances.iter_mut() {
                         // handle audio data routed to this effect
                         for audio_route_uuid in track_background_processor_helper.audio_inward_routings.iter().find(|(_, audio_route)| match &audio_route.destination {
@@ -6777,6 +6810,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             }
                         }
                     }
+                    } // end of the read-locked per-block plugin dispatch section
 
                     let mode = match track_thread_coast.lock() {
                         Ok(mode) => match *mode {
@@ -6990,11 +7024,19 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     // read the audio configuration from the helper each iteration so an
                     // AudioConfigurationChange event takes effect without restarting the thread
                     let current_block_size = track_background_processor_helper.block_size as i32;
-                    track_background_processor_helper.handle_incoming_events();
-                    track_background_processor_helper.process_audio_events();
-                    track_background_processor_helper.refresh_effect_plugin_editors();
-                    track_background_processor_helper.handle_request_plugin_preset_data();
-                    track_background_processor_helper.handle_request_effect_plugins_parameters();
+                    // plugin lifecycle work (see VST24_PLUGIN_LIFECYCLE_LOCK) holds the
+                    // write lock against every thread's plugin dispatch section.
+                    {
+                        let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
+                        track_background_processor_helper.handle_incoming_events();
+                    }
+                    {
+                        let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
+                        track_background_processor_helper.process_audio_events();
+                        track_background_processor_helper.refresh_effect_plugin_editors();
+                        track_background_processor_helper.handle_request_plugin_preset_data();
+                        track_background_processor_helper.handle_request_effect_plugins_parameters();
+                    }
 
                     let (left_pan, right_pan) = DAWUtils::constant_power_stereo_pan(track_background_processor_helper.pan);
 
@@ -7048,24 +7090,27 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         &mut track_background_processor_helper.effect_plugin_instances
                     };
                     let mut swap = true;
-                    for effect in active_effect_plugin_instances.iter_mut() {
-                        let audio_buffer_in_use = if swap {
-                            &mut audio_buffer_swapped
-                        }
-                        else {
-                            &mut audio_buffer
-                        };
-                        swap = !swap;
-
-                        match effect {
-                            BackgroundProcessorAudioPluginType::Vst24(effect) => {
-                                effect.vst_plugin_instance_mut().process(audio_buffer_in_use, current_block_size);
+                    {
+                        let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
+                        for effect in active_effect_plugin_instances.iter_mut() {
+                            let audio_buffer_in_use = if swap {
+                                &mut audio_buffer_swapped
                             }
-                            BackgroundProcessorAudioPluginType::Vst3(_effect) => {
+                            else {
+                                &mut audio_buffer
+                            };
+                            swap = !swap;
 
-                            }
-                            BackgroundProcessorAudioPluginType::Clap(_effect) => {
+                            match effect {
+                                BackgroundProcessorAudioPluginType::Vst24(effect) => {
+                                    effect.vst_plugin_instance_mut().process(audio_buffer_in_use, current_block_size);
+                                }
+                                BackgroundProcessorAudioPluginType::Vst3(_effect) => {
 
+                                }
+                                BackgroundProcessorAudioPluginType::Clap(_effect) => {
+
+                                }
                             }
                         }
                     }

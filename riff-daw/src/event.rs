@@ -351,6 +351,7 @@ pub enum DAWEvents {
     TransportPause,
     TransportMoveForward,
     TransportGotoEnd,
+    TransportToggle,
 
     PlayNoteImmediate(i32),
     StopNoteImmediate(i32),

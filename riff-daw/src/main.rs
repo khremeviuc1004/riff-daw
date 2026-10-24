@@ -7064,6 +7064,8 @@ win.connect_close_request(|window| {
                 gui.ui.automation_drawing_area.queue_draw();
             }
             DAWEvents::TransportStop => {
+                // keep the transport play button in step with the toggle from the space bar
+                gui.ui.transport_play_button.set_active(false);
                 // drop all mixer blade meters to silence straight away - a track that
                 // goes quiet/coast after the stop may never send a final silent level,
                 // and without this the blades keep showing stale movement.
@@ -7118,6 +7120,8 @@ win.connect_close_request(|window| {
                 };
             }
             DAWEvents::TransportPlay => {
+                // keep the transport play button in step with the toggle from the space bar
+                gui.ui.transport_play_button.set_active(true);
                 match state.lock() {
                     Ok(mut state) => {
 
@@ -7286,6 +7290,27 @@ win.connect_close_request(|window| {
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - transport goto end - could not get lock on state"),
                 };
+            }
+            DAWEvents::TransportToggle => {
+                // whichever view is active, the space bar toggles playback:
+                // stop when currently playing, otherwise play (the play
+                // dispatch below routes to the active view's play function)
+                let playing = match state.lock() {
+                    Ok(state) => state.playing(),
+                    Err(_) => {
+                        debug!("Main - rx_ui processing loop - transport toggle - could not get lock on state");
+                        false
+                    }
+                };
+                let toggle_event = if playing {
+                    DAWEvents::TransportStop
+                } else {
+                    DAWEvents::TransportPlay
+                };
+                match tx_from_ui.send(toggle_event) {
+                    Ok(_) => (),
+                    Err(error) => debug!("Problem sending transport toggle event: {:?}", error),
+                }
             }
             DAWEvents::PlayNoteImmediate(note) => {
                 match state.lock() {

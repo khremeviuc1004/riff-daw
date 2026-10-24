@@ -1813,6 +1813,38 @@ impl MainWindow {
         crate::gtk4_compat::set_main_window(&wnd_main);
         crate::gtk4_compat::centre_dialog_on_parent(&ui.progress_dialogue, &wnd_main);
 
+        // the space bar toggles play/stop whichever view is active - a window
+        // level capture phase handler sees the key before the focused widget
+        // can claim it (a focused menu item or button would otherwise actuate
+        // itself on space, e.g. after a file load when the drawing areas have
+        // not been clicked into yet). text entries keep their space bar.
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let space_controller = gtk4::EventControllerKey::new();
+            space_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
+            space_controller.connect_key_pressed(move |controller, keyval, _keycode, _state| {
+                if keyval == gdk4::Key::space {
+                    let typing_into_text_field = controller.widget()
+                        .and_downcast::<gtk4::Window>()
+                        .and_then(|window| gtk4::prelude::GtkWindowExt::focus(&window))
+                        .map_or(false, |focus_widget| {
+                            focus_widget.is::<gtk4::Text>()
+                                || focus_widget.is::<gtk4::Entry>()
+                                || focus_widget.is::<gtk4::SearchEntry>()
+                                || focus_widget.is::<gtk4::TextView>()
+                        });
+                    if !typing_into_text_field {
+                        match tx_from_ui.send(DAWEvents::TransportToggle) {
+                            Ok(_) => return gtk4::glib::Propagation::Stop,
+                            Err(error) => debug!("Problem sending transport toggle from space key press: {:?}", error),
+                        }
+                    }
+                }
+                gtk4::glib::Propagation::Proceed
+            });
+            wnd_main.add_controller(space_controller);
+        }
+
         // GTK4 requires windows to be associated with an application only after
         // the application's startup signal has been emitted (i.e. during run()).
         let wnd_main_for_startup = wnd_main.clone();

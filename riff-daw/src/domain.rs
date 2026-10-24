@@ -2749,6 +2749,15 @@ pub trait BackgroundProcessorAudioPlugin {
     fn set_tempo(&mut self, tempo: f64);
     fn tempo(&self) -> f64;
 
+    /// Re-anchor the plugin's notion of the song position to an absolute frame position.
+    /// Called on every transport move (play from a block, rewind, scrub) - plugins whose
+    /// internal state is driven by the song position (arpeggiators, delays, mod LFOs)
+    /// must never free-run away from the host position, or they drift further off on
+    /// every play cycle and start producing garbage. Formats that get the position from
+    /// the host on every process call (VST2.4) have nothing to do here.
+    fn seek_transport(&mut self, _sample_position: i64) {
+    }
+
     fn stop_processing(&mut self);
     fn shutdown(&mut self);
 
@@ -2927,6 +2936,20 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.set_tempo(tempo);
+            }
+        }
+    }
+
+    fn seek_transport(&mut self, sample_position: i64) {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(_vst24_plugin) => {
+                // vst2.4 plugins read the host position on every process call - the
+                // track loop keeps it in step with the transport block index already
+            }
+            BackgroundProcessorAudioPluginType::Vst3(_vst3_plugin) => {
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.seek_transport(sample_position);
             }
         }
     }
@@ -3710,6 +3733,12 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         self.process_data.transport_info.tempo = tempo;
     }
 
+    fn seek_transport(&mut self, sample_position: i64) {
+        // re-anchor the CLAP song position (the plugin's tempo synced modulation and
+        // delay/arp state is driven from it) to the host transport
+        self.process_data.seek_transport(sample_position);
+    }
+
     fn preset_data(&mut self) -> String {
         match self.call_clap(ClapPluginCall::SavePreset) {
             ClapCallReply::Preset(preset_data) => base64::encode(preset_data),
@@ -3932,7 +3961,7 @@ impl BackgroundProcessorClapAudioPlugin {
                     return;
                 }
 
-                process(clap_plugin_ptr, &process_data);
+                let process_status = process(clap_plugin_ptr, &process_data);
 
                 // check for output events
                 for event in self.process_data.output_events.events.lock().iter() {
@@ -3962,16 +3991,36 @@ impl BackgroundProcessorClapAudioPlugin {
                     return;
                 }
 
-                let audio_output_buffer = self.process_data.buffers.outputs_ref();
-                let channel = &audio_output_buffer[0];
-                let channel1 = &channel[0];
-                let channel2 = &channel[1];
                 let (_, mut outputs) = background_processor_buffer.split();
                 let background_processor_left_channel = outputs.get_mut(0);
                 let background_processor_right_channel = outputs.get_mut(1);
-                for index in 0..self.block_size as usize {
-                    background_processor_left_channel[index] = channel1[index];
-                    background_processor_right_channel[index] = channel2[index];
+
+                if process_status == clap_sys::process::CLAP_PROCESS_ERROR {
+                    // CLAP_PROCESS_ERROR - the plugin has stopped or died. its output
+                    // buffers are no longer being updated; copying them back would replay
+                    // the last good block over and over (a machine-gunned block sounds
+                    // exactly like harsh noise) - silence the track instead
+                    debug!("CLAP plugin {} returned CLAP_PROCESS_ERROR from process - track output silenced.", self.uuid);
+                    background_processor_left_channel.fill(0.0);
+                    background_processor_right_channel.fill(0.0);
+                }
+                else {
+                    // take the plugin's output and immediately clear it - a plugin that
+                    // keeps returning a continue status but stops writing its output
+                    // (died internally, gated itself to sleep) would otherwise have the
+                    // same stale block copied back every cycle - the machine gunned
+                    // audio that sounds like harsh noise part way through playback
+                    let audio_output_buffer = self.process_data.buffers.outputs_mut_ref();
+                    let channel = &mut audio_output_buffer[0];
+                    let (channel1_slot, channel_rest) = channel.split_at_mut(1);
+                    let channel1 = &mut channel1_slot[0];
+                    let channel2 = &mut channel_rest[0];
+                    for index in 0..self.block_size as usize {
+                        background_processor_left_channel[index] = channel1[index];
+                        background_processor_right_channel[index] = channel2[index];
+                        channel1[index] = 0.0;
+                        channel2[index] = 0.0;
+                    }
                 }
             }
 
@@ -4286,7 +4335,16 @@ impl BackgroundProcessorVst3AudioPlugin {
         let channel2input_buffer = input_buffer.get(1);
         let channel1output_buffer = output_buffer.get_mut(0);
         let channel2output_buffer = output_buffer.get_mut(1);
-        ffi::vst3_plugin_process(self.daw_plugin_uuid.to_string(), channel1input_buffer, channel2input_buffer, channel1output_buffer, channel2output_buffer);
+        let processed = ffi::vst3_plugin_process(self.daw_plugin_uuid.to_string(), channel1input_buffer, channel2input_buffer, channel1output_buffer, channel2output_buffer);
+        if !processed {
+            // the plugin instance is gone or its process failed - the output slices
+            // were left untouched, copying them on would replay the previous block
+            // every cycle; silence them instead
+            debug!("VST3 plugin {} process failed - track output silenced.", self.daw_plugin_uuid);
+            let (_, mut output_buffer) = background_processor_buffer.split();
+            output_buffer.get_mut(0).fill(0.0);
+            output_buffer.get_mut(1).fill(0.0);
+        }
     }
 
     pub fn get_parameter_count(&self) -> i32 {
@@ -4576,6 +4634,81 @@ pub enum TrackBackgroundProcessorMode {
     Render
 }
 
+/// Set the FTZ (flush-to-zero) and DAZ (denormals-are-zero) bits in this thread's MXCSR.
+/// Plugin reverb/delay tails decay towards zero and spend minutes drifting through the
+/// denormal range - x86 FP costs for denormals are enormous and every track thread and
+/// the jack callback burning that CPU starves the audio cycle (jack overruns and re-
+/// outputs the last buffer - the whole audio layer comes out as repeating noise). The
+/// flags are per thread, so every audio thread must set them for itself.
+pub fn flush_denormals_to_zero() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let csr = std::arch::x86_64::_mm_getcsr();
+        std::arch::x86_64::_mm_setcsr(csr | 0x8040); // FTZ bit 15 | DAZ bit 6
+    }
+}
+
+/// The scheduling priority of the thread that runs the jack process callback: 0 until
+/// the first jack cycle has run, -1 when jack is not running under real time
+/// scheduling, otherwise the crossplatform priority value jack's worker has.
+pub static JACK_THREAD_PRIORITY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Reconcile this track thread's scheduling priority with the jack callback thread's.
+/// The track threads are spawned at a very high real time priority (95) - when that is
+/// at or above the jack worker thread's priority (jackd's default is around 10) the
+/// track threads preempt the jack cycle itself as soon as the mix gets dense: jack
+/// misses its deadlines, jackd times the client out and stops calling it - the
+/// transport freezes (stop does not stop the glitching, play does not restart, time
+/// does not advance) while the sound card replays the last buffer forever. A track
+/// thread must stay strictly below the jack callback thread. Returns true once
+/// reconciled (the caller only has to ask until this says true).
+pub fn reconcile_track_thread_priority() -> bool {
+    use std::sync::atomic::Ordering;
+    let jack_priority = JACK_THREAD_PRIORITY.load(Ordering::Relaxed);
+    if jack_priority == 0 {
+        return false;
+    }
+    match thread_priority::get_current_thread_priority() {
+        Ok(ThreadPriority::Crossplatform(current)) => {
+            let current: u8 = current.into();
+            if jack_priority < 0 {
+                // jack is running without real time scheduling - a FIFO priority track
+                // thread would starve the whole session, drop to normal scheduling
+                let result = thread_priority::set_thread_priority_and_policy(
+                    thread_priority::thread_native_id(),
+                    ThreadPriority::Min,
+                    ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Normal));
+                if result.is_ok() {
+                    debug!("Track thread dropped to normal scheduling (jack callback thread is not real time).");
+                }
+            }
+            else if (current as i32) >= jack_priority {
+                if jack_priority > 1 {
+                    // stay strictly below the jack callback thread: preempting jack is
+                    // what starves the cycle and gets the client timed out
+                    let target = (jack_priority - 1).max(1) as u8;
+                    if let Ok(value) = thread_priority::ThreadPriorityValue::try_from(target) {
+                        if thread_priority::set_current_thread_priority(ThreadPriority::Crossplatform(value)).is_ok() {
+                            debug!("Track thread scheduling priority dropped from {} to {} to stay below the jack callback thread ({}).", current, target, jack_priority);
+                        }
+                    }
+                }
+                else {
+                    // jack holds only FIFO priority 1 - there is no lower real time slot,
+                    // so drop out of real time scheduling altogether
+                    let _ = thread_priority::set_thread_priority_and_policy(
+                        thread_priority::thread_native_id(),
+                        ThreadPriority::Min,
+                        ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Normal));
+                    debug!("Track thread dropped to normal scheduling (jack callback thread at FIFO priority {}).", jack_priority);
+                }
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
 pub struct TrackBackgroundProcessorHelper {
     pub track_uuid: String,
     pub vst_event_blocks: Option<Vec<Vec<MidiEvent>>>,
@@ -4818,6 +4951,17 @@ impl TrackBackgroundProcessorHelper {
                     self.event_processor.set_play(true);
                     self.event_processor.set_block_index(start_at_block_number);
 
+                    // the sample must not carry over a mid-sample read position from
+                    // whatever was left playing when the transport last stopped - a
+                    // note on event at the new start re-arms the sample from zero
+                    self.sample_is_playing = false;
+                    self.sample_current_frame = 0;
+
+                    // plugins with song position driven state (arp/mono/delay/mod) start
+                    // every play from the transport position, never from wherever their
+                    // own free running counter had got to
+                    self.seek_plugin_transports(start_at_block_number);
+
                     self.stop_all_playing_notes();
                 },
                 TrackBackgroundProcessorInwardEvent::Stop => {
@@ -4831,6 +4975,12 @@ impl TrackBackgroundProcessorHelper {
                     self.vst_event_blocks = None;
                     self.vst_event_blocks_transition_to = None;
                     self.event_processor.set_block_index(-1);
+
+                    // stop the sample reader too - otherwise the audio track thread
+                    // keeps advancing the read cursor and pumping the old sample while
+                    // the transport is stopped, so the next play starts out of sync
+                    self.sample_is_playing = false;
+                    self.sample_current_frame = 0;
 
                     // flush sounding notes through the plugin that is producing them
                     // (the override if active) before the override switches are dropped
@@ -4857,6 +5007,14 @@ impl TrackBackgroundProcessorHelper {
                             },
                             None => (),
                         };
+
+                        // rewind the sample reader with the block index so the audio
+                        // does not keep running on from where it was when the transport
+                        // rewound underneath it
+                        self.sample_is_playing = false;
+                        self.sample_current_frame = 0;
+
+                        self.seek_plugin_transports(0);
                     }
                 },
                 TrackBackgroundProcessorInwardEvent::MoveBack => {
@@ -4868,11 +5026,19 @@ impl TrackBackgroundProcessorHelper {
                     };
                     if *self.event_processor.block_index() > 0 {
                         self.event_processor.set_block_index(self.event_processor.block_index() - 1);
+                        self.sample_is_playing = false;
+                        self.sample_current_frame = 0;
+                        self.seek_plugin_transports(*self.event_processor.block_index());
                     }
                 },
                 TrackBackgroundProcessorInwardEvent::Pause => {
                     if *self.event_processor.play() {
                         self.event_processor.set_play(false);
+                        // freeze the sample reader where it is with nothing pumping -
+                        // on resume the note events re-arm the sample from the new
+                        // block start rather than continuing a stale mid-sample cursor
+                        self.sample_is_playing = false;
+                        self.sample_current_frame = 0;
                     }
                 },
                 TrackBackgroundProcessorInwardEvent::MoveForward => () /* if let Some(event_blocks) = vst_event_blocks {
@@ -5297,6 +5463,14 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::SetBlockPosition(block_position) => {
                     self.event_processor.set_block_index(block_position);
                     let _all_note_offs: Vec<MidiEvent> = Vec::new();
+
+                    // scrubbing moves the block index under the running audio - rewind
+                    // the sample reader with it so the tracks never keep playing from
+                    // the old position after the seek
+                    self.sample_is_playing = false;
+                    self.sample_current_frame = 0;
+
+                    self.seek_plugin_transports(block_position);
 
                     self.stop_all_playing_notes();
                 },
@@ -5993,10 +6167,24 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
+    /// Re-anchor every live plugin instance's song position to the frame position of
+    /// the given block - called on each transport move (play from a block, rewind,
+    /// scrub) so no plugin's tempo synced state ever free-runs away from the host.
+    pub fn seek_plugin_transports(&mut self, block_index: i32) {
+        let sample_position = (block_index.max(0) as i64) * (self.block_size as i64);
+        for instrument_plugin in self.instrument_plugin_instances.iter_mut()
+            .chain(self.override_instrument_plugin_instances.iter_mut()) {
+            instrument_plugin.seek_transport(sample_position);
+        }
+        for effect_plugin in self.effect_plugin_instances.iter_mut()
+            .chain(self.override_effect_plugin_instances.iter_mut()) {
+            effect_plugin.seek_transport(sample_position);
+        }
+    }
+
     pub fn process_plugin_events(&mut self) {
         // get the events for this block
         let (mut events, param_events) = self.event_processor.process_events();
-
         // if !events.is_empty() {
         //     debug!("{} - process_plugin_events: event count={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), events.len());
         // }
@@ -6549,6 +6737,9 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
+                // keep denormal FP arithmetic from silently eating this thread's cpu
+                crate::domain::flush_denormals_to_zero();
+
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
                 let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(2);
@@ -6577,6 +6768,12 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 const ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS: i32 = 5;
                 let mut iteration_count = 0;
 
+                // DSP budget telemetry: a track whose plugin dispatch routinely eats most
+                // of the block period is what drags the whole graph into jack overruns
+                // (the audio layer going to noise part way into a long arrangement).
+                let mut dsp_slow_cycles: u32 = 0;
+                let mut dsp_window_cycles: u32 = 0;
+
                 let mut track_background_processor_helper =
                     TrackBackgroundProcessorHelper::new(
                         track_uuid.clone(),
@@ -6598,6 +6795,8 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
                 let mut routed_audio_right_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
+
+                let mut priority_reconciled = false;
 
                 let audio_block = AudioBlock::default();
                 let mut audio_block_buffer = vec![audio_block];
@@ -6621,6 +6820,11 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                 let mut quiescent = false;
 
                 loop {
+                    // this thread must never outrank the jack callback thread (see helper)
+                    if !priority_reconciled {
+                        priority_reconciled = crate::domain::reconcile_track_thread_priority();
+                    }
+
                     // lifecycle events (plugin instantiate/teardown/preset/configure) hold
                     // the write lock so no other track thread can be dispatching to a VST2
                     // plugin while process-wide plugin state is being (re)initialised.
@@ -6693,7 +6897,24 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     // framework state lifecycle work re-initialises - read lock while any
                     // track thread might be instantiating or loading a VST2 plugin.
                     let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
+                    let dsp_start = std::time::Instant::now();
                     track_background_processor_helper.process_plugin_events();
+
+                    // zero the live output channels for the block about to be produced.
+                    // a plugin that has died or stopped (or one that never writes, like a
+                    // track with effects but no instrument) would otherwise leave the
+                    // previous block's audio sitting in these buffers to be replayed every
+                    // cycle - machine-gunned audio that sounds like harsh noise.
+                    {
+                        let (_, mut channels) = audio_buffer.split();
+                        channels.get_mut(0).fill(0.0);
+                        channels.get_mut(1).fill(0.0);
+                    }
+                    {
+                        let (_, mut channels) = audio_buffer_swapped.split();
+                        channels.get_mut(0).fill(0.0);
+                        channels.get_mut(1).fill(0.0);
+                    }
 
                     // couldn't push the following into a member method because of lifetime issues
                     // the audio configuration (sample rate, block size) and tempo are read from
@@ -6810,6 +7031,19 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             }
                         }
                     }
+                    // measure the per-block plugin dispatch cost against the block period
+                    dsp_window_cycles += 1;
+                    let block_period_micros = track_background_processor_helper.block_size / track_background_processor_helper.sample_rate * 1_000_000.0;
+                    if dsp_start.elapsed().as_micros() as f64 > block_period_micros * 0.7 {
+                        dsp_slow_cycles += 1;
+                    }
+                    if dsp_window_cycles >= 512 {
+                        if dsp_slow_cycles > 96 {
+                            debug!("Track {} plugin dispatch exceeded 70% of the block period in {} of {} cycles - this track risks starving the jack cycle", track_uuid, dsp_slow_cycles, dsp_window_cycles);
+                        }
+                        dsp_slow_cycles = 0;
+                        dsp_window_cycles = 0;
+                    }
                     } // end of the read-locked per-block plugin dispatch section
 
                     let mode = match track_thread_coast.lock() {
@@ -6867,6 +7101,13 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         let audio_block = audio_block_buffer.get_mut(0).unwrap();
 
                         audio_block.block = *track_background_processor_helper.event_processor.block_index();
+
+                        // zero the whole block first - only the first block_size frames
+                        // get written below, and this scratch block comes out of a shared
+                        // recycled pool where the tail frames still carry other tracks'
+                        // audio from previous cycles
+                        audio_block.audio_data_left.fill(0.0);
+                        audio_block.audio_data_right.fill(0.0);
 
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
@@ -6967,6 +7208,9 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
+                // keep denormal FP arithmetic from silently eating this thread's cpu
+                crate::domain::flush_denormals_to_zero();
+
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
                 let render_ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
@@ -6974,7 +7218,13 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                 let render_consumer_block = render_ring_buffer_block.consumer();
                 let track_render_audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), render_consumer_block);
 
-                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(20);
+                // Live monitoring ring: a single slot paces this producer exactly to the
+                // jack cycle rate (the previous capacity of 20 let the sample read cursor
+                // free-run up to twenty blocks ahead of the instrument tracks' capacity-1
+                // rings, so every audio track sat a varying number of blocks behind the
+                // rest of the mix - the flam between the percussive tracks). The queue
+                // depth at transport restart is now deterministic for every track type.
+                let ring_buffer_block: SpscRb<AudioBlock> = SpscRb::new(1);
                 let producer_ring_buffer_block = ring_buffer_block.producer();
                 let consumer_ring_buffer_block = ring_buffer_block.consumer();
                 let audio_consumer_details = AudioConsumerDetails::<AudioBlock>::new(track_uuid.clone(), consumer_ring_buffer_block);
@@ -7010,6 +7260,8 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                 let mut routed_audio_left_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
                 let mut routed_audio_right_buffer: [f32; BLOCK_SIZE_MAX as usize] = [0.0; BLOCK_SIZE_MAX as usize];
 
+                let mut priority_reconciled = false;
+
                 let audio_block = AudioBlock::default();
                 let mut audio_block_buffer = vec![audio_block];
 
@@ -7021,6 +7273,11 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                 // track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
 
                 loop {
+                    // this thread must never outrank the jack callback thread (see helper)
+                    if !priority_reconciled {
+                        priority_reconciled = crate::domain::reconcile_track_thread_priority();
+                    }
+
                     // read the audio configuration from the helper each iteration so an
                     // AudioConfigurationChange event takes effect without restarting the thread
                     let current_block_size = track_background_processor_helper.block_size as i32;
@@ -7036,6 +7293,22 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         track_background_processor_helper.refresh_effect_plugin_editors();
                         track_background_processor_helper.handle_request_plugin_preset_data();
                         track_background_processor_helper.handle_request_effect_plugins_parameters();
+                    }
+
+                    // zero the live output channels for the block about to be produced.
+                    // the sample reader accumulates into these buffers with += and only
+                    // an effect plugin would overwrite them - without this every block
+                    // added on top of the running sum of all previous blocks, so the track
+                    // ramped up over a couple of minutes into full-scale garbage (noise).
+                    {
+                        let (_, mut channels) = audio_buffer.split();
+                        channels.get_mut(0).fill(0.0);
+                        channels.get_mut(1).fill(0.0);
+                    }
+                    {
+                        let (_, mut channels) = audio_buffer_swapped.split();
+                        channels.get_mut(0).fill(0.0);
+                        channels.get_mut(1).fill(0.0);
                     }
 
                     let (left_pan, right_pan) = DAWUtils::constant_power_stereo_pan(track_background_processor_helper.pan);
@@ -7136,9 +7409,13 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     };
                     if mode == TrackBackgroundProcessorMode::AudioOut {
                         let audio_block = audio_block_buffer.get_mut(0).unwrap();
+                        audio_block.block = *track_background_processor_helper.event_processor.block_index();
+                        audio_block.audio_data_left.fill(0.0);
+                        audio_block.audio_data_right.fill(0.0);
                         let (_, mut outputs_32) = audio_buffer_in_use.split();
                         let left_channel = outputs_32.get_mut(0);
                         for (index, left_frame) in left_channel.iter_mut().enumerate() {
+                            if index >= current_block_size as usize { break; }
                             *left_frame *= track_background_processor_helper.volume;
                             *left_frame *= left_pan;
                             if *left_frame > left_channel_level {
@@ -7148,6 +7425,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         }
                         let right_channel = outputs_32.get_mut(1);
                         for (index, right_frame) in right_channel.iter_mut().enumerate() {
+                            if index >= current_block_size as usize { break; }
                             *right_frame *= track_background_processor_helper.volume;
                             *right_frame *= right_pan;
                             if *right_frame > right_channel_level {
@@ -7215,6 +7493,9 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                     Err(error) => debug!("Could not set thread to max priority: {:?}.", error),
                 }
 
+                // keep denormal FP arithmetic from silently eating this thread's cpu
+                crate::domain::flush_denormals_to_zero();
+
 
                 let ring_buffer_midi: SpscRb<(u32, u8, u8, u8, bool)> = SpscRb::new(EVENT_BUFFER_SIZE);
                 let (mut producer_midi, consumer_midi) = (ring_buffer_midi.producer(), ring_buffer_midi.consumer());
@@ -7241,7 +7522,14 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
 
                 track_background_processor_helper.send_midi_consumer_details_to_jack(midi_consumer_details);
 
+                let mut priority_reconciled = false;
+
                 loop {
+                    // this thread must never outrank the jack callback thread (see helper)
+                    if !priority_reconciled {
+                        priority_reconciled = crate::domain::reconcile_track_thread_priority();
+                    }
+
                     track_background_processor_helper.handle_incoming_events();
                     // track_background_processor_helper.dump_play_info();
                     track_background_processor_helper.process_jack_midi_out_events(&mut producer_midi);
@@ -8578,6 +8866,20 @@ impl Project {
 pub struct AudioConsumerDetails<T> {
     track_id: String,
     consumer: Consumer<T>,
+    // repetition watchdog state (the jack layer uses this for the audio block
+    // consumers): a content signature of the last delivered block and how many
+    // consecutive deliveries have been bit identical
+    last_signature: u64,
+    repeat_run: i32,
+    // health telemetry (updated by the jack layer once per cycle): delivered block
+    // count, delivery gaps and the peak level of the most recent block, so a track
+    // that starves the mix or starts shipping hot garbage can be named in the log
+    delivered_blocks: u64,
+    missing_run: u32,
+    max_missing_run: u32,
+    last_peak: f32,
+    hot_run: u32,
+    max_hot_run: u32,
 }
 
 impl<T> AudioConsumerDetails<T> {
@@ -8585,6 +8887,14 @@ impl<T> AudioConsumerDetails<T> {
         Self {
             track_id,
             consumer,
+            last_signature: 0,
+            repeat_run: 0,
+            delivered_blocks: 0,
+            missing_run: 0,
+            max_missing_run: 0,
+            last_peak: 0.0,
+            hot_run: 0,
+            max_hot_run: 0,
         }
     }
 
@@ -8613,6 +8923,87 @@ impl<T> AudioConsumerDetails<T> {
 
     pub fn set_consumer(&mut self, consumer: Consumer<T>) {
         self.consumer = consumer;
+    }
+
+    /// The jack layer feeds every delivered non-silent audio block through this. When a
+    /// producer keeps handing over bit-identical content (a plugin that has died but is
+    /// still being shipped, or a stuck read position) the block would be machine-gunned
+    /// into the mix as noise - after a few identical deliveries the consumer is flagged
+    /// stale so the mixer drops its blocks until the content changes again. Silence is
+    /// never flagged. Returns true when this block should be dropped.
+    pub fn observe_repetition(&mut self, signature: u64, non_silent: bool) -> bool {
+        if !non_silent {
+            self.last_signature = 0;
+            self.repeat_run = 0;
+            return false;
+        }
+        if signature == self.last_signature {
+            self.repeat_run += 1;
+            if self.repeat_run == 4 {
+                debug!("Audio watchdog: track {} is repeating the same audio block - dropping its output until it changes (a dead plugin/producer?).", self.track_id);
+            }
+        }
+        else {
+            self.last_signature = signature;
+            self.repeat_run = 0;
+        }
+        self.repeat_run >= 4
+    }
+
+    /// Reset the repetition watchdog - called on transport moves (play/seek/stop) so
+    /// replaying the same passage from the top is never mistaken for a stuck producer.
+    pub fn reset_watchdog(&mut self) {
+        self.last_signature = 0;
+        self.repeat_run = 0;
+    }
+
+    /// One health sample per jack cycle: whether this consumer delivered and how hot
+    /// the delivered block is. `hot_run` counts consecutive blocks whose peak exceeds
+    /// a sane musical ceiling - sustained hot blocks are how a diverging / garbage
+    /// producing plugin announces itself.
+    pub fn observe_cycle(&mut self, delivered: bool, peak: f32) {
+        if delivered {
+            self.delivered_blocks += 1;
+            self.missing_run = 0;
+            self.last_peak = peak;
+            if peak > 1.05 {
+                self.hot_run += 1;
+                if self.hot_run > self.max_hot_run {
+                    self.max_hot_run = self.hot_run;
+                }
+            }
+            else {
+                self.hot_run = 0;
+            }
+        }
+        else {
+            self.missing_run += 1;
+            if self.missing_run > self.max_missing_run {
+                self.max_missing_run = self.missing_run;
+            }
+        }
+    }
+
+    /// Start a fresh health reporting window.
+    pub fn begin_health_window(&mut self) {
+        self.max_missing_run = 0;
+        self.max_hot_run = 0;
+    }
+
+    pub fn delivered_blocks(&self) -> u64 {
+        self.delivered_blocks
+    }
+
+    pub fn max_missing_run(&self) -> u32 {
+        self.max_missing_run
+    }
+
+    pub fn max_hot_run(&self) -> u32 {
+        self.max_hot_run
+    }
+
+    pub fn last_peak(&self) -> f32 {
+        self.last_peak
     }
 }
 

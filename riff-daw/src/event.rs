@@ -277,6 +277,8 @@ pub enum AudioLayerInwardEvent {
     NewAudioConsumer(AudioConsumerDetails<AudioBlock>),
     NewMidiConsumer(MidiConsumerDetails<(u32, u8, u8, u8, bool)>), // frame, midi byte 1, midi byte 2, midi byte 3
     Play(bool, i32, i32), // play - true/false, number of blocks, start at block
+    Seek(i32), // move the transport position to a block (rewind/scrub) - keeps the
+               // jack layer position in step with the track background processors
     ExtentsChange(i32),
     Stop,
     Tempo(f64),

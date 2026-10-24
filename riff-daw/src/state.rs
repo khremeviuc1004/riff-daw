@@ -2498,6 +2498,7 @@ impl DAWState {
             self.apply_actual_audio_configuration(vst_host_time_info.clone());
         }
 
+        let xruns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let audio = Audio::new(
             &jack_client,
             rx_to_audio,
@@ -2509,8 +2510,9 @@ impl DAWState {
             self.configuration.audio.sample_rate,
             self.configuration.audio.block_size,
             self.project().song().tempo(),
+            xruns.clone(),
         );
-        let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
+        let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
         let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
 
         self.set_jack_client(jack_async_client);
@@ -2587,6 +2589,7 @@ impl DAWState {
                             Err(_) => debug!("Jack restart: couldn't re-register the midi out port for track={}", midi_consumer.track_uuid().as_str()),
                         }
                     }
+                    let xruns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                     let audio = Audio::new_with_consumers(
                         &jack_client,
                         rx_to_audio,
@@ -2600,8 +2603,9 @@ impl DAWState {
                         self.configuration.audio.sample_rate,
                         self.configuration.audio.block_size,
                         self.project().song().tempo(),
+                        xruns.clone(),
                     );
-                    let notifications = JackNotificationHandler::new(jack_midi_sender_ui);
+                    let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
                     let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
                     for (from_name, to_name) in self.jack_connections.iter() {
                         let _ = jack_async_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());

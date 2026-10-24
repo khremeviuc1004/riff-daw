@@ -8,8 +8,9 @@ use vst::event::MidiEvent;
 use log::*;
 use parking_lot::RwLock;
 use crate::domain::{AudioBlock, TRANSPORT};
+
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
-use crate::constants::EVENT_BUFFER_SIZE;
+use crate::constants::{EVENT_BUFFER_SIZE, BLOCK_SIZE_MAX};
 use crate::event::AudioLayerTimeCriticalOutwardEvent;
 
 const MAX_MIDI_BYTES: usize = 3;
@@ -48,12 +49,15 @@ impl std::fmt::Debug for MidiCopy {
 
 pub struct JackNotificationHandler {
     jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+    xruns: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl JackNotificationHandler {
-    pub fn new(jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>) -> Self {
+    pub fn new(jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+               xruns: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         JackNotificationHandler {
             jack_midi_sender,
+            xruns,
         }
     }
 
@@ -69,22 +73,20 @@ impl JackNotificationHandler {
 
 impl NotificationHandler for JackNotificationHandler {
     fn thread_init(&self, _: &Client) {
+        // this runs on the jack process thread - set the denormal flush flags for it too,
+        // a denormal-poisoned master mix stalls the cycle and jack overruns (noise)
+        crate::domain::flush_denormals_to_zero();
         debug!("JACK: async thread started");
     }
-
     fn shutdown(&mut self, status: ClientStatus, reason: &str) {
-        debug!(
-            "JACK: shutdown with status {:?} because \"{}\"",
-            status, reason
-        );
-        if status == ClientStatus::CLIENT_ZOMBIE {
-            match self.jack_midi_sender.try_send(AudioLayerOutwardEvent::JackRestartRequired) {
-                Err(_) => {
-
-                }
-                _ => {}
-            }
-        }
+        // the jack server has taken this client out - sustained overruns end with jack
+        // timing the client out and never calling the callback again: the transport
+        // freezes (stop does not stop the glitching output, play does nothing, the
+        // position stops advancing) while the sound card replays the last buffer the
+        // callback wrote. Any shutdown status means the same thing for playback: ask
+        // the app to rebuild the client so the audio layer self-heals
+        warn!("JACK: client shut down with status {:?} because \"{}\" - requesting client restart.", status, reason);
+        let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::JackRestartRequired);
     }
 
     fn freewheel(&mut self, _: &Client, is_enabled: bool) {
@@ -189,6 +191,7 @@ impl NotificationHandler for JackNotificationHandler {
     }
 
     fn xrun(&mut self, _: &Client) -> Control {
+        self.xruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         debug!("JACK: under run occurred");
         Control::Continue
     }
@@ -213,11 +216,9 @@ pub struct Audio {
     tempo: f64,
     block_size: f64,
     frames_per_beat: u32,
-    low_priority_processing_delay_counter: i32,
     process_producers: bool,
     master_volume: f32,
     master_pan: f32,
-    low_priority_processing_delay_count: i32,
     rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
     jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
     jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
@@ -228,6 +229,14 @@ pub struct Audio {
     preview_sample: Option<SampleData>,
     preview_sample_current_frame: i32,
     vst_host_time_info: Arc<RwLock<TimeInfo>>,
+    // audio health telemetry: wall-clock cycle timing, slow cycle / xrun counters and
+    // a shared counter that the notification handler bumps on every jack overrun
+    cycle_count: u64,
+    slow_cycles: u64,
+    last_cycle_start: Option<std::time::Instant>,
+    xruns: Arc<std::sync::atomic::AtomicUsize>,
+    limiter_cycles: u32,
+    limiter_cycles_window: u32,
 }
 
 impl Audio {
@@ -241,6 +250,7 @@ impl Audio {
                sample_rate_in_frames: i32,
                block_size: i32,
                tempo: f64,
+               xruns: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
 
@@ -263,11 +273,9 @@ impl Audio {
             tempo,
             block_size: block_size as f64,
             frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
-            low_priority_processing_delay_counter: 0,
             process_producers: true,
             master_volume: 1.0,
             master_pan: 0.0,
-            low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
             jack_midi_sender_ui,
@@ -278,6 +286,12 @@ impl Audio {
             preview_sample: None,
             preview_sample_current_frame: 0,
             vst_host_time_info,
+            cycle_count: 0,
+            slow_cycles: 0,
+            last_cycle_start: None,
+            xruns,
+            limiter_cycles: 0,
+            limiter_cycles_window: 0,
         }
     }
 
@@ -293,6 +307,7 @@ impl Audio {
                               sample_rate_in_frames: i32,
                               block_size: i32,
                               tempo: f64,
+                              xruns: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
 
@@ -315,11 +330,9 @@ impl Audio {
             tempo,
             block_size: block_size as f64,
             frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
-            low_priority_processing_delay_counter: 0,
             process_producers: true,
             master_volume: 1.0,
             master_pan: 0.5,
-            low_priority_processing_delay_count: 5,
             rx_to_audio,
             jack_midi_sender,
             jack_midi_sender_ui,
@@ -330,6 +343,58 @@ impl Audio {
             preview_sample: None,
             preview_sample_current_frame: 0,
             vst_host_time_info,
+            cycle_count: 0,
+            slow_cycles: 0,
+            last_cycle_start: None,
+            xruns,
+            limiter_cycles: 0,
+            limiter_cycles_window: 0,
+        }
+    }
+
+    /// Periodic audio-layer health report (~every 512 cycles). Names the trouble:
+    /// a consumer that is missing cycles (a track thread starved by its own DSP), a
+    /// consumer shipping sustained hot blocks (a diverging plugin) or rising
+    /// slow_cycles/xruns (the whole graph is over budget) - so the noise onset can
+    /// be attributed to a specific track/plugin instead of the guesswork.
+    fn report_audio_health(&mut self) {
+        self.cycle_count += 1;
+        if self.cycle_count % 512 != 0 || self.audio_consumers.is_empty() {
+            return;
+        }
+        // while stopped/coasting consumers legitimately deliver nothing - reset the
+        // window counters quietly and report nothing
+        if !self.play {
+            for consumer_details in self.audio_consumers.iter_mut() {
+                consumer_details.begin_health_window();
+            }
+            return;
+        }
+
+        let xruns = self.xruns.load(std::sync::atomic::Ordering::Relaxed);
+        let mut anomalies: u32 = 0;
+        let mut details_lines: Vec<String> = vec![];
+        for consumer_details in self.audio_consumers.iter() {
+            if consumer_details.max_missing_run() > 2 || consumer_details.max_hot_run() > 8 {
+                anomalies += 1;
+                details_lines.push(format!("track {} delivered={} max_missing_run={} max_hot_run={} last_peak={:.3}",
+                                           consumer_details.track_id(), consumer_details.delivered_blocks(),
+                                           consumer_details.max_missing_run(), consumer_details.max_hot_run(),
+                                           consumer_details.last_peak()));
+            }
+        }
+        if anomalies > 0 || self.slow_cycles > 10 || self.limiter_cycles_window > 128 {
+            debug!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} anomalous=[{}]",
+                   self.cycle_count, self.slow_cycles, xruns, self.limiter_cycles_window, self.audio_consumers.len(), details_lines.join(" | "));
+        }
+        else {
+            debug!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} all nominal",
+                   self.cycle_count, self.slow_cycles, xruns, self.limiter_cycles_window, self.audio_consumers.len());
+        }
+        self.limiter_cycles_window = 0;
+
+        for consumer_details in self.audio_consumers.iter_mut() {
+            consumer_details.begin_health_window();
         }
     }
 
@@ -338,8 +403,18 @@ impl Audio {
     }
 
     fn handle_inward_events(&mut self, _client: &Client) {
-        match self.rx_to_audio.try_recv() {
-            Ok(event) => match event {
+        // drain every pending event in one pass - the old single try_recv meant a burst
+        // of transport events (rapid play/stop/seek cycles) could sit queued behind the
+        // others for many jack cycles, leaving the jack transport position and the track
+        // background processors playing from different positions.
+        let mut events_processed = 0;
+        while events_processed < 128 {
+            let event = match self.rx_to_audio.try_recv() {
+                Ok(event) => event,
+                Err(_) => break,
+            };
+            events_processed += 1;
+            match event {
                 AudioLayerInwardEvent::NewAudioConsumer(audio_consumer_detail) => {
                     self.audio_consumers.push(audio_consumer_detail);
                     // debug!("*************Added an audio consumer: {}", self.audio_consumers.len());
@@ -351,9 +426,27 @@ impl Audio {
                 AudioLayerInwardEvent::Play(start_play, number_of_blocks, start_block) => {
                     // debug!(root_logger, "*************Jack start play received: number_of_blocks={}", number_of_blocks);
                     self.play = start_play;
-                    self.block = start_block;
+                    self.block = start_block.max(0);
                     self.play_position_in_frames = self.block as u32 * self.block_size as u32;
                     self.blocks_total = number_of_blocks;
+                    TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
+                    self.reset_audio_watchdogs();
+                }
+                AudioLayerInwardEvent::Seek(start_block) => {
+                    // rewind/scrub from the UI - move the jack transport to the same
+                    // block the track background processors have been seeked to, the
+                    // transport position must never run on from a seek while the UI
+                    // thinks it has been rewound.
+                    let start_block = start_block.max(0);
+                    self.block = start_block;
+                    self.play_position_in_frames = start_block as u32 * self.block_size as u32;
+                    TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
+                    self.reset_audio_watchdogs();
+
+                    let ppq_pos = (self.play_position_in_frames as f64 * self.tempo) / (60.0 * self.sample_rate_in_frames);
+                    let mut time_info = self.vst_host_time_info.write();
+                    time_info.sample_pos = self.play_position_in_frames as f64;
+                    time_info.ppq_pos = ppq_pos;
                 }
                 AudioLayerInwardEvent::Stop => {
                     // debug!(root_logger, "*************Jack stop play received.");
@@ -362,6 +455,7 @@ impl Audio {
                         self.block = 0;
                     }
                     self.play_position_in_frames = 0;
+                    self.reset_audio_watchdogs();
                 }
                 AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
                     // debug!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
@@ -408,8 +502,40 @@ impl Audio {
                     self.preview_sample = Some(SampleData::new(file_name, self.sample_rate_in_frames as i32));
                     self.preview_sample_current_frame = 0;
                 }
-            },
-            Err(_) => (),
+            }
+        }
+    }
+
+    /// Cheap content signature of a delivered audio block for the repetition watchdog,
+    /// plus the block's peak absolute level (health telemetry). Sampling every 8th frame
+    /// keeps this a couple of hundred ops per track per cycle - a stale/dead producer
+    /// replaying the same block produces the same signature while producing real music
+    /// does not.
+    fn audio_block_signature(audio_block: &AudioBlock) -> (u64, f32) {
+        let mut signature: u64 = 0xcbf29ce484222325;
+        let mut peak: f32 = 0.0;
+        let mut index = 0;
+        while index < BLOCK_SIZE_MAX as usize {
+            let left = audio_block.audio_data_left[index];
+            let right = audio_block.audio_data_right[index];
+            let left_abs = if left.is_finite() { left.abs() } else { f32::MAX };
+            let right_abs = if right.is_finite() { right.abs() } else { f32::MAX };
+            if left_abs > peak { peak = left_abs; }
+            if right_abs > peak { peak = right_abs; }
+            signature = signature.rotate_left(7) ^ (left.to_bits() as u64);
+            signature = signature.wrapping_mul(0x00000100000001b3);
+            signature = signature.rotate_left(7) ^ (right.to_bits() as u64);
+            signature = signature.wrapping_mul(0x00000100000001b3);
+            index += 8;
+        }
+        (signature, peak)
+    }
+
+    /// Transport moved - every track's repetition state is meaningless now (replaying
+    /// the same passage from the top legitimately produces the same blocks again).
+    fn reset_audio_watchdogs(&mut self) {
+        for audio_consumer_details in self.audio_consumers.iter_mut() {
+            audio_consumer_details.reset_watchdog();
         }
     }
 
@@ -467,16 +593,41 @@ impl Audio {
                     }
 
                     if let Some(audio_block) = self.audio_blocks.pop() {
+                        let mut mix_this_block = read_audio_block;
+                        let mut peak: f32 = 0.0;
                         if read_audio_block {
+                            // repetition watchdog: a producer whose plugin has died may
+                            // keep shipping bit-identical non-silent blocks - the same
+                            // audio block machine-gunned at the jack cycle rate sounds
+                            // exactly like harsh noise. Drop a consumer's blocks once
+                            // its deliveries repeat unchanged, until the content changes.
+                            let (signature, block_peak) = Audio::audio_block_signature(&audio_block);
+                            peak = block_peak;
+                            if audio_consumer_details.observe_repetition(signature, block_peak > 1e-6) {
+                                mix_this_block = false;
+                            }
+                        }
+                        audio_consumer_details.observe_cycle(mix_this_block, peak);
+                        if mix_this_block {
                             for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
                                 if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
-                                    *left += audio_block.audio_data_left[index] * self.master_volume * 2.0 * left_pan;
-                                    *right += audio_block.audio_data_right[index] * self.master_volume * 2.0 * right_pan;
+                                    // a track whose plugin has gone bad fills its blocks with
+                                    // NaN/Inf (or runaway oscillation far beyond any musical
+                                    // level) - one such sample would poison the whole master
+                                    // bus; drop frames that are not sane
+                                    let track_left = audio_block.audio_data_left[index];
+                                    let track_right = audio_block.audio_data_right[index];
+                                    if track_left.is_finite() && track_left.abs() <= 32.0 {
+                                        *left += track_left * self.master_volume * 2.0 * left_pan;
+                                    }
+                                    if track_right.is_finite() && track_right.abs() <= 32.0 {
+                                        *right += track_right * self.master_volume * 2.0 * right_pan;
+                                    }
                                     if *left > master_channel_left_level {
-                                        master_channel_left_level += *left;
+                                        master_channel_left_level = *left;
                                     }
                                     if *right > master_channel_right_level {
-                                        master_channel_right_level += *right;
+                                        master_channel_right_level = *right;
                                     }
                                 } else {
                                     break;
@@ -493,7 +644,51 @@ impl Audio {
 
         let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
 
-        self.process_preview_sample(process_scope, frames_written, &mut number_of_consumers, left_pan, right_pan)
+        self.process_preview_sample(process_scope, frames_written, &mut number_of_consumers, left_pan, right_pan);
+
+        // master safety limiter: the master bus is a raw sum of every track with no
+        // ceiling. A dense arrangement (this song builds from 1 to ~17 simultaneous
+        // tracks, and percussive peaks arrive together) drives the sum far past 1.0
+        // and the output hard clips every single cycle - which comes out of the
+        // speakers not as "loud" but as harsh continuous noise, beginning exactly
+        // where the arrangement gets dense. Soft-saturate anything over 0.8 so the
+        // bus can never ship clipped garbage; material under the threshold is
+        // untouched, so normal levels are unchanged.
+        let out_left = self.out_l.as_mut_slice(process_scope);
+        let out_right = self.out_r.as_mut_slice(process_scope);
+        const THRESHOLD: f32 = 0.8;
+        const HEADROOM: f32 = 1.0 - THRESHOLD;
+        let mut limited_this_cycle = false;
+        for (left, right) in out_left.iter_mut().zip(out_right.iter_mut()) {
+            let l = *left;
+            if l >= THRESHOLD || l <= -THRESHOLD {
+                limited_this_cycle = true;
+                if l.is_finite() {
+                    let mag = if l >= 0.0 { l } else { -l };
+                    let shaped = THRESHOLD + HEADROOM * ((mag - THRESHOLD) / HEADROOM).tanh();
+                    *left = if l >= 0.0 { shaped } else { -shaped };
+                }
+                else {
+                    *left = 0.0;
+                }
+            }
+            let r = *right;
+            if r >= THRESHOLD || r <= -THRESHOLD {
+                limited_this_cycle = true;
+                if r.is_finite() {
+                    let mag = if r >= 0.0 { r } else { -r };
+                    let shaped = THRESHOLD + HEADROOM * ((mag - THRESHOLD) / HEADROOM).tanh();
+                    *right = if r >= 0.0 { shaped } else { -shaped };
+                }
+                else {
+                    *right = 0.0;
+                }
+            }
+        }
+        if limited_this_cycle {
+            self.limiter_cycles += 1;
+            self.limiter_cycles_window += 1;
+        }
     }
 
     fn process_preview_sample(&mut self, process_scope: &ProcessScope, frames_written: usize, number_of_consumers: &mut f32, left_pan: f32, right_pan: f32) {
@@ -770,21 +965,15 @@ impl Audio {
     }
 
     fn check_for_coast(&mut self) {
-        self.process_producers = match self.coast.try_lock() {
-            Ok(mode) => match *mode {
+        // transient lock contention with one of the track threads must never gate the
+        // mix for a cycle - keep the last known mode until the lock is actually taken,
+        // otherwise a successful try_lock race silently mutes every track for that cycle
+        if let Ok(mode) = self.coast.try_lock() {
+            self.process_producers = match *mode {
                 TrackBackgroundProcessorMode::AudioOut => true,
                 TrackBackgroundProcessorMode::Coast => false,
                 TrackBackgroundProcessorMode::Render => false,
-            }
-            Err(_) => false
-        };
-    }
-
-    fn update_low_priority_processing_delay_counter(&mut self) {
-        if self.low_priority_processing_delay_counter > self.low_priority_processing_delay_count {
-            self.low_priority_processing_delay_counter = 0;
-        } else {
-            self.low_priority_processing_delay_counter += 1;
+            };
         }
     }
 
@@ -839,9 +1028,48 @@ impl Audio {
 
 impl ProcessHandler for Audio {
     fn process(&mut self, client: &Client, process_scope: &ProcessScope) -> Control {
-        if self.low_priority_processing_delay_counter >= self.low_priority_processing_delay_count {
-            self.handle_inward_events(client);
+        // publish this thread's scheduling priority (this runs on the jack callback
+        // thread) once, so the track threads can keep themselves below it
+        if crate::domain::JACK_THREAD_PRIORITY.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            match thread_priority::get_current_thread_priority() {
+                Ok(thread_priority::ThreadPriority::Crossplatform(value)) => {
+                    let value: u8 = value.into();
+                    if value == 0 {
+                        // SCHED_OTHER jack worker (server running without realtime)
+                        debug!("JACK: callback thread is not running realtime - track threads will drop to normal scheduling.");
+                        crate::domain::JACK_THREAD_PRIORITY.store(-1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    else {
+                        debug!("JACK: callback thread running with realtime priority {} - track threads will keep below it.", value);
+                        crate::domain::JACK_THREAD_PRIORITY.store(value as i32, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                Ok(other) => {
+                    debug!("JACK: callback thread scheduling is {:?} - track threads will drop to normal scheduling.", other);
+                    crate::domain::JACK_THREAD_PRIORITY.store(-1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(_) => {
+                    crate::domain::JACK_THREAD_PRIORITY.store(-1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
+
+        // cycle wall-clock timing: if a cycle starts later than the nominal period the
+        // engine is not keeping up and jack is overrunning (overruns are the classic
+        // mechanism for the audio layer starting to play noise part way through a
+        // long, heavy arrangement)
+        let cycle_start = std::time::Instant::now();
+        if let Some(prev_cycle_start) = self.last_cycle_start {
+            let expected_micros = self.block_size / self.sample_rate_in_frames * 1_000_000.0;
+            if cycle_start.duration_since(prev_cycle_start).as_micros() as f64 > expected_micros * 1.6 {
+                self.slow_cycles += 1;
+            }
+        }
+        self.last_cycle_start = Some(cycle_start);
+
+        // handle inward events on every cycle - transport events must take effect
+        // immediately so the jack position and the track processors never diverge
+        self.handle_inward_events(client);
 
         self.zero_jack_buffers(process_scope);
 
@@ -854,7 +1082,7 @@ impl ProcessHandler for Audio {
         }
 
         self.check_for_coast();
-        self.update_low_priority_processing_delay_counter();
+        self.report_audio_health();
 
         if self.keep_alive {
             Control::Continue

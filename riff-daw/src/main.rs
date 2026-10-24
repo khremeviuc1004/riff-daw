@@ -76,9 +76,12 @@ fn main() {
     let mut history_manager = Arc::new(Mutex::new(HistoryManager::new()));
 
     // setup logging
-    let logger_init_result = Logger::try_with_env();
+    let logger_init_result = Logger::try_with_env_or_str("debug");
     let _logger = if let Ok(logger) = logger_init_result {
         let logger = logger
+            // RUST_LOG unset: debug level by default - the audio layer's diagnostics
+            // (health reports, watchdog drops, jack shutdown notices) are debug! and
+            // were invisible at the previous default filter level
             // .log_to_file(FileSpec::default())
             // .write_mode(WriteMode::Async)
             .start();
@@ -7021,6 +7024,13 @@ win.connect_close_request(|window| {
                         for track in tracks {
                             state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::GotoStart);
                         }
+                        // keep the jack transport position in step with the rewind - it
+                        // otherwise keeps counting on from wherever it was, so the very
+                        // next play starts every track from the wrong frame offset
+                        match tx_to_audio.send(AudioLayerInwardEvent::Seek(0)) {
+                            Ok(_) => (),
+                            Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when going to start: {}", error),
+                        }
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
                 }
@@ -7052,8 +7062,13 @@ win.connect_close_request(|window| {
 
                         {
                             let state = state;
+                            let seek_block = (play_position_in_frames / (block_size as u32)) as i32;
                             for track in state.project().song().tracks().iter() {
-                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition((play_position_in_frames / (block_size as u32)) as i32));
+                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition(seek_block));
+                            }
+                            match tx_to_audio.send(AudioLayerInwardEvent::Seek(seek_block)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when moving back: {}", error),
                             }
                         }
 
@@ -7347,8 +7362,13 @@ win.connect_close_request(|window| {
 
                         {
                             let state = state;
+                            let seek_block = (play_position_in_frames / (block_size as u32)) as i32;
                             for track in state.project().song().tracks().iter() {
-                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition((play_position_in_frames / (block_size as u32)) as i32));
+                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition(seek_block));
+                            }
+                            match tx_to_audio.send(AudioLayerInwardEvent::Seek(seek_block)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when moving forward: {}", error),
                             }
                         }
                         let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
@@ -7749,8 +7769,13 @@ win.connect_close_request(|window| {
 
                         {
                             let state = state;
+                            let seek_block = (play_position_in_frames / block_size) as i32;
                             for track in state.project().song().tracks().iter() {
-                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition((play_position_in_frames / block_size) as i32));
+                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetBlockPosition(seek_block));
+                            }
+                            match tx_to_audio.send(AudioLayerInwardEvent::Seek(seek_block)) {
+                                Ok(_) => (),
+                                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when moving the play position: {}", error),
                             }
                         }
                     },

@@ -122,7 +122,7 @@ pub trait CustomPainter {
 }
 
 pub trait BeatGridMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64;
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, view_height_in_pixels: f64) -> f64;
     fn get_snapped_to_time(&self, snap: f64, time: f64) -> f64 {
         let calculated_snap = DAWUtils::quantise(time, snap, 1.0, false);
         if calculated_snap.snapped {
@@ -137,9 +137,9 @@ pub trait BeatGridMouseCoordHelper {
         x / (beat_width_in_pixels * zoom_horizontal)
     }
     fn select_single(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool);
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool);
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool);
     fn deselect_single(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32);
-    fn deselect_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32);
+    fn deselect_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64);
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
     fn add_entity_extra(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, duration: f64, entity_uuid: String);
     fn delete_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, y_index: i32, time: f64, entity_uuid: String);
@@ -163,7 +163,7 @@ pub trait BeatGridMouseCoordHelper {
 pub struct PianoRollMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, _view_height_in_pixels: f64) -> f64 {
         ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
     }
 
@@ -171,7 +171,7 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelectSingle(x, y, add_to_select), None));
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsSelectMultiple(x, y2, x2, y, add_to_select), None));
     }
 
@@ -179,7 +179,7 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsDeselectSingle(x, y), None));
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffEventsDeselectMultiple(x, y2, x2, y), None));
     }
 
@@ -256,14 +256,14 @@ impl BeatGridMouseCoordHelper for PianoRollMouseCoordHelper {
 pub struct SampleRollMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, _view_height_in_pixels: f64) -> f64 {
         ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical)
     }
 
     fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
     }
 
@@ -271,7 +271,7 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
         todo!()
     }
 
-    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: f64, _x2: f64, _y2: f64) {
     }
 
     fn add_entity(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, time: f64, _duration: f64, entity_uuid: String) {
@@ -344,15 +344,15 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
 pub struct TrackGridMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
-        y / entity_height_in_pixels * zoom_vertical
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, _view_height_in_pixels: f64) -> f64 {
+        y / (entity_height_in_pixels * zoom_vertical)
     }
 
     fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelectSingle(x, y, add_to_select), None));
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesSelectMultiple(x, y, x2, y2, add_to_select), None));
     }
 
@@ -360,7 +360,7 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesDeselectSingle(x, y), None));
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencesDeselectMultiple(x, y, x2, y2), None));
     }
 
@@ -436,15 +436,15 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
 pub struct RiffGridMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
-        y / entity_height_in_pixels * zoom_vertical
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, _view_height_in_pixels: f64) -> f64 {
+        y / (entity_height_in_pixels * zoom_vertical)
     }
 
     fn select_single(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelectSingle(x, y, add_to_select), None));
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesSelectMultiple(x, y, x2, y2, add_to_select), None));
     }
 
@@ -452,7 +452,7 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesDeselectSingle(x, y), None));
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64) {
         let _ = tx_from_ui.send(DAWEvents::RiffGridChange(RiffGridChangeType::RiffReferencesDeselectMultiple(x, y, x2, y2), None));
     }
 
@@ -1261,7 +1261,7 @@ impl MouseHandler for BeatGrid {
                         match &self.mouse_coord_helper {
                             Some(mouse_coord_helper) => {
                                 if let DrawMode::Point = self.draw_mode {
-                                    let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                     let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                     let duration = self.new_entity_length_in_beats - 0.01; // take off just a little off so that the note off does not overlap the next note on
@@ -1270,9 +1270,9 @@ impl MouseHandler for BeatGrid {
                                 }
                                 else if let DrawMode::Line = self.draw_mode {
                                     let x_start_position = mouse_coord_helper.get_time(self.draw_mode_x_start, self.beat_width_in_pixels, self.zoom_horizontal);
-                                    let y_start_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_start, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_start_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_start, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                     let x_end_position = mouse_coord_helper.get_time(self.draw_mode_x_end, self.beat_width_in_pixels, self.zoom_horizontal);
-                                    let y_end_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_end, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_end_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_end, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                     let snap_position_start = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, x_start_position);
                                     let snap_position_end = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, x_end_position);
 
@@ -1295,9 +1295,9 @@ impl MouseHandler for BeatGrid {
                                 }
                                 else if let DrawMode::Curve = self.draw_mode {
                                     let x_start_position = mouse_coord_helper.get_time(self.draw_mode_x_start, self.beat_width_in_pixels, self.zoom_horizontal);
-                                    let y_start_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_start, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_start_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_start, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                     let x_end_position = mouse_coord_helper.get_time(self.draw_mode_x_end, self.beat_width_in_pixels, self.zoom_horizontal);
-                                    let y_end_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_end, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_end_index = mouse_coord_helper.get_entity_vertical_value(self.draw_mode_y_end, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
 
                                     // orient left -> right like the drawn preview so the curve bows the same way
                                     let (curve_start, curve_end, left_value, right_value) = if x_start_position <= x_end_position {
@@ -1325,7 +1325,7 @@ impl MouseHandler for BeatGrid {
                                     }
                                 }
                                 else if let DrawMode::Triplet = self.draw_mode {
-                                    let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                    let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                     let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                     let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                                     let duration = self.new_entity_length_in_beats - 0.01; // take off just a little off so that the note off does not overlap the next note on
@@ -1341,7 +1341,7 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::Delete => {
                         match &self.mouse_coord_helper {
                             Some(mouse_coord_helper) => {
-                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                 mouse_coord_helper.delete_entity(self.tx_from_ui.clone(), y_index as i32, position, data);
                             },
@@ -1382,23 +1382,31 @@ impl MouseHandler for BeatGrid {
                             if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
                                 let select_window = self.get_select_window();
 
+                                // pad the selection window a few pixels in each direction so that events
+                                // touching or just inside the window edges are always captured reliably
+                                let selection_window_padding = 3.0;
+                                let x_lower = mouse_coord_helper.get_time(select_window.0 - selection_window_padding, self.beat_width_in_pixels, self.zoom_horizontal).max(0.0);
+                                let y_top = mouse_coord_helper.get_entity_vertical_value(select_window.1 - selection_window_padding, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
+                                let x_upper = mouse_coord_helper.get_time(select_window.2 + selection_window_padding, self.beat_width_in_pixels, self.zoom_horizontal);
+                                let y_bottom = mouse_coord_helper.get_entity_vertical_value(select_window.3 + selection_window_padding, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
+
                                 if shift_key {
                                     mouse_coord_helper.deselect_multiple(
                                         self.tx_from_ui.clone(),
-                                        mouse_coord_helper.get_time(select_window.0, self.beat_width_in_pixels, self.zoom_horizontal),
-                                        mouse_coord_helper.get_entity_vertical_value(select_window.1, self.entity_height_in_pixels, self.zoom_vertical) as i32,
-                                        mouse_coord_helper.get_time(select_window.2, self.beat_width_in_pixels, self.zoom_horizontal),
-                                        mouse_coord_helper.get_entity_vertical_value(select_window.3, self.entity_height_in_pixels, self.zoom_vertical) as i32
+                                        x_lower,
+                                        y_top,
+                                        x_upper,
+                                        y_bottom
                                     );
                                 }
                                 else {
                                     let add_to_select = control_key; // should this be the shift key???
                                     mouse_coord_helper.select_multiple(
                                         self.tx_from_ui.clone(),
-                                        mouse_coord_helper.get_time(select_window.0, self.beat_width_in_pixels, self.zoom_horizontal),
-                                        mouse_coord_helper.get_entity_vertical_value(select_window.1, self.entity_height_in_pixels, self.zoom_vertical) as i32,
-                                        mouse_coord_helper.get_time(select_window.2, self.beat_width_in_pixels, self.zoom_horizontal),
-                                        mouse_coord_helper.get_entity_vertical_value(select_window.3, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                        x_lower,
+                                        y_top,
+                                        x_upper,
+                                        y_bottom,
                                         add_to_select
                                     );
                                 }
@@ -1410,7 +1418,7 @@ impl MouseHandler for BeatGrid {
                                 mouse_coord_helper.deselect_single(
                                     self.tx_from_ui.clone(),
                                     mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal),
-                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64) as i32,
                                 );
                             }
                         }
@@ -1420,14 +1428,14 @@ impl MouseHandler for BeatGrid {
                                 mouse_coord_helper.select_single(
                                     self.tx_from_ui.clone(),
                                     mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal),
-                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical) as i32,
+                                    mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64) as i32,
                                     true
                                 );
                             }
                         }
                         else /*if let DragCycle::NotStarted = self.select_drag_cycle*/ {
                             if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
-                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
 
                                 mouse_coord_helper.cycle_entity_selection(self.tx_from_ui.clone(), y_index as i32, position);
@@ -1461,7 +1469,7 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::SelectStartNote => {
                         match &self.mouse_coord_helper {
                             Some(mouse_coord_helper) => {
-                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                 mouse_coord_helper.set_start_note(self.tx_from_ui.clone(), y_index as i32, position);
                             },
@@ -1471,7 +1479,7 @@ impl MouseHandler for BeatGrid {
                     OperationModeType::SelectRiffReferenceMode => {
                         match &self.mouse_coord_helper {
                             Some(mouse_coord_helper) => {
-                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                                 mouse_coord_helper.set_riff_reference_play_mode(self.tx_from_ui.clone(), y_index as i32, position);
                             },
@@ -1484,7 +1492,7 @@ impl MouseHandler for BeatGrid {
                 match self.operation_mode {
                     OperationModeType::Add => {
                         if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
-                            let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                            let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                             let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
                             let snap_position = mouse_coord_helper.get_snapped_to_time(self.snap_position_in_beats, position);
                             let duration = self.new_entity_length_in_beats - 0.01; // take off just a little off so that the note off does not overlap the next note on
@@ -1598,7 +1606,7 @@ impl MouseHandler for BeatGrid {
                         }
                         else {
                             if let Some(mouse_coord_helper) = self.mouse_coord_helper.as_ref() {
-                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical);
+                                let y_index = mouse_coord_helper.get_entity_vertical_value(y, self.entity_height_in_pixels, self.zoom_vertical, drawing_area.size(gtk4::Orientation::Vertical) as f64);
                                 let position = mouse_coord_helper.get_time(x, self.beat_width_in_pixels, self.zoom_horizontal);
 
                                 mouse_coord_helper.select_underlying_entity(self.tx_from_ui.clone(), y_index as i32, position);
@@ -6098,8 +6106,22 @@ impl CustomPainter for AutomationCustomPainter {
 pub struct AutomationMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
-    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64) -> f64 {
-        let value = ((127.0 * entity_height_in_pixels * zoom_vertical) - y) / (entity_height_in_pixels * zoom_vertical);
+    fn get_entity_vertical_value(&self, y: f64, entity_height_in_pixels: f64, zoom_vertical: f64, view_height_in_pixels: f64) -> f64 {
+        let adjusted_entity_height_in_pixels = entity_height_in_pixels * zoom_vertical;
+        // the automation view anchors the 0..127 value range to the actual height of the drawing
+        // area (the painter places a value at `height - (value + 1) * entity height * zoom`), so
+        // the hit test must invert exactly that mapping - otherwise the drawn points drift away
+        // from where they can be selected when the view is taller/shorter than the nominal
+        // 128 rows worth of pixels (high velocities in particular could then only be selected
+        // by starting the drag window above the top of the view which is impossible).
+        // unrealised/offscreen widgets report a bogus size, so fall back to the nominal range
+        let view_height = if view_height_in_pixels > adjusted_entity_height_in_pixels {
+            view_height_in_pixels
+        }
+        else {
+            128.0 * adjusted_entity_height_in_pixels
+        };
+        let value = ((view_height - y) / adjusted_entity_height_in_pixels) - 1.0;
         if value < 0.0 {
             0.0
         }
@@ -6111,14 +6133,14 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
-    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32, add_to_select: bool) {
+    fn select_multiple(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64, add_to_select: bool) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationSelectMultiple(x, y2, x2, y, add_to_select), None));
     }
 
     fn deselect_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32) {
     }
 
-    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: i32, x2: f64, y2: i32) {
+    fn deselect_multiple(&self, tx_from_ui: Sender<DAWEvents>, x: f64, y: f64, x2: f64, y2: f64) {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::AutomationDeselectMultiple(x, y2, x2, y), None));
     }
 
@@ -6195,20 +6217,20 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
 pub struct RiffArrangementOverviewMouseCoordHelper;
 
 impl BeatGridMouseCoordHelper for RiffArrangementOverviewMouseCoordHelper {
-    fn get_entity_vertical_value(&self, _y: f64, _entity_height_in_pixels: f64, _zoom_vertical: f64) -> f64 {
+    fn get_entity_vertical_value(&self, _y: f64, _entity_height_in_pixels: f64, _zoom_vertical: f64, _view_height_in_pixels: f64) -> f64 {
         0.0
     }
 
     fn select_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _add_to_select: bool) {
     }
 
-    fn select_multiple(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32, _add_to_select: bool) {
+    fn select_multiple(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x: f64, _y: f64, _x2: f64, _y2: f64, _add_to_select: bool) {
     }
 
     fn deselect_single(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32) {
     }
 
-    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: i32, _x2: f64, _y2: i32) {
+    fn deselect_multiple(&self, _tx_from_ui: Sender<DAWEvents>, _x: f64, _y: f64, _x2: f64, _y2: f64) {
     }
 
     fn add_entity(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _y_index: i32, _time: f64, _duration: f64, _entity_uuid: String) {

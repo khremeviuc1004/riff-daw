@@ -3312,7 +3312,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             // store the notes for an undo
                                                             for track_event in riff.events_mut().iter_mut() {
                                                                 if let TrackEvent::Note(note) = track_event {
-                                                                    if y <= note.note() && note.note() <= y2 && x <= note.position() && (note.position() + note.length()) <= x2 {
+                                                                    if y <= (note.note() + 1) as f64 && note.note() as f64 <= y2 && note.position() <= x2 && (note.position() + note.length()) >= x {
                                                                         debug!("Note selected: x={}, y={}, x2={}, y2={}, note position={}, note={}, note duration={}", x, y, x2, y2, note.position(), note.note(), note.length());
                                                                         selected.push(note.id());
                                                                     }
@@ -3446,7 +3446,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             // store the notes for an undo
                                                             for track_event in riff.events_mut().iter_mut() {
                                                                 if let TrackEvent::Note(note) = track_event {
-                                                                    if y <= note.note() && note.note() <= y2 && x <= note.position() && (note.position() + note.length()) <= x2 {
+                                                                    if y <= (note.note() + 1) as f64 && note.note() as f64 <= y2 && note.position() <= x2 && (note.position() + note.length()) >= x {
                                                                         debug!("Note selected: x={}, y={}, x2={}, y2={}, note position={}, note={}, note duration={}", x, y, x2, y2, note.position(), note.note(), note.length());
                                                                         selected.push(note.id());
                                                                     }
@@ -4603,8 +4603,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 match event {
                                                                     TrackEvent::Note(note) => {
                                                                         let position = note.position();
-                                                                        if time_lower <= position && (position + note.length()) <= time_higher
-                                                                            && value_lower <= note.velocity() && note.velocity() <= value_higher {
+                                                                        if time_lower <= (position + note.length()) && position <= time_higher
+                                                                            && value_lower <= (note.velocity() + 1) as f64 && note.velocity() as f64 <= value_higher {
                                                                             selected.push(note.id());
                                                                         }
                                                                     },
@@ -4620,7 +4620,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             let position = controller.position();
                                                                             if controller.controller() == automation_type_value &&
                                                                                 time_lower <= position && position <= time_higher
-                                                                                && value_lower <= controller.value() && controller.value() <= value_higher {
+                                                                                && value_lower <= controller.value() as f64 && controller.value() as f64 <= value_higher {
                                                                                 selected.push(controller.id());
                                                                             }
                                                                         },
@@ -4630,8 +4630,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             }
                                                         }
                                                         AutomationViewMode::PitchBend => {
-                                                            let value_lower = (value_lower as f32 / 127.0 * 16384.0 - 8192.0) as i32;
-                                                            let value_higher = (value_higher as f32 / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            let value_lower = (value_lower / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            let value_higher = (value_higher / 127.0 * 16384.0 - 8192.0) as i32;
                                                             events.iter().for_each(|event| {
                                                                 match event {
                                                                     TrackEvent::PitchBend(pitch_bend) => {
@@ -4651,7 +4651,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::AfterTouch(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            && value_lower <= event.value() as f64 && event.value() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -4665,7 +4665,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::KeyPressure(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            && value_lower <= event.value() as f64 && event.value() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -4679,7 +4679,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::ProgramChange(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.program() && event.program() <= value_higher {
+                                                                            && value_lower <= event.program() as f64 && event.program() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -4923,8 +4923,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                 match event {
                                                                     TrackEvent::Note(note) => {
                                                                         let position = note.position();
-                                                                        if time_lower <= position && (position + note.length()) <= time_higher
-                                                                            && value_lower <= note.velocity() && note.velocity() <= value_higher {
+                                                                        if time_lower <= (position + note.length()) && position <= time_higher
+                                                                            && value_lower <= (note.velocity() + 1) as f64 && note.velocity() as f64 <= value_higher {
                                                                             selected.push(note.id());
                                                                         }
                                                                     },
@@ -4940,7 +4940,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                             let position = controller.position();
                                                                             if controller.controller() == automation_type_value &&
                                                                                 time_lower <= position && position <= time_higher
-                                                                                && value_lower <= controller.value() && controller.value() <= value_higher {
+                                                                                && value_lower <= controller.value() as f64 && controller.value() as f64 <= value_higher {
                                                                                 selected.push(controller.id());
                                                                             }
                                                                         },
@@ -4950,8 +4950,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                             }
                                                         }
                                                         AutomationViewMode::PitchBend => {
-                                                            let value_lower = (value_lower as f32 / 127.0 * 16384.0 - 8192.0) as i32;
-                                                            let value_higher = (value_higher as f32 / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            let value_lower = (value_lower / 127.0 * 16384.0 - 8192.0) as i32;
+                                                            let value_higher = (value_higher / 127.0 * 16384.0 - 8192.0) as i32;
                                                             events.iter().for_each(|event| {
                                                                 match event {
                                                                     TrackEvent::PitchBend(pitch_bend) => {
@@ -4971,7 +4971,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::AfterTouch(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            && value_lower <= event.value() as f64 && event.value() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -4985,7 +4985,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::KeyPressure(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.value() && event.value() <= value_higher {
+                                                                            && value_lower <= event.value() as f64 && event.value() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -4999,7 +4999,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                                     TrackEvent::ProgramChange(event) => {
                                                                         let position = event.position();
                                                                         if time_lower <= position && position <= time_higher
-                                                                            && value_lower <= event.program() && event.program() <= value_higher {
+                                                                            && value_lower <= event.program() as f64 && event.program() as f64 <= value_higher {
                                                                             selected.push(event.id());
                                                                         }
                                                                     }
@@ -6696,13 +6696,13 @@ win.connect_close_request(|window| {
 
                             for (index, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                 let track_number = index as i32;
-                                if y < track_number && track_number < y2 {
+                                if y <= (track_number + 1) as f64 && track_number as f64 <= y2 {
                                     let track_uuid = track.uuid().to_string();
                                     let riff_lengths = track.riffs().iter().map(|riff| (riff.uuid().to_string(), riff.length())).collect_vec();
                                     for riff_ref in track.riff_refs_mut().iter_mut() {
                                         let riff_length = riff_lengths.iter().find(|riff_length_details| riff_length_details.0 == riff_ref.linked_to());
                                         if let Some((_, length)) = riff_length {
-                                            if x <= riff_ref.position() && (riff_ref.position() + length) <= x2 {
+                                            if riff_ref.position() <= x2 && (riff_ref.position() + length) >= x {
                                                 debug!("Riff ref selected: uuid={}, x={}, y={}, x2={}, y2={}, position={}, track={}, length={}", riff_ref.uuid().to_string(), x, y, x2, y2, riff_ref.position(), track_uuid.clone(), length);
                                                 selected.push(riff_ref.uuid().to_string());
                                             }
@@ -6770,13 +6770,13 @@ win.connect_close_request(|window| {
 
                             for (index, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                 let track_number = index as i32;
-                                if y < track_number && track_number < y2 {
+                                if y <= (track_number + 1) as f64 && track_number as f64 <= y2 {
                                     let track_uuid = track.uuid().to_string();
                                     let riff_lengths = track.riffs().iter().map(|riff| (riff.uuid().to_string(), riff.length())).collect_vec();
                                     for riff_ref in track.riff_refs_mut().iter_mut() {
                                         let riff_length = riff_lengths.iter().find(|riff_length_details| riff_length_details.0 == riff_ref.linked_to());
                                         if let Some((_, length)) = riff_length {
-                                            if x <= riff_ref.position() && (riff_ref.position() + length) <= x2 {
+                                            if riff_ref.position() <= x2 && (riff_ref.position() + length) >= x {
                                                 debug!("Riff ref deselected: uuid={}, x={}, y={}, x2={}, y2={}, position={}, track={}, length={}", riff_ref.uuid().to_string(), x, y, x2, y2, riff_ref.position(), track_uuid.clone(), length);
                                                 selected.push(riff_ref.uuid().to_string());
                                             }
@@ -8494,11 +8494,11 @@ win.connect_close_request(|window| {
                                     if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
                                         for (index, track_uuid) in track_uuids.iter().enumerate() {
                                             let track_number = index as i32;
-                                            if y1 < track_number && track_number < y2 {
+                                            if y1 <= (track_number + 1) as f64 && track_number as f64 <= y2 {
                                                 if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
                                                     for riff_ref in riff_references.iter_mut() {
                                                         if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
-                                                            if x1 <= riff_ref.position() && (riff_ref.position() + riff_length) <= x2 {
+                                                            if riff_ref.position() <= x2 && (riff_ref.position() + riff_length) >= x1 {
                                                                 debug!("Riff grid - Riff ref selected: x1={}, y1={}, x2={}, y2={}, position={}, track={}, length={}", x1, y1, x2, y2, riff_ref.position(), track_uuid.as_str(), riff_length);
                                                                 selected.push(riff_ref.uuid().to_string());
                                                             }
@@ -8594,11 +8594,11 @@ win.connect_close_request(|window| {
                                     if let Some(riff_grid) = state.get_project().song_mut().riff_grid_mut(selected_riff_grid_uuid) {
                                         for (index, track_uuid) in track_uuids.iter().enumerate() {
                                             let track_number = index as i32;
-                                            if y1 < track_number && track_number < y2 {
+                                            if y1 <= (track_number + 1) as f64 && track_number as f64 <= y2 {
                                                 if let Some(riff_references) = riff_grid.track_riff_references_mut(track_uuid.clone()) {
                                                     for riff_ref in riff_references.iter_mut() {
                                                         if let Some(riff_length) = riff_lengths.get(&riff_ref.linked_to()) {
-                                                            if x1 <= riff_ref.position() && (riff_ref.position() + riff_length) <= x2 {
+                                                            if riff_ref.position() <= x2 && (riff_ref.position() + riff_length) >= x1 {
                                                                 debug!("Riff grid - Riff ref deselected: x1={}, y1={}, x2={}, y2={}, position={}, track={}, length={}", x1, y1, x2, y2, riff_ref.position(), track_uuid.as_str(), riff_length);
                                                                 selected.push(riff_ref.uuid().to_string());
                                                             }
@@ -13351,48 +13351,19 @@ fn handle_automation_note_velocities_translate_selected(state: &mut DAWState, tr
     else {
         None
     };
-    let current_view = state.current_view().clone();
-    let automation_edit_type = state.automation_edit_type();
 
     if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
-        let events = if let CurrentView::RiffArrangement = current_view {
-            let selected_riff_arrangement_uuid = if let Some(selected_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
-                Some(selected_arrangement_uuid.clone())
-            } else {
-                None
-            };
-
-            // get the arrangement
-            if let Some(selected_arrangement_uuid) = selected_riff_arrangement_uuid {
-                if let Some(riff_arrangement) = state.get_project().song_mut().riff_arrangement_mut(selected_arrangement_uuid.clone()) {
-                    if let Some(riff_arr_automation) = riff_arrangement.automation_mut(&track_uuid) {
-                        Some(riff_arr_automation.events_mut())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+        // the velocity lane is always backed by the selected riff's notes (the same way the
+        // select/deselect/select-all code paths and the velocity lane painter resolve their
+        // events) so the selected note ids can only ever be found in the riff's events
+        let events = if let Some(selected_riff_uuid) = selected_riff_uuid {
+            if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
+                Some(riff.events_mut())
             } else {
                 None
             }
         } else {
-            match automation_edit_type {
-                AutomationEditType::Track => {
-                    Some(track_type.automation_mut().events_mut())
-                }
-                AutomationEditType::Riff => {
-                    if let Some(selected_riff_uuid) = selected_riff_uuid {
-                        if let Some(riff) = track_type.riffs_mut().iter_mut().find(|riff| riff.uuid().to_string() == *selected_riff_uuid) {
-                            Some(riff.events_mut())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
-            }
+            None
         };
 
         if let Some(events) = events {

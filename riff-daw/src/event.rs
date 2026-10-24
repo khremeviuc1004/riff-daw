@@ -131,9 +131,9 @@ pub enum RiffGridChangeType {
     RiffReferenceAdd{ track_index: i32, position: f64 },
     RiffReferenceDragCopy(Vec<(f64, String)>), // position: f64, original_riff_ref_uuid: String
     RiffReferenceDelete{ track_index: i32, position: f64 },
-    RiffReferencesSelectMultiple(f64, i32, f64, i32, bool),
+    RiffReferencesSelectMultiple(f64, f64, f64, f64, bool), // x, y, x2, y2 in domain coords
     RiffReferencesSelectSingle(f64, i32, bool),
-    RiffReferencesDeselectMultiple(f64, i32, f64, i32),
+    RiffReferencesDeselectMultiple(f64, f64, f64, f64),
     RiffReferencesDeselectSingle(f64, i32),
     RiffReferencesSelectAll,
     RiffReferencesDeselectAll,
@@ -201,9 +201,9 @@ pub enum TrackChangeType {
     RiffReferenceAdd(i32, f64),                    // track index, position
     RiffReferenceDragCopy(Vec<(f64, String)>),                    // position, original riff reference uuid
     RiffReferenceDelete(i32, f64),                 // track index, position
-    RiffReferencesSelectMultiple(f64, i32, f64, i32, bool),
+    RiffReferencesSelectMultiple(f64, f64, f64, f64, bool), // x, y, x2, y2 in domain coords
     RiffReferencesSelectSingle(f64, i32, bool),
-    RiffReferencesDeselectMultiple(f64, i32, f64, i32),
+    RiffReferencesDeselectMultiple(f64, f64, f64, f64),
     RiffReferencesDeselectSingle(f64, i32),
     RiffReferenceCutSelected,
     RiffReferenceCopySelected,
@@ -224,9 +224,9 @@ pub enum TrackChangeType {
     RiffCopySelected,
     RiffPasteSelected,
     RiffChangeLengthOfSelected(bool), // true to lengthen
-    RiffEventsSelectMultiple(f64, i32, f64, i32, bool),
+    RiffEventsSelectMultiple(f64, f64, f64, f64, bool), // x, y, x2, y2 in domain coords
     RiffEventsSelectSingle(f64, i32, bool),
-    RiffEventsDeselectMultiple(f64, i32, f64, i32),
+    RiffEventsDeselectMultiple(f64, f64, f64, f64),
     RiffEventsDeselectSingle(f64, i32),
     RiffEventsSelectAll,
     RiffEventsDeselectAll,
@@ -242,8 +242,8 @@ pub enum TrackChangeType {
     AutomationCopy,
     AutomationPaste,
     AutomationTypeChange(AutomationChangeData),
-    AutomationSelectMultiple(f64, i32, f64, i32, bool),
-    AutomationDeselectMultiple(f64, i32, f64, i32),
+    AutomationSelectMultiple(f64, f64, f64, f64, bool), // time_lower, value_lower, time_higher, value_higher in domain coords
+    AutomationDeselectMultiple(f64, f64, f64, f64),
     AutomationSelectAll,
     AutomationDeselectAll,
 

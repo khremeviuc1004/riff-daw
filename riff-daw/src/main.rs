@@ -63,6 +63,13 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// `ControlFlow::Break` once the UI is shutting down.
 static UI_RUNNING: AtomicBool = AtomicBool::new(true);
 
+/// Set when the event pump has processed `DAWEvents::Shutdown` (the track
+/// background processors were sent their `Kill` events and plugin teardown
+/// started). The GTK `shutdown` signal can stop the pump before the queued
+/// `Shutdown` event is handled, so `main()` checks this after `run()` returns
+/// and drives the same teardown itself if the pump never got to it.
+static TRACK_PROCESSORS_KILLED: AtomicBool = AtomicBool::new(false);
+
 thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
     rayon::ThreadPoolBuilder::new()
         .num_threads(8)
@@ -166,6 +173,7 @@ fn main() {
     let clap_plugin_loaders: Arc<Mutex<HashMap<String, PluginLibrary>>> = Arc::new(Mutex::new(HashMap::new()));
     let track_audio_coast = Arc::new(Mutex::new(TrackBackgroundProcessorMode::AudioOut));
     let jack_audio_coast = track_audio_coast.clone();
+    let track_audio_coast_teardown = track_audio_coast.clone();
 
     let autosave_keep_alive = Arc::new(Mutex::new(true));
 
@@ -270,6 +278,95 @@ fn main() {
 
     application.run();
 
+    // Deterministic plugin teardown. The 8ms event pump stops as soon as GTK
+    // emits `shutdown` (UI_RUNNING goes false), which can race with the
+    // `DAWEvents::Shutdown` queued by the main window's close-request handler:
+    // if the pump exits first the track background processors never get their
+    // `Kill` events, CLAP instances are still `Processing` when `main()`
+    // returns, and the `CLAP_REGISTRY` TLS destructor ends up calling
+    // `stop_processing` (an audio-thread function) on the main thread - the
+    // plugins' thread checks reject it and destroying the instance under the
+    // live track threads segfaults. Tell the track threads to stop waiting on
+    // their (now vanished) audio consumers, send the `Kill` events if the pump
+    // did not get to them, then drain the tracks' outward channel so the
+    // main-thread CLAP RPCs the `Kill` handlers run (gui destroy, deactivate,
+    // instance release) complete, and wait for the threads to exit before the
+    // registry drops the plugin instances.
+    TRACK_THREADS_SHOULD_EXIT.store(true, Ordering::Relaxed);
+    match state.lock() {
+        Ok(state) => {
+            if !TRACK_PROCESSORS_KILLED.load(Ordering::Relaxed) {
+                if let Ok(mut coast) = track_audio_coast_teardown.lock() {
+                    *coast = TrackBackgroundProcessorMode::Coast;
+                }
+                // kill every registered track background thread - not just the
+                // tracks in the current project (the project list and the thread
+                // sender map can differ after file switches or track removals,
+                // and a thread that never gets `Kill` never leaves its loop,
+                // keeping its plugin `Processing` while the main thread tears
+                // the CLAP registry down)
+                let track_uuids: Vec<String> = state.instrument_track_senders().keys().cloned().collect();
+                info!("Main - post-run teardown - killing {} track background thread(s).", track_uuids.len());
+                for track_uuid in &track_uuids {
+                    state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::Kill);
+                }
+                TRACK_PROCESSORS_KILLED.store(true, Ordering::Relaxed);
+                let _ = tx_to_audio.send(AudioLayerInwardEvent::Shutdown);
+            }
+            let drain_track_events = |state: &DAWState| {
+                for (_track_uuid, receiver) in state.instrument_track_receivers() {
+                    while let Ok(event) = receiver.try_recv() {
+                        match event {
+                            TrackBackgroundProcessorOutwardEvent::ClapCall(plugin_ptr, call, tx_reply) => {
+                                let reply = clap_registry_execute(plugin_ptr, call);
+                                let _ = tx_reply.send(reply);
+                            }
+                            TrackBackgroundProcessorOutwardEvent::ClapInstanceRelease(plugin_ptr) => {
+                                clap_registry_release(plugin_ptr);
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            };
+            // the tracks' `Kill` handlers stop the plugins (on the right
+            // thread), reply-blocked RPCs are serviced below, and the track
+            // loops exit when `keep_alive` goes false - wait for that
+            // (2s deadline as a hang guard) so plugin instances are only
+            // destroyed once no thread can be inside `process()` anymore
+            let deadline = std::time::Instant::now() + Duration::from_millis(2000);
+            loop {
+                drain_track_events(&state);
+                if live_track_thread_count() == 0 {
+                    drain_track_events(&state);
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    info!("Main - post-run teardown - {} track background thread(s) did not exit in time, leaking the CLAP instances instead of destroying them under live threads.", live_track_thread_count());
+                    // destroying a plugin while its track thread could still be
+                    // inside process() is what segfaulted here historically -
+                    // skip the destruction entirely, the process is exiting
+                    clap_registry_leak_all();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            // Never run clap_plugin::destroy at process exit: tearing a CLAP
+            // instance down can make plugin process-global engine code unload
+            // while other instances still reference it (the same class of
+            // unmapped-code SIGSEGV that the u-he VST2 shells caused on this
+            // path - track threads were then left calling through dangling
+            // function pointers). Every instance has been stopped and
+            // deactivated by the Kill handlers by now, so the registry
+            // entries are leaked here and the kernel reclaims them with the
+            // rest of the process.
+            clap_registry_leak_all();
+        },
+        Err(_) => {
+            info!("Main - post-run teardown - could not get lock on state, leaking the CLAP instances to keep exit safe.");
+            clap_registry_leak_all();
+        },
+    };
 
     match state.lock() {
         Ok(state) => {
@@ -9287,6 +9384,10 @@ win.connect_close_request(|window| {
                 if let Ok(mut coast) = track_audio_coast.lock() {
                     *coast = TrackBackgroundProcessorMode::Coast;
                 }
+                // let quiescent track threads blocked on ring-buffer writes escape
+                // so they reach their loop-exit check and stop their plugins on the
+                // right thread (the post-run teardown waits for them to leave)
+                TRACK_THREADS_SHOULD_EXIT.store(true, Ordering::Relaxed);
                 match state.lock() {
                     Ok(state) => {
                         let state = state;
@@ -9296,6 +9397,7 @@ win.connect_close_request(|window| {
                     },
                     Err(_) => debug!("Main - rx_ui processing loop - Open File - could not get lock on state"),
                 }
+                TRACK_PROCESSORS_KILLED.store(true, Ordering::Relaxed);
                 match tx_to_audio.send(AudioLayerInwardEvent::Shutdown) {
                     Ok(_) => {}
                     Err(_) => {}

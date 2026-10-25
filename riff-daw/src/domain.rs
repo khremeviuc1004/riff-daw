@@ -3423,7 +3423,34 @@ pub fn clap_registry_add(plugin: simple_clap_host_helper_lib::plugin::instance::
 
 /// Hands a CLAP plugin instance back to its main thread owner to be destroyed.
 pub fn clap_registry_release(plugin_ptr: usize) {
-    CLAP_REGISTRY.with(|registry| { registry.borrow_mut().remove(&plugin_ptr); });
+    CLAP_REGISTRY.with(|registry| {
+        let removed = registry.borrow_mut().remove(&plugin_ptr);
+        if let Some(entry) = removed {
+            // at process exit, forget the entry instead of dropping it: running
+            // clap_plugin::destroy releases the plugin's shared engine module
+            // (u-he shells dlclose it with the last instance), leaving other
+            // still-live instances' function tables pointing into unmapped code
+            // - that stale-pointer call segfaulted shutdown. The kernel reclaims
+            // everything as the process exits.
+            if TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+                std::mem::forget(entry);
+            }
+        }
+    });
+}
+
+/// Drop every registry entry WITHOUT running `Plugin`'s destructor: used at exit
+/// when a track background thread is still alive. A live thread could be inside
+/// the plugin's `process()`, so stopping/deactivating/destroying the instance
+/// would race it and segfault; the instances are leaked instead (the process is
+/// terminating anyway, so the library state simply goes away with it).
+pub fn clap_registry_leak_all() {
+    CLAP_REGISTRY.with(|registry| {
+        let entries: Vec<ClapRegistryEntry> = registry.borrow_mut().drain().map(|(_ptr, entry)| entry).collect();
+        for entry in entries {
+            std::mem::forget(entry);
+        }
+    });
 }
 
 /// Executes one main-thread CLAP plugin call on behalf of a track background
@@ -3493,6 +3520,11 @@ pub fn clap_registry_execute(plugin_ptr: usize, call: ClapPluginCall) -> ClapCal
                 ClapCallReply::GuiResult(true, width as i32, height as i32)
             },
             ClapPluginCall::DestroyGui => {
+                if TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+                    // process exit: skip all plugin calls (see Deactivate above)
+                    entry.gui_open = false;
+                    return ClapCallReply::Done;
+                }
                 if let Some(gui) = plugin.get_extension::<Gui>() {
                     let _ = gui.hide(plugin);
                     gui.destroy(plugin);
@@ -3533,10 +3565,22 @@ pub fn clap_registry_execute(plugin_ptr: usize, call: ClapPluginCall) -> ClapCal
                 ClapCallReply::ResizeResult(width, height)
             },
             ClapPluginCall::Deactivate => {
-                plugin.deactivate();
+                // idempotent teardown: duplicate track-side handles (own and
+                // override instances sharing one CLAP instance) each ask for a
+                // deactivate, but a plugin deactivated twice aborts - only
+                // dispatch while the instance is actually activated. At process
+                // exit, never call into the plugin at all (see the release/stop
+                // guards) - just answer so the track thread can move on.
+                if !TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed)
+                    && plugin.status() == simple_clap_host_helper_lib::plugin::instance::PluginStatus::Activated {
+                    plugin.deactivate();
+                }
                 ClapCallReply::Done
             },
             ClapPluginCall::Activate(sample_rate, block_size) => {
+                if plugin.status() != simple_clap_host_helper_lib::plugin::instance::PluginStatus::Deactivated {
+                    return ClapCallReply::Done;
+                }
                 match plugin.activate(sample_rate, 1, block_size as usize) {
                     Ok(_) => (),
                     Err(error) => debug!("CLAP: problem reactivating the plugin with the new audio configuration: {:?}", error),
@@ -3706,14 +3750,27 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
     fn stop_processing(&mut self) {
         self.stop_now = true;
         // start/stop_processing are CLAP's AUDIO-thread functions - call them right
-        // here (running them on the main thread trips the plugins' thread checks)
+        // here (running them on the main thread trips the plugins' thread checks).
+        // At process exit, skip the call entirely: other tracks' instances may have
+        // already been released, and a plugin shell that sees its last instance
+        // destroyed unloads its shared engine module - the remaining instances'
+        // clap_plugin function tables then point into unmapped code (this
+        // segfaulted on shutdown with u-he Continua sharing the AM_ engine).
+        // The thread is leaving its loop anyway, so processing simply stops.
+        if crate::domain::TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         self.plugin.stop_processing();
     }
 
     fn shutdown(&mut self) {
         // deactivate is a main-thread function; the plugin instance itself is destroyed
         // by the main thread when the registry entry is released (see the Drop impl
-        // below)
+        // below). At process exit, never call into the plugin (see stop_processing
+        // above) - the instance is leaked instead.
+        if crate::domain::TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         self.call_clap(ClapPluginCall::Deactivate);
     }
 
@@ -4041,6 +4098,13 @@ impl BackgroundProcessorClapAudioPlugin {
     fn destroy_gui(&mut self) {
         if self.gui_created {
             self.gui_created = false;
+            // at process exit never call into the plugin (a released sibling
+            // instance may already have unloaded the plugin's shared engine -
+            // see stop_processing above); the window and instance are reclaimed
+            // with the process
+            if crate::domain::TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             self.call_clap(ClapPluginCall::DestroyGui);
         }
     }
@@ -4652,6 +4716,57 @@ pub fn flush_denormals_to_zero() {
 /// the first jack cycle has run, -1 when jack is not running under real time
 /// scheduling, otherwise the crossplatform priority value jack's worker has.
 pub static JACK_THREAD_PRIORITY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Set once by the application main thread when the process is about to exit.
+/// The track background processor threads' blocking ring-buffer writes check
+/// this: at exit the downstream consumer (the jack callback) is already gone,
+/// so a plain `write_blocking` would park a quiescent track thread forever -
+/// it would never reach its `keep_alive` loop exit, and the plugin would still
+/// be `Processing` when the main thread destroys the CLAP instances (which is
+/// what trips the plugins' thread checks and segfaults on shutdown).
+pub static TRACK_THREADS_SHOULD_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Number of live track background processor threads. `main()` waits for this
+/// to reach zero after sending the `Kill` events so plugin instances are only
+/// destroyed once no thread can possibly be inside `process()` anymore.
+static LIVE_TRACK_THREAD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn live_track_thread_count() -> usize {
+    LIVE_TRACK_THREAD_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Keeps the track-thread liveness count incremented for as long as the guard
+/// exists - created first in the thread closure, dropped last (after the
+/// helper and its plugins have been released and their release events queued).
+pub struct TrackThreadLivenessGuard;
+
+impl TrackThreadLivenessGuard {
+    pub fn new() -> Self {
+        LIVE_TRACK_THREAD_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        TrackThreadLivenessGuard
+    }
+}
+
+impl Drop for TrackThreadLivenessGuard {
+    fn drop(&mut self) {
+        LIVE_TRACK_THREAD_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `write_blocking` that gives up when the application is exiting, so a track
+/// thread waiting on a vanished consumer still reaches its loop-exit check.
+fn write_blocking_or_exit<T, P: rb::RbProducer<T>>(producer: &P, data: &[T]) {
+    loop {
+        if TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        match producer.write_blocking_timeout(data, Duration::from_millis(50)) {
+            Ok(_) => return,
+            Err(rb::RbError::TimedOut) => continue,
+            Err(_) => return,
+        }
+    }
+}
 
 /// Reconcile this track thread's scheduling priority with the jack callback thread's.
 /// The track threads are spawned at a very high real time priority (95) - when that is
@@ -5862,6 +5977,43 @@ impl TrackBackgroundProcessorHelper {
         false
     }
 
+    /// Move every plugin instance owned by this track thread out of the helper
+    /// and drop it. Call while holding the VST24 plugin lifecycle WRITE lock:
+    /// dropping a wrapper dispatches effClose, and plugins instantiated from the
+    /// same library share process-global state, so an effClose must never
+    /// overlap with another track thread's process() (this raced and segfaulted
+    /// inside the JUCE VST2 wrapper of a u-he plugin during shutdown).
+    ///
+    /// When the application is exiting (`TRACK_THREADS_SHOULD_EXIT`) the
+    /// instances are instead leaked: effClose can make a plugin tear down
+    /// process-global code (u-he shells dlclose their shared engine module when
+    /// they believe the last instance is gone), and any other track thread - or
+    /// a plugin with a miscounted instance teardown - is then left holding
+    /// function pointers into unloaded code (SIGSEGV at an unmapped address on
+    /// the previous shutdown path). The kernel reclaims everything as the
+    /// process exits, so leaking at shutdown is both safe and crash-free; the
+    /// plugins were already stopped and suspended by the Kill handler.
+    pub fn release_plugin_instances(&mut self) {
+        let leak = TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed);
+        let mut lists = [
+            &mut self.effect_plugin_instances,
+            &mut self.override_effect_plugin_instances,
+            &mut self.instrument_plugin_instances,
+            &mut self.override_instrument_plugin_instances,
+        ];
+        for list in lists.iter_mut() {
+            let instances = std::mem::take(*list);
+            if leak {
+                for instance in instances {
+                    std::mem::forget(instance);
+                }
+            }
+            // mid-session releases (file close / track removal) drop normally so
+            // the instances are actually closed while the engine stays consistent
+            // for the tracks that remain alive
+        }
+    }
+
     pub fn handle_host_events_from_plugins(&self) -> bool {
         let mut had_events = false;
         for instrument_plugin in self.instrument_plugin_instances.iter().chain(self.override_instrument_plugin_instances.iter()) {
@@ -6508,7 +6660,7 @@ impl TrackBackgroundProcessorHelper {
             }
         }
 
-        producer.write_blocking(&self.jack_midi_out_buffer);
+        write_blocking_or_exit(&*producer, &self.jack_midi_out_buffer);
     }
 
     pub fn coast(&self) -> bool {
@@ -6739,6 +6891,10 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
 
                 // keep denormal FP arithmetic from silently eating this thread's cpu
                 crate::domain::flush_denormals_to_zero();
+                // counted live until this closure's locals (including the helper and
+                // its plugin handles) are gone - main() waits for zero before letting
+                // the CLAP registry destroy instances
+                let _liveness_guard = crate::domain::TrackThreadLivenessGuard::new();
 
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
@@ -6825,6 +6981,14 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         priority_reconciled = crate::domain::reconcile_track_thread_priority();
                     }
 
+                    // the Kill event handler stops the plugins and clears keep_alive:
+                    // leave the loop so no thread can be inside process() when the
+                    // application main thread destroys the plugin instances at exit
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
+                    }
+
                     // lifecycle events (plugin instantiate/teardown/preset/configure) hold
                     // the write lock so no other track thread can be dispatching to a VST2
                     // plugin while process-wide plugin state is being (re)initialised.
@@ -6832,6 +6996,16 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
                         track_background_processor_helper.handle_incoming_events()
                     };
+
+                    // the Kill may have arrived in THIS pass: its handler just
+                    // stopped/suspended/closed the plugins - falling through
+                    // would dispatch process() onto those closed instances
+                    // (which is what segfaulted inside the JUCE VST2 wrapper),
+                    // so leave the loop right now instead of at the next check.
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
+                    }
 
                     {
                         // editor idling and preset/parameter fetches are non-audio plugin
@@ -6879,7 +7053,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                                     audio_block.block = *track_background_processor_helper.event_processor.block_index();
                                     audio_block.audio_data_left.fill(0.0);
                                     audio_block.audio_data_right.fill(0.0);
-                                    let _ = producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+                                    write_blocking_or_exit(&producer_ring_buffer_block, &audio_block_buffer);
                                     let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), 0.0, 0.0));
                                 }
                                 TrackBackgroundProcessorMode::Coast => {
@@ -7083,7 +7257,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             index += 1;
                         }
 
-                        let _ = producer_left.write_blocking(&routed_audio_left_buffer);
+                        write_blocking_or_exit(&*producer_left, &routed_audio_left_buffer);
 
                         index = 0;
                         let right_channel = outputs_32.get_mut(1);
@@ -7093,7 +7267,7 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                             index += 1;
                         }
 
-                        let _ = producer_right.write_blocking(&routed_audio_right_buffer);
+                        write_blocking_or_exit(&*producer_right, &routed_audio_right_buffer);
                     }
 
                     // transfer to the ring buffer
@@ -7132,10 +7306,10 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         }
 
                         if mode == TrackBackgroundProcessorMode::AudioOut {
-                            let _ = producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+                            write_blocking_or_exit(&producer_ring_buffer_block, &audio_block_buffer);
                         }
                         else {
-                            let _ = render_producer_block.write_blocking(&audio_block_buffer);
+                            write_blocking_or_exit(&render_producer_block, &audio_block_buffer);
                         }
 
                         // might be a good idea to do this every x number of blocks
@@ -7162,6 +7336,14 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         thread::sleep(Duration::from_millis(100));
                     }
                 } // end loop
+
+                // destroy the plugin instances of this track thread while the
+                // lifecycle write lock is held, so their effClose dispatches
+                // cannot overlap with any other track thread's process()
+                {
+                    let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
+                    track_background_processor_helper.release_plugin_instances();
+                }
 
                 debug!("#####################Dropped out of Vst loop.")
             }) {
@@ -7210,6 +7392,10 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
 
                 // keep denormal FP arithmetic from silently eating this thread's cpu
                 crate::domain::flush_denormals_to_zero();
+                // counted live until this closure's locals (including the helper and
+                // its plugin handles) are gone - main() waits for zero before letting
+                // the CLAP registry destroy instances
+                let _liveness_guard = crate::domain::TrackThreadLivenessGuard::new();
 
                 const HOST_BUFFER_CHANNELS: usize = 32;
 
@@ -7278,6 +7464,14 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         priority_reconciled = crate::domain::reconcile_track_thread_priority();
                     }
 
+                    // the Kill event handler stops the plugins and clears keep_alive:
+                    // leave the loop so no thread can be inside process() when the
+                    // application main thread destroys the plugin instances at exit
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
+                    }
+
                     // read the audio configuration from the helper each iteration so an
                     // AudioConfigurationChange event takes effect without restarting the thread
                     let current_block_size = track_background_processor_helper.block_size as i32;
@@ -7286,6 +7480,16 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     {
                         let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
                         track_background_processor_helper.handle_incoming_events();
+                    }
+
+                    // the Kill may have arrived in THIS pass: its handler just
+                    // stopped/suspended/closed the plugins - falling through
+                    // would dispatch process() onto those closed instances
+                    // (which is what segfaulted inside the JUCE VST2 wrapper),
+                    // so leave the loop right now instead of at the next check.
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
                     }
                     {
                         let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
@@ -7434,7 +7638,7 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                             audio_block.audio_data_right[index] = *right_frame;
                         }
 
-                        producer_ring_buffer_block.write_blocking(&audio_block_buffer);
+                        write_blocking_or_exit(&producer_ring_buffer_block, &audio_block_buffer);
 
                         let _ = tx_track_background_thread.send(TrackBackgroundProcessorOutwardEvent::ChannelLevels(track_uuid.clone(), left_channel_level, right_channel_level));
                     }
@@ -7443,10 +7647,18 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                     }
                     else if mode == TrackBackgroundProcessorMode::Render {
                         let (_, _outputs_32) = audio_buffer_in_use.split();
-                        render_producer_block.write_blocking(&render_audio_block_buffer);
+                        write_blocking_or_exit(&render_producer_block, &render_audio_block_buffer);
                     }
                     
                 } // end loop
+
+                // destroy the plugin instances of this track thread while the
+                // lifecycle write lock is held, so their effClose dispatches
+                // cannot overlap with any other track thread's process()
+                {
+                    let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
+                    track_background_processor_helper.release_plugin_instances();
+                }
 
                 debug!("#####################Dropped out of Vst loop.")
             }) {
@@ -7495,6 +7707,10 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
 
                 // keep denormal FP arithmetic from silently eating this thread's cpu
                 crate::domain::flush_denormals_to_zero();
+                // counted live until this closure's locals (including the helper and
+                // its plugin handles) are gone - main() waits for zero before letting
+                // the CLAP registry destroy instances
+                let _liveness_guard = crate::domain::TrackThreadLivenessGuard::new();
 
 
                 let ring_buffer_midi: SpscRb<(u32, u8, u8, u8, bool)> = SpscRb::new(EVENT_BUFFER_SIZE);
@@ -7530,10 +7746,36 @@ impl TrackBackgroundProcessor for MidiTrackBackgroundProcessor {
                         priority_reconciled = crate::domain::reconcile_track_thread_priority();
                     }
 
+                    // the Kill event handler stops the plugins and clears keep_alive:
+                    // leave the loop so no thread can be inside process() when the
+                    // application main thread destroys the plugin instances at exit
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
+                    }
+
                     track_background_processor_helper.handle_incoming_events();
+
+                    // the Kill may have arrived in THIS pass: its handler just
+                    // stopped/suspended/closed the plugins - falling through
+                    // would dispatch process() onto those closed instances
+                    // (which is what segfaulted inside the JUCE VST2 wrapper),
+                    // so leave the loop right now instead of at the next check.
+                    if !track_background_processor_helper.keep_alive {
+                        info!("Track background processor thread for track {} got the Kill and is leaving its loop.", track_uuid.as_str());
+                        break;
+                    }
                     // track_background_processor_helper.dump_play_info();
                     track_background_processor_helper.process_jack_midi_out_events(&mut producer_midi);
                 } // end loop
+
+                // destroy the plugin instances of this track thread while the
+                // lifecycle write lock is held, so their effClose dispatches
+                // cannot overlap with any other track thread's process()
+                {
+                    let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
+                    track_background_processor_helper.release_plugin_instances();
+                }
 
                 debug!("#####################Dropped out of Midi track background processor loop.")
             }) {

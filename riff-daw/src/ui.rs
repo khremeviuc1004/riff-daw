@@ -9418,6 +9418,7 @@ impl MainWindow {
                             if actual_child.widget_name().to_string() != riff_set_blade.widget_name().to_string() {
                                 actual_child.remove_css_class("riff-daw-selected");
                                 actual_child.set_data("selected", 0u32);
+                                MainWindow::deselect_riff_item_blade(child);
                             }
                         }
                     }
@@ -9759,6 +9760,43 @@ impl MainWindow {
         }
     }
 
+    fn set_riff_sequence_blade_bodies_selected(riff_sequence_blade: &RiffSequenceBlade, selected: bool) {
+        let mut blade_bodies: Vec<Widget> = vec![
+            riff_sequence_blade.riff_set_head_box.clone().upcast(),
+            riff_sequence_blade.riff_set_box.clone().upcast(),
+            riff_sequence_blade.riff_sets_view_port.clone().upcast(),
+        ];
+        if let Some(viewport) = riff_sequence_blade.riff_sequence_riff_sets_scrolled_window.child() {
+            blade_bodies.push(viewport);
+        }
+        for blade_body in blade_bodies.iter() {
+            unsafe {
+                if selected {
+                    blade_body.add_css_class("riff-daw-selected");
+                    blade_body.set_data("selected", 1u32);
+                }
+                else {
+                    blade_body.remove_css_class("riff-daw-selected");
+                    blade_body.set_data("selected", 0u32);
+                }
+            }
+        }
+    }
+
+    fn deselect_riff_item_blade(widget: &Widget) {
+        if widget.has_css_class("riff-daw-selected") {
+            widget.remove_css_class("riff-daw-selected");
+            unsafe {
+                widget.set_data("selected", 0u32);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current_child) = child {
+            MainWindow::deselect_riff_item_blade(&current_child);
+            child = current_child.next_sibling();
+        }
+    }
+
     fn add_riff_sequence_blade(
         riff_sequences_box: Box,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
@@ -9857,6 +9895,7 @@ impl MainWindow {
             let riff_sequence_type = riff_sequence_type.clone();
             let tx_from_ui = tx_from_ui.clone();
             let riff_sequence_blade_frame = riff_sequence_blade.riff_sequence_blade.clone();
+            let blade_bodies = riff_sequence_blade.clone();
             let riff_sequences_box = riff_sequences_box.clone();
             let reference_item_uuid = item_uuid.clone();
             riff_sequence_blade.riff_sequence_select_btn.connect_button_press_event(move |_, _| {
@@ -9868,19 +9907,20 @@ impl MainWindow {
                                     riff_set_head_box.children().get(0).unwrap().clone()
                                 }
                                 else {
-                                    child
+                                    child.clone()
                                 }
                             }
                             else {
-                                child
+                                child.clone()
                             }
                         }
                         else {
-                            child
+                            child.clone()
                         };
                         if actual_child.widget_name().to_string() != riff_sequence_blade_frame.widget_name().to_string() {
                             actual_child.remove_css_class("riff-daw-selected");
                             actual_child.set_data("selected", 0u32);
+                            MainWindow::deselect_riff_item_blade(&child);
                         }
                     }
 
@@ -9896,6 +9936,8 @@ impl MainWindow {
                             riff_sequence_blade_frame.remove_css_class("riff-daw-selected");
                             riff_sequence_blade_frame.set_data("selected", 0u32);
                         }
+
+                        MainWindow::set_riff_sequence_blade_bodies_selected(&blade_bodies, selected_bool);
 
                         if let RiffSequenceType::RiffArrangement(riff_arrangement_uuid) = &riff_sequence_type {
                             if let Some(riff_item_uuid) = &reference_item_uuid {
@@ -10129,19 +10171,20 @@ impl MainWindow {
                                     riff_set_head_box.children().get(0).unwrap().clone()
                                 }
                                 else {
-                                    child
+                                    child.clone()
                                 }
                             }
                             else {
-                                child
+                                child.clone()
                             }
                         }
                         else {
-                            child
+                            child.clone()
                         };
                         if actual_child.widget_name().to_string() != riff_grid_blade_frame.widget_name().to_string() {
                             actual_child.remove_css_class("riff-daw-selected");
                             actual_child.set_data("selected", 0u32);
+                            MainWindow::deselect_riff_item_blade(&child);
                         }
                     }
 

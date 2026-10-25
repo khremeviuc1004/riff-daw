@@ -291,6 +291,13 @@ pub enum AudioLayerInwardEvent {
     NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
 
     PreviewSample(String), // absolute path sample file name
+
+    // the track's inherent output presentation delay in whole blocks: tracks whose
+    // effect chain is fed by inter-track audio routing cannot be input-offset (the
+    // routed audio arrives in real time), so their chain's reported plugin latency
+    // makes their contribution late instead; the master mix uses the largest such
+    // delay to present every track in time together at a consistent later reference
+    TrackPresentation(String, i32), // track uuid, inherent delay in blocks
 }
 
 pub enum EventProcessorType {

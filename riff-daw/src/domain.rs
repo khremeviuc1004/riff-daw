@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, mpsc::{channel, Receiver, Sender}, Mutex}, time::Duration};
 use std::collections::hash_map::Keys;
+use std::collections::VecDeque;
 use std::default::Default;
 use std::io::prelude::*;
 use std::ops::Index;
@@ -4918,6 +4919,8 @@ pub struct TrackBackgroundProcessorHelper {
     pub mute: bool,
     pub midi_sender: SendEventBuffer,
     pub instrument_plugin_initial_delay: i32,
+    // the inherent presentation delay last reported to the jack layer for this track
+    pub last_sent_presentation_inherent_blocks: i32,
     pub instrument_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
     pub pending_preset_response_sender: Option<Sender<TrackPluginPresetResponse>>,
     pub effect_plugin_instances: Vec<BackgroundProcessorAudioPluginType>,
@@ -4994,6 +4997,7 @@ impl TrackBackgroundProcessorHelper {
             mute: false,
             midi_sender: SendEventBuffer::new(EVENT_BUFFER_SIZE),
             instrument_plugin_initial_delay: 0,
+            last_sent_presentation_inherent_blocks: 0,
             instrument_plugin_instances: vec![],
             pending_preset_response_sender: None,
             effect_plugin_instances: vec![],
@@ -6441,18 +6445,38 @@ impl TrackBackgroundProcessorHelper {
     }
 
     /// Move the plugin input stream's extraction ahead of the wall clock by whole
-    /// blocks worth of the chain's reported group delay. Called every cycle because
-    /// plugins come and go (add/delete/override switching) without reconfiguring
+    /// blocks worth of the chain's reported group delay, and keep the jack layer's
+    /// presentation timing informed for the inter-track audio routing case. Called
+    /// every cycle because plugins and routings come and go without reconfiguring
     /// the transport.
     fn update_plugin_lookahead(&mut self) {
-        let latency_frames = self.track_plugin_latency_frames().max(0) as i64;
-        let lookahead_blocks = if self.block_size > 0.0 {
-        ((latency_frames as f64) / self.block_size).ceil() as i32
+        let latency_frames = self.track_plugin_latency_frames().max(0) as f64;
+
+        // a track fed by inter-track audio routing must NOT be input-offset: its
+        // routed input arrives in real time (the source track cannot hand over its
+        // future audio early), so offsetting the track's own samples/automation
+        // would pull them ahead of the audio actually flowing through the chain.
+        // Such a track instead presents its (chain-delayed) output late as a whole,
+        // and reports that inherent delay for the master mix to align everything to.
+        let routed_feed = !self.audio_inward_routings.is_empty();
+        let lookahead_blocks = if !routed_feed && self.block_size > 0.0 {
+            (latency_frames / self.block_size).ceil() as i32
         }
         else {
             0
         };
         self.event_processor.set_plugin_lookahead_blocks(lookahead_blocks);
+
+        let inherent_blocks = if routed_feed && self.block_size > 0.0 {
+            (latency_frames / self.block_size).ceil() as i32
+        }
+        else {
+            0
+        };
+        if inherent_blocks != self.last_sent_presentation_inherent_blocks {
+            self.last_sent_presentation_inherent_blocks = inherent_blocks;
+            let _ = self.tx_audio.send(AudioLayerInwardEvent::TrackPresentation(self.track_uuid.clone(), inherent_blocks));
+        }
     }
 
     pub fn process_plugin_events(&mut self) {
@@ -9247,6 +9271,14 @@ pub struct AudioConsumerDetails<T> {
     last_peak: f32,
     hot_run: u32,
     max_hot_run: u32,
+    // inter-track audio routing latency compensation: a track whose chain is fed by
+    // routed audio presents its output `presentation_inherent_blocks` late (its
+    // plugin chain cannot be input-offset, see TrackBackgroundProcessorHelper::
+    // update_plugin_lookahead). The master mix delays every consumer to the largest
+    // inherent delay present so all tracks - routed or not - land in time together.
+    pub presentation_inherent_blocks: i32,
+    pub presentation_delay_blocks: usize,
+    pub pending_blocks: VecDeque<(T, f32)>,
 }
 
 impl<T> AudioConsumerDetails<T> {
@@ -9262,6 +9294,9 @@ impl<T> AudioConsumerDetails<T> {
             last_peak: 0.0,
             hot_run: 0,
             max_hot_run: 0,
+            presentation_inherent_blocks: 0,
+            presentation_delay_blocks: 0,
+            pending_blocks: VecDeque::new(),
         }
     }
 
@@ -9290,6 +9325,13 @@ impl<T> AudioConsumerDetails<T> {
 
     pub fn set_consumer(&mut self, consumer: Consumer<T>) {
         self.consumer = consumer;
+    }
+
+    /// True while the presentation queue is still filling up after a transport
+    /// start/jump: blocks cannot be presented yet, which must not be counted as
+    /// a missing delivery by the health telemetry.
+    pub fn in_presentation_fill(&self) -> bool {
+        self.presentation_delay_blocks > 0 && self.pending_blocks.len() <= self.presentation_delay_blocks
     }
 
     /// The jack layer feeds every delivered non-silent audio block through this. When a

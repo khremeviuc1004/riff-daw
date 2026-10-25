@@ -418,7 +418,7 @@ impl Audio {
             match event {
                 AudioLayerInwardEvent::NewAudioConsumer(audio_consumer_detail) => {
                     self.audio_consumers.push(audio_consumer_detail);
-                    // debug!("*************Added an audio consumer: {}", self.audio_consumers.len());
+                    self.rebuild_presentation();
                 }
                 AudioLayerInwardEvent::NewMidiConsumer(midi_consumer_detail) => {
                     self.midi_consumers.push(midi_consumer_detail);
@@ -487,6 +487,15 @@ impl Audio {
                 AudioLayerInwardEvent::RemoveTrack(track_uuid) => {
                     self.audio_consumers.retain(|consumer_detail| *consumer_detail.track_id() != track_uuid);
                     self.midi_consumers.retain(|consumer_detail| *consumer_detail.track_uuid() != track_uuid);
+                    self.rebuild_presentation();
+                }
+                AudioLayerInwardEvent::TrackPresentation(track_uuid, inherent_blocks) => {
+                    if let Some(consumer_detail) = self.audio_consumers.iter_mut().find(|consumer_detail| *consumer_detail.track_id() == track_uuid) {
+                        if consumer_detail.presentation_inherent_blocks != inherent_blocks {
+                            consumer_detail.presentation_inherent_blocks = inherent_blocks;
+                            self.rebuild_presentation();
+                        }
+                    }
                 }
                 AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid, midi_out_port) => {
                     debug!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
@@ -537,6 +546,43 @@ impl Audio {
     fn reset_audio_watchdogs(&mut self) {
         for audio_consumer_details in self.audio_consumers.iter_mut() {
             audio_consumer_details.reset_watchdog();
+            // a transport jump (play from a position, seek, stop) must never bleed
+            // old-position content out of the presentation delay queues
+            audio_consumer_details.pending_blocks.clear();
+        }
+    }
+
+    /// Recompute the master presentation from the consumers' inherent delays.
+    /// Tracks whose plugin chains are fed by inter-track audio routing cannot be
+    /// input-offset (their routed input arrives in real time - the source cannot
+    /// hand over its future audio early), so their whole contribution is late by
+    /// their chain's reported plugin latency. The mix aligns everything by holding
+    /// each consumer's blocks in its presentation queue until the common
+    /// reference: the largest inherent delay present (P). Every track then lands
+    /// in time with every other, the entire mix simply being P blocks late.
+    /// Only called from control-path inward events (consumer add/remove and
+    /// presentation updates), never from the realtime mix loop.
+    fn rebuild_presentation(&mut self) {
+        const PRESENTATION_MAX_DELAY_BLOCKS: usize = 64;
+        let mut presentation: usize = 0;
+        for audio_consumer_details in self.audio_consumers.iter() {
+            presentation = presentation.max(audio_consumer_details.presentation_inherent_blocks.max(0) as usize);
+        }
+        let presentation = presentation.min(PRESENTATION_MAX_DELAY_BLOCKS);
+
+        for audio_consumer_details in self.audio_consumers.iter_mut() {
+            audio_consumer_details.presentation_delay_blocks =
+                presentation.saturating_sub(audio_consumer_details.presentation_inherent_blocks.max(0) as usize);
+            audio_consumer_details.pending_blocks.clear();
+        }
+
+        // queued blocks live outside the pool for the delay span - make sure the
+        // pool can still hand one scratch block to every consumer each cycle.
+        // (this Vec growth runs on control events, which is where the rest of the
+        // control-path allocation in the jack layer already happens)
+        let pool_needed = self.audio_consumers.len() * (presentation + 2);
+        while self.audio_block_pool.len() < pool_needed {
+            self.audio_block_pool.push(AudioBlock::default());
         }
     }
 
@@ -594,8 +640,7 @@ impl Audio {
                     }
 
                     if let Some(audio_block) = self.audio_blocks.pop() {
-                        let mut mix_this_block = read_audio_block;
-                        let mut peak: f32 = 0.0;
+                        let mut queued = false;
                         if read_audio_block {
                             // repetition watchdog: a producer whose plugin has died may
                             // keep shipping bit-identical non-silent blocks - the same
@@ -603,12 +648,35 @@ impl Audio {
                             // exactly like harsh noise. Drop a consumer's blocks once
                             // its deliveries repeat unchanged, until the content changes.
                             let (signature, block_peak) = Audio::audio_block_signature(&audio_block);
-                            peak = block_peak;
-                            if audio_consumer_details.observe_repetition(signature, block_peak > 1e-6) {
-                                mix_this_block = false;
+                            if !audio_consumer_details.observe_repetition(signature, block_peak > 1e-6) {
+                                audio_consumer_details.pending_blocks.push_back((audio_block, block_peak));
+                                queued = true;
                             }
                         }
-                        audio_consumer_details.observe_cycle(mix_this_block, peak);
+                        if !queued {
+                            self.audio_block_pool.push(audio_block);
+                        }
+                    }
+
+                    // presentation delay line (inter-track audio routing latency):
+                    // queued blocks are only mixed once the queue has been drained
+                    // deeper than the consumer's presentation delay. A routed-fed
+                    // track carries its chain's inherent delay (its input cannot be
+                    // read ahead - the source cannot hand over future audio early),
+                    // every other track is held back to match, so the whole mix
+                    // presents the timeline P blocks late but perfectly in time.
+                    let mut mix_this_block = false;
+                    let mut peak: f32 = 0.0;
+                    let mut presented: Option<AudioBlock> = None;
+                    if audio_consumer_details.pending_blocks.len() > audio_consumer_details.presentation_delay_blocks {
+                        if let Some((audio_block, block_peak)) = audio_consumer_details.pending_blocks.pop_front() {
+                            mix_this_block = true;
+                            peak = block_peak;
+                            presented = Some(audio_block);
+                        }
+                    }
+                    audio_consumer_details.observe_cycle(mix_this_block || audio_consumer_details.in_presentation_fill(), peak);
+                    if let Some(audio_block) = presented {
                         if mix_this_block {
                             for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
                                 if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
@@ -635,8 +703,10 @@ impl Audio {
                                 }
                             }
                         }
-                        // always return the scratch block to the pool - a consumer that
-                        // had nothing to read must not drain the pool one block per cycle.
+
+                        // always return the presented scratch block to the pool - a
+                        // consumer that had nothing to read must not drain the pool
+                        // one block per cycle.
                         self.audio_block_pool.push(audio_block);
                     }
                 }

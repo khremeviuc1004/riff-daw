@@ -2474,8 +2474,32 @@ impl DAWState {
         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
         vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
-        let (jack_client, _status) =
-            Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
+        // never unwrap here: the stalled-client watchdog re-triggers restarts and
+        // jackd may briefly reject a new same-named client while it drains the
+        // close of the previous one (NameNotUnique), so retry a few times before
+        // giving up; all failures log at warn! - the release build compiles debug!
+        // out and these messages are the only clue when a restart does not recover
+        // the cycle stream.
+        let mut jack_client_result = None;
+        for attempt in 1..=3 {
+            match Client::new("DAW", ClientOptions::NO_START_SERVER) {
+                Ok((client, _status)) => {
+                    jack_client_result = Some(client);
+                    break;
+                }
+                Err(error) => {
+                    warn!("JACK: could not open the client (attempt {}/3): {:?}", attempt, error);
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            }
+        }
+        let jack_client = match jack_client_result {
+            Some(client) => client,
+            None => {
+                warn!("JACK: giving up opening the client - the restart watchdog will trigger again.");
+                return;
+            }
+        };
         let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
 
         // the jack server is not obliged to honour the requested buffer size (the
@@ -2513,7 +2537,13 @@ impl DAWState {
             xruns.clone(),
         );
         let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
-        let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
+        let jack_async_client = match jack_client.activate_async(notifications, audio) {
+            Ok(client) => client,
+            Err(error) => {
+                warn!("JACK: could not activate the client: {:?} - the restart watchdog will retry.", error);
+                return;
+            }
+        };
 
         self.set_jack_client(jack_async_client);
 
@@ -2566,8 +2596,26 @@ impl DAWState {
                     // are kept (their ring buffers are shared with the track threads) but
                     // new ports must be registered against the new client.
                     let mut midi_consumers = process_handler.get_all_midi_consumers();
-                    let (jack_client, _status) =
-                        Client::new("DAW", ClientOptions::NO_START_SERVER).unwrap();
+                    let mut restart_client_result = None;
+                    for attempt in 1..=3 {
+                        match Client::new("DAW", ClientOptions::NO_START_SERVER) {
+                            Ok((client, _status)) => {
+                                restart_client_result = Some(client);
+                                break;
+                            }
+                            Err(error) => {
+                                warn!("JACK: could not open the restarted client (attempt {}/3): {:?}", attempt, error);
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                            }
+                        }
+                    }
+                    let jack_client = match restart_client_result {
+                        Some(client) => client,
+                        None => {
+                            warn!("JACK: giving up opening the restarted client - the restart watchdog will trigger again.");
+                            return;
+                        }
+                    };
                     let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
                     // same reconciliation as in start_jack - the server may grant a
                     // different buffer size than the one requested.
@@ -2606,7 +2654,13 @@ impl DAWState {
                         xruns.clone(),
                     );
                     let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
-                    let jack_async_client = jack_client.activate_async(notifications, audio).unwrap();
+                    let jack_async_client = match jack_client.activate_async(notifications, audio) {
+                        Ok(client) => client,
+                        Err(error) => {
+                            warn!("JACK: could not activate the restarted client: {:?} - the restart watchdog will retry.", error);
+                            return;
+                        }
+                    };
                     for (from_name, to_name) in self.jack_connections.iter() {
                         let _ = jack_async_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());
                     }

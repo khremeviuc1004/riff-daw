@@ -17243,7 +17243,19 @@ fn create_jack_time_critical_event_processing_thread(
                 }
                 let mut recorded_playing_notes: HashMap<i32, f64> = HashMap::new() ;
 
+                // this thread is spawned at crossplatform priority 95 - well above
+                // jackd's realtime worker (~10), so every MIDI burst used to preempt
+                // the jack callback thread itself: occasional overruns that can
+                // snowball into the client being taken out of the graph. like the
+                // track threads, it must stay below the jack cycle, so keep
+                // reconciling on each wake until the callback thread's priority is
+                // known and applied.
+                let mut event_thread_priority_reconciled = false;
+
                 loop {
+                    if !event_thread_priority_reconciled {
+                        event_thread_priority_reconciled = crate::domain::reconcile_track_thread_priority();
+                    }
                     // Block on the receiver instead of polling - the old pattern did a
                     // single try_recv per iteration followed by an unconditional 10ms
                     // sleep, so every live note waited up to 10ms and chords or fast
@@ -17651,6 +17663,70 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                        vst24_plugin_loaders: &Arc<Mutex<HashMap<String, PluginLoader<VstHost>>>>,
                        clap_plugin_loaders: &Arc<Mutex<HashMap<String, PluginLibrary>>>,
 ) {
+    // stalled jack client watchdog: while the transport plays, the jack callback
+    // cycles continuously and publishes its heartbeat; if that heartbeat goes
+    // stale the server has taken (or stopped triggering) our client without the
+    // shutdown notification ever arriving - the speakers then replay the last
+    // submitted block forever and neither stop nor play recovers it. Restart
+    // policy is deliberately defensive: a client rebuild churns the connection
+    // graph, which itself provokes xrun waves, and a naive watchdog restarted
+    // the client every few seconds in a self-sustaining storm. So: a grace
+    // window after every rebuild, escalation only cleared by 15s of stable
+    // cycles, at most 3 rapid rebuilds, then a clear diagnosis and a slow
+    // 30s retry cadence.
+    {
+        let last_cycle = JACK_LAST_CYCLE_MILLIS.load(Ordering::Relaxed);
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or(0);
+        let in_grace = now_millis < JACK_RESTART_GRACE_UNTIL_MILLIS.load(Ordering::Relaxed);
+        let stalled = last_cycle > 0 && now_millis.saturating_sub(last_cycle) > 1500;
+
+        if stalled && !in_grace {
+            // a new stall breaks the stability window
+            JACK_STABLE_CYCLES_SINCE_MILLIS.store(0, Ordering::Relaxed);
+            let playing = match state.lock() {
+                Ok(state) => state.playing(),
+                Err(_) => false,
+            };
+            if playing && now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 3000 {
+                let attempts = JACK_STALLED_RESTART_ATTEMPTS.load(Ordering::Relaxed);
+                if attempts < 3 {
+                    JACK_STALLED_RESTART_ATTEMPTS.store(attempts + 1, Ordering::Relaxed);
+                    warn!("JACK: no process cycles for {}ms while the transport is playing - the client appears to have been taken out of the graph, triggering client restart attempt {}/3.", now_millis - last_cycle, attempts + 1);
+                    LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                }
+                else if attempts == 3 {
+                    warn!("JACK: the stall returned after 3 client rebuilds and each reconnect churns the graph (xrun waves) - this is a restart storm, so rebuilds are paused. The jack server is overloaded or its audio driver loop has wedged: restart the jack server (e.g. qjackctl) or reduce the load. One opportunistic rebuild will be tried every 30s until cycles stay stable.");
+                    JACK_STALLED_RESTART_ATTEMPTS.store(4, Ordering::Relaxed);
+                    LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                }
+                else if now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 30000 {
+                    warn!("JACK: still stalling - one opportunistic client rebuild (escalation clears after 15s of stable cycles).");
+                    LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                }
+            }
+        }
+        else if last_cycle > 0 && !stalled {
+            // require 15s of uninterrupted cycles before clearing escalation
+            let since = JACK_STABLE_CYCLES_SINCE_MILLIS.load(Ordering::Relaxed);
+            if since == 0 {
+                JACK_STABLE_CYCLES_SINCE_MILLIS.store(now_millis, Ordering::Relaxed);
+            }
+            else if now_millis.saturating_sub(since) > 15000 {
+                if JACK_STALLED_RESTART_ATTEMPTS.load(Ordering::Relaxed) > 0 {
+                    warn!("JACK: process cycles have run uninterrupted for 15s - stall escalation cleared.");
+                }
+                JACK_STALLED_RESTART_ATTEMPTS.store(0, Ordering::Relaxed);
+                JACK_STABLE_CYCLES_SINCE_MILLIS.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
     // Drain every pending jack event each tick (bounded) instead of a single try_recv:
     // the audio layer pushes play position + master level events every jack cycle into an
     // unbounded channel, so one event per 8ms tick lets a backlog grow while playing which
@@ -17826,7 +17902,33 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                 AudioLayerOutwardEvent::JackRestartRequired => {
                     match state.lock() {
                         Ok(mut state) => {
-                            state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+                            let now_millis = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|elapsed| elapsed.as_millis() as u64)
+                                .unwrap_or(0);
+                            if now_millis < JACK_RESTART_GRACE_UNTIL_MILLIS.load(Ordering::Relaxed) {
+                                // queued duplicate behind a rebuild already in
+                                // progress (watchdog + shutdown notification can
+                                // both request one) - rebuilding twice back to
+                                // back just churns the graph again
+                                info!("JACK: restart request inside the previous rebuild's grace window - skipped (graph churn guard).");
+                            }
+                            else {
+                                let was_playing = state.playing();
+                                // arm the grace BEFORE the rebuild: deactivation,
+                                // the client reopen retries and the server
+                                // re-wiring the graph all sit inside the stale
+                                // heartbeat window the watchdog watches
+                                JACK_RESTART_GRACE_UNTIL_MILLIS.store(now_millis + 12000, Ordering::Relaxed);
+                                LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                                state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+                                if was_playing {
+                                    // the fresh client starts idle - re-arm playback
+                                    // from the current transport position so a stall
+                                    // self-heals instead of leaving silent playback
+                                    state.play_song(tx_to_audio.clone());
+                                }
+                            }
                         }
                         Err(_) => {}
                     }

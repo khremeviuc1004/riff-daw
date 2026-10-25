@@ -383,13 +383,14 @@ impl Audio {
                                            consumer_details.last_peak()));
             }
         }
+        // only ever build/log on the realtime thread when something is wrong:
+        // the old periodic 'all nominal' line allocated a String and pushed it
+        // into the logger every 512 cycles (~23ms) while playing - log
+        // formatting and allocation have no business in the jack cycle.
+        // silence from this reporter means healthy.
         if anomalies > 0 || self.slow_cycles > 10 || self.limiter_cycles_window > 128 {
-            debug!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} anomalous=[{}]",
+            warn!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} anomalous=[{}]",
                    self.cycle_count, self.slow_cycles, xruns, self.limiter_cycles_window, self.audio_consumers.len(), details_lines.join(" | "));
-        }
-        else {
-            debug!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} all nominal",
-                   self.cycle_count, self.slow_cycles, xruns, self.limiter_cycles_window, self.audio_consumers.len());
         }
         self.limiter_cycles_window = 0;
 
@@ -1028,6 +1029,15 @@ impl Audio {
 
 impl ProcessHandler for Audio {
     fn process(&mut self, client: &Client, process_scope: &ProcessScope) -> Control {
+        // publish the cycle heartbeat for the UI pump's stalled-client watchdog
+        // (see domain::JACK_LAST_CYCLE_MILLIS) - a relaxed store of a vDSO
+        // clock read, no allocation, no syscall that can block
+        let heartbeat_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or(0);
+        crate::domain::JACK_LAST_CYCLE_MILLIS.store(heartbeat_millis, std::sync::atomic::Ordering::Relaxed);
+
         // publish this thread's scheduling priority (this runs on the jack callback
         // thread) once, so the track threads can keep themselves below it
         if crate::domain::JACK_THREAD_PRIORITY.load(std::sync::atomic::Ordering::Relaxed) == 0 {

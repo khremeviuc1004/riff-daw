@@ -4729,6 +4729,41 @@ pub static TRACK_THREADS_SHOULD_EXIT: std::sync::atomic::AtomicBool = std::sync:
 /// Number of live track background processor threads. `main()` waits for this
 /// to reach zero after sending the `Kill` events so plugin instances are only
 /// destroyed once no thread can possibly be inside `process()` anymore.
+/// Wall-clock milliseconds of the jack callback's last process cycle, stored
+/// from the realtime thread (one relaxed store per cycle, vDSO clock read only).
+/// The UI pump's stalled-client watchdog watches it: jackd can silently take a
+/// repeatedly overrunning client out of the cycle graph without ever sending
+/// the shutdown notification - the device then keeps replaying the last
+/// submitted block and nothing recovers on its own. Playback running with no
+/// cycles for a while means exactly that, so the DAW has to notice and
+/// re-trigger the client restart itself.
+pub static JACK_LAST_CYCLE_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Rate-limits the watchdog's restart requests so a genuinely stopped server
+/// is not hammered at the UI pump's 125Hz tick rate.
+pub static LAST_JACK_RESTART_TRIGGER_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Consecutive watchdog restarts that have NOT brought the cycle stream back
+/// (reset whenever a heartbeat arrives). Past a few attempts the client
+/// restarts are proven useless and the only remaining cause is the jack
+/// server itself wedging its audio driver loop - the watchdog then backs off
+/// and surfaces that diagnosis instead of hammering the server.
+pub static JACK_STALLED_RESTART_ATTEMPTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Wall-clock ms until which stall detection is paused after a client rebuild
+/// (a rebuild deliberately closes and reopens the connection - the server
+/// needs time to re-wire the graph before the callback runs again, and the
+/// heartbeat is stale by design during that window; detecting it as a fresh
+/// stall fed a restart storm where every rebuild's graph churn caused another
+/// xrun wave and another rebuild).
+pub static JACK_RESTART_GRACE_UNTIL_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Start of the current uninterrupted-stability window (0 when not stable
+/// yet). The stall escalation is only cleared after the cycles have run
+/// continuously for 15s - a rebuild that cycles for a second before stalling
+/// again must not re-arm unlimited restarts.
+pub static JACK_STABLE_CYCLES_SINCE_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 static LIVE_TRACK_THREAD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn live_track_thread_count() -> usize {

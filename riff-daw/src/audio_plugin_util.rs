@@ -7,7 +7,7 @@ use log::*;
 
 use pathsearch::find_executable_in_path;
 
-use simple_clap_host_helper_lib::{plugin::{instance::process::{AudioBuffers, OutOfPlaceAudioBuffers, ProcessConfig, ProcessData}, library::PluginLibrary, ext::audio_ports::AudioPorts}, host::{DAWCallback}};
+use simple_clap_host_helper_lib::{plugin::{instance::process::{AudioBuffers, OutOfPlaceAudioBuffers, ProcessConfig, ProcessData}, library::PluginLibrary, ext::audio_ports::AudioPorts, ext::latency::Latency}, host::{DAWCallback}};
 use vst::{host::{PluginInstance, PluginLoader}, plugin::Category, plugin::Plugin};
 use vst::api::TimeInfo;
 
@@ -322,7 +322,7 @@ pub fn create_vst3_audio_plugin(
     tempo: f64,
     time_signature_numerator: i32,
     time_signature_denominator: i32,
- ) -> Result<(simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>), String> {
+ ) -> Result<(simple_clap_host_helper_lib::plugin::instance::Plugin, ProcessData, crossbeam_channel::Receiver<DAWCallback>, i64), String> {
     let path = Path::new(audio_plugin_path);
 
     debug!("Loading {}...", path.to_str().unwrap());
@@ -408,7 +408,16 @@ pub fn create_vst3_audio_plugin(
             
                 let process_data = ProcessData::new(audio_buffers, process_config);
             
-                return Ok((plugin, process_data, host_receiver));
+                // the plugin's group delay (clap latency extension) - a main-thread
+                // query, so it must be taken here and carried back to the track with
+                // the rest of the instance parts
+                let latency_frames = match plugin.get_extension::<Latency>() {
+                    Some(latency) => latency.get_latency(&plugin) as i64,
+                    None => 0,
+                };
+                debug!("CLAP plugin {} reports a latency of {} frames.", path.to_str().unwrap_or("unknown"), latency_frames);
+            
+                return Ok((plugin, process_data, host_receiver, latency_frames));
             }
             else {
                 Err(format!("No clap plugin id provided for '{}'.", audio_plugin_path))

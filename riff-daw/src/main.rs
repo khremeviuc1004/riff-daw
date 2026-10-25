@@ -18086,11 +18086,11 @@ fn process_track_background_processor_events(
                             debug!("Creating CLAP plugin instance on the main thread for track {}.", track_uuid);
                             let (host_tx, _host_rx) = std::sync::mpsc::channel::<AudioPluginHostOutwardEvent>();
                             let result = match create_clap_audio_plugin(clap_plugin_loaders.clone(), library_path.as_str(), track_uuid, plugin_uuid.to_string(), clap_id, host_tx, false, sample_rate, block_size, tempo, time_signature_numerator, time_signature_denominator) {
-                                Ok((plugin, process_data, host_receiver)) => {
+                                Ok((plugin, process_data, host_receiver, latency_frames)) => {
                                     // grab the audio-thread handle before the instance moves into the registry
                                     let raw_plugin = plugin.raw_handle();
                                     let _plugin_ptr = clap_registry_add(plugin, audio_thread_id);
-                                    Ok(ClapInstanceParts { plugin: raw_plugin, process_data, host_receiver })
+                                    Ok(ClapInstanceParts { plugin: raw_plugin, process_data, host_receiver, latency_frames })
                                 },
                                 Err(error) => Err(error),
                             };

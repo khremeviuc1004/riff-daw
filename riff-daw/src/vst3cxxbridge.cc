@@ -536,6 +536,17 @@ public:
 
     std::string& getName();
 
+    Steinberg::int64 getLatency()
+    {
+        // the processor's group delay in samples - what the host must offset the
+        // plugin's inputs by for its output to land on the timeline
+        if (audioProcessor)
+        {
+            return (Steinberg::int64)audioProcessor->getLatencySamples();
+        }
+        return 0;
+    }
+
     Vst3HostApplication* getHostApplication() {return hostApplication.get();}
     Steinberg::Vst::IComponent* getComponentPtr() {return component.get();}
     Steinberg::Vst::IEditController* getEditControllerPtr() {return editController.get();}
@@ -1281,6 +1292,22 @@ bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t bl
     }
 
     return false;
+}
+
+int32_t vst3_plugin_get_latency(rust::String riff_daw_plugin_uuid)
+{
+    try
+    {
+        Vst3PluginHandler& vst3PluginHandler = vst3Plugins.at(std::string(riff_daw_plugin_uuid));
+
+        return (int32_t)vst3PluginHandler.getLatency();
+    }
+    catch(const std::out_of_range& ex)
+    {
+        std::cout << "vst3_plugin_get_latency: Can't find plugin." << std::endl;
+    }
+
+    return 0;
 }
 
 rust::String getVstPluginName(rust::String riff_daw_plugin_uuid)

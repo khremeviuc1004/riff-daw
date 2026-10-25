@@ -2758,6 +2758,10 @@ pub trait BackgroundProcessorAudioPlugin {
     fn seek_transport(&mut self, _sample_position: i64) {
     }
 
+    /// The plugin's reported group delay in frames (VST2 initialDelay / VST3
+    /// getLatency / CLAP latency extension). Zero when the plugin reports none.
+    fn latency_frames(&self) -> i64;
+
     fn stop_processing(&mut self);
     fn shutdown(&mut self);
 
@@ -2880,6 +2884,20 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorAudioPluginType {
             }
             BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
                 clap_plugin.rx_from_host_mut()
+            }
+        }
+    }
+
+    fn latency_frames(&self) -> i64 {
+        match self {
+            BackgroundProcessorAudioPluginType::Vst24(vst24_plugin) => {
+                vst24_plugin.latency_frames()
+            }
+            BackgroundProcessorAudioPluginType::Vst3(vst3_plugin) => {
+                vst3_plugin.latency_frames()
+            }
+            BackgroundProcessorAudioPluginType::Clap(clap_plugin) => {
+                clap_plugin.latency_frames()
             }
         }
     }
@@ -3141,6 +3159,12 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst24AudioPlugin {
         self.uuid
     }
 
+    fn latency_frames(&self) -> i64 {
+        // VST2 reports the group delay on the effect itself (AEffect.initialDelay),
+        // captured into Info when the instance was created
+        self.vst_plugin_instance().get_info().initial_delay.max(0) as i64
+    }
+
     fn stop_processing(&mut self) {
         self.vst_plugin_instance_mut().stop_process();
     }
@@ -3387,6 +3411,10 @@ pub struct BackgroundProcessorClapAudioPlugin {
     tempo: f64,
     sample_rate: f64,
     block_size: i64,
+    // the plugin's reported group delay in frames, fetched on the main thread at
+    // creation (and after any re-activation) - clap latency queries are main-thread
+    // functions, so the track thread carries the value instead of asking
+    latency_frames: i64,
     stop_now: bool,
     param_gesture_begin: HashMap<i32, bool>,
     // outward channel to the application main thread (the RPC bus for ClapCall)
@@ -3457,6 +3485,7 @@ pub fn clap_registry_leak_all() {
 /// processor. Called from the application main thread's event pump.
 pub fn clap_registry_execute(plugin_ptr: usize, call: ClapPluginCall) -> ClapCallReply {
     use simple_clap_host_helper_lib::plugin::ext::gui::Gui;
+    use simple_clap_host_helper_lib::plugin::ext::latency::Latency;
     CLAP_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         let entry = match registry.get_mut(&plugin_ptr) {
@@ -3620,6 +3649,13 @@ pub fn clap_registry_execute(plugin_ptr: usize, call: ClapPluginCall) -> ClapCal
                 }
                 ClapCallReply::Done
             },
+            ClapPluginCall::GetLatency => {
+                let frames = match plugin.get_extension::<Latency>() {
+                    Some(latency) => latency.get_latency(plugin) as i64,
+                    None => 0,
+                };
+                ClapCallReply::Latency(frames)
+            },
             ClapPluginCall::EnumerateParams => {
                 match params_snapshot(plugin) {
                     Some((info, rows)) => ClapCallReply::Params(SendParamInfo(info), rows),
@@ -3747,6 +3783,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         self.uuid
     }
 
+    fn latency_frames(&self) -> i64 {
+        self.latency_frames.max(0)
+    }
+
     fn stop_processing(&mut self) {
         self.stop_now = true;
         // start/stop_processing are CLAP's AUDIO-thread functions - call them right
@@ -3862,6 +3902,12 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorClapAudioPlugin {
         self.call_clap(ClapPluginCall::Activate(sample_rate, block_size));
         self.plugin.start_processing();
 
+        // group delay is audio-configuration dependent - re-query it on the main
+        // thread so the track's latency compensation follows the reactivation
+        if let ClapCallReply::Latency(frames) = self.call_clap(ClapPluginCall::GetLatency) {
+            self.latency_frames = frames;
+        }
+
         self.sample_rate = sample_rate;
         self.block_size = block_size;
     }
@@ -3902,6 +3948,7 @@ impl BackgroundProcessorClapAudioPlugin {
             tempo,
             sample_rate,
             block_size,
+            latency_frames: parts.latency_frames,
             stop_now: false,
             param_gesture_begin: HashMap::new(),
             tx_vst_thread,
@@ -4176,6 +4223,10 @@ impl BackgroundProcessorAudioPlugin for BackgroundProcessorVst3AudioPlugin {
 
     fn name(&self) -> String {
         ffi::getVstPluginName(self.daw_plugin_uuid.to_string())
+    }
+
+    fn latency_frames(&self) -> i64 {
+        ffi::vst3_plugin_get_latency(self.daw_plugin_uuid.to_string()).max(0) as i64
     }
 
     fn xid(&self) -> Option<u32> {
@@ -6369,7 +6420,44 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
+    /// Total reported group delay of the active plugin chain (instrument plus
+    /// effects, honouring the riff-arrangement override selection) in frames.
+    pub fn track_plugin_latency_frames(&self) -> i64 {
+        let mut total: i64 = 0;
+
+        let use_override_instrument = self.override_instrument_active && !self.override_instrument_plugin_instances.is_empty();
+        let instruments = if use_override_instrument { &self.override_instrument_plugin_instances } else { &self.instrument_plugin_instances };
+        for instrument in instruments {
+            total += instrument.latency_frames();
+        }
+
+        let use_override_effects = self.override_effects_active && !self.override_effect_plugin_instances.is_empty();
+        let effects = if use_override_effects { &self.override_effect_plugin_instances } else { &self.effect_plugin_instances };
+        for effect in effects {
+            total += effect.latency_frames();
+        }
+
+        total
+    }
+
+    /// Move the plugin input stream's extraction ahead of the wall clock by whole
+    /// blocks worth of the chain's reported group delay. Called every cycle because
+    /// plugins come and go (add/delete/override switching) without reconfiguring
+    /// the transport.
+    fn update_plugin_lookahead(&mut self) {
+        let latency_frames = self.track_plugin_latency_frames().max(0) as i64;
+        let lookahead_blocks = if self.block_size > 0.0 {
+        ((latency_frames as f64) / self.block_size).ceil() as i32
+        }
+        else {
+            0
+        };
+        self.event_processor.set_plugin_lookahead_blocks(lookahead_blocks);
+    }
+
     pub fn process_plugin_events(&mut self) {
+        self.update_plugin_lookahead();
+
         // get the events for this block
         let (mut events, param_events) = self.event_processor.process_events();
         // if !events.is_empty() {
@@ -6616,6 +6704,8 @@ impl TrackBackgroundProcessorHelper {
     }
 
     pub fn process_audio_events(&mut self) {
+        self.update_plugin_lookahead();
+
         let (events, param_events) = self.event_processor.process_events();
 
         if !events.is_empty() && !self.mute {
@@ -9621,6 +9711,13 @@ pub trait TrackEventProcessor {
     /// events are invalidated - they get regenerated (against the new configuration)
     /// when playback (re)starts.
     fn set_block_size(&mut self, block_size: f64);
+    /// How many blocks ahead of the wall clock the PLUGIN input stream is extracted
+    /// to compensate the active plugin chain's reported group delay: the host must
+    /// send a plugin its inputs `latency` frames early for the plugin's delayed
+    /// output to land on the timeline like every other track. The transport cursor
+    /// itself always stays on the wall clock.
+    fn plugin_lookahead_blocks(&self) -> i32;
+    fn set_plugin_lookahead_blocks(&mut self, blocks: i32);
 }
 
 pub struct BlockBufferTrackEventProcessor {
@@ -9635,6 +9732,7 @@ pub struct BlockBufferTrackEventProcessor {
     pub play_right_block_index: i32,
     pub playing_notes: Vec<i32>,
     pub mute: bool,
+    pub plugin_lookahead_blocks: i32,
 }
 
 impl BlockBufferTrackEventProcessor {
@@ -9651,6 +9749,7 @@ impl BlockBufferTrackEventProcessor {
             play_right_block_index: -1,
             playing_notes: vec![],
             mute: false,
+            plugin_lookahead_blocks: 0,
         }
     }
 }
@@ -9678,9 +9777,23 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
                     }
 
                     if self.block_index > -1 {
-                        let param_block_index = self.block_index;
+                        // plugin latency compensation: loop/end bookkeeping and the
+                        // transport cursor stay on the wall clock, but the block that
+                        // is actually extracted for the plugins is read ahead by the
+                        // chain's reported group delay (in blocks) so the plugin's own
+                        // delay puts its audio back on the timeline position every
+                        // other track (and the jack transport) are playing.
+                        let lookahead = self.plugin_lookahead_blocks.max(0);
+                        let mut extract_block_index = self.block_index + lookahead;
+                        if self.play_loop_on && lookahead > 0 {
+                            extract_block_index = extract_block_index.min(self.play_right_block_index.max(0));
+                        }
+                        let extract_block_index = extract_block_index.max(0) as usize;
+                        let wall_block_in_range = (self.block_index as usize) < event_blocks.len();
+                        let param_block_index = extract_block_index;
 
-                        if let Some(event_block) = event_blocks.get(self.block_index as usize) {
+                        if wall_block_in_range {
+                            if let Some(event_block) = event_blocks.get(extract_block_index) {
                             for event in event_block {
                                 // we transition on a measure???
                                 // are we transitioning: do we have anything to transition to, have we hit an appropriate boundary event
@@ -9701,7 +9814,7 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
                                             // debug!("**************** Transition detected.");
                                             transition_happened = true;
 
-                                            if let Some(transistion_to_event_block) = transistion_to_event_blocks.get(self.block_index as usize) {
+                                            if let Some(transistion_to_event_block) = transistion_to_event_blocks.get(extract_block_index) {
                                                 let mut start_processing = false;
                                                 for transition_event in transistion_to_event_block.iter() {
                                                     // fast-forward within block to measure boundary
@@ -9734,6 +9847,7 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
                                         events.push(event.clone());
                                     }
                                 }
+                            }
                             }
 
                             self.block_index += 1;
@@ -9873,6 +9987,14 @@ impl TrackEventProcessor for BlockBufferTrackEventProcessor {
         self.track_event_blocks_transition_to = None;
         self.param_event_blocks = None;
     }
+
+    fn plugin_lookahead_blocks(&self) -> i32 {
+        self.plugin_lookahead_blocks
+    }
+
+    fn set_plugin_lookahead_blocks(&mut self, blocks: i32) {
+        self.plugin_lookahead_blocks = blocks.max(0);
+    }
 }
 
 pub struct RiffBufferTrackEventProcessor {
@@ -9888,6 +10010,7 @@ pub struct RiffBufferTrackEventProcessor {
     pub playing_notes: Vec<i32>,
     pub block_size: f64,
     pub mute: bool,
+    pub plugin_lookahead_blocks: i32,
 }
 
 impl RiffBufferTrackEventProcessor {
@@ -9905,6 +10028,7 @@ impl RiffBufferTrackEventProcessor {
             playing_notes: vec![],
             block_size,
             mute: false,
+            plugin_lookahead_blocks: 0,
         }
     }
 
@@ -10016,7 +10140,12 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                     }
 
                     if self.block_index > -1 {
-                        let param_block_index = self.block_index;
+                        // plugin latency compensation: the riff window is read ahead
+                        // of the wall clock by the chain's group delay (whole blocks)
+                        // so the plugin's own delay puts its audio back on the
+                        // timeline; the cursor and transport bookkeeping stay real-time.
+                        let read_ahead_block_index = self.block_index + self.plugin_lookahead_blocks.max(0);
+                        let param_block_index = read_ahead_block_index;
 
                         // when playing riff sets there should only be 1 riff
                         if let Some(riff_events) = riffs.get(0) {
@@ -10039,7 +10168,7 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                                     // debug!("{} - Riff size in samples: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), riff_size_in_samples);
                                     // debug!("{} - Processing block...: {}", std::thread::current().name().unwrap_or_else(|| "Unknown Track"), self.block_index);
                                     // debug!("riff_size_in_samples: {}", riff_size_in_samples);
-                                    let start_sample = (self.block_index * (self.block_size as i32)) % riff_size_in_samples;
+                                    let start_sample = (read_ahead_block_index * (self.block_size as i32)) % riff_size_in_samples;
                                     let mut end_sample = start_sample + (self.block_size as i32);
                                     let wrap = end_sample > riff_size_in_samples;
                                     let overflow = end_sample - riff_size_in_samples;
@@ -10191,6 +10320,14 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
         self.track_event_blocks = None;
         self.track_event_blocks_transition_to = None;
         self.param_event_blocks = None;
+    }
+
+    fn plugin_lookahead_blocks(&self) -> i32 {
+        self.plugin_lookahead_blocks
+    }
+
+    fn set_plugin_lookahead_blocks(&mut self, blocks: i32) {
+        self.plugin_lookahead_blocks = blocks.max(0);
     }
 }
 

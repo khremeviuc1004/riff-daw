@@ -47,6 +47,7 @@ bool addEvent(rust::String riff_daw_plugin_uuid, EventType eventType, int32_t bl
 rust::String getVstPluginName(rust::String riff_daw_plugin_uuid);
 bool setProcessing(rust::String riff_daw_plugin_uuid, bool processing);
 bool setActive(rust::String riff_daw_plugin_uuid, bool active);
+int32_t vst3_plugin_get_latency(rust::String riff_daw_plugin_uuid);
 int32_t vst3_plugin_get_preset(rust::String riff_daw_plugin_uuid, rust::Slice<uint8_t> preset_buffer, uint32_t maxSize);
 void vst3_plugin_set_preset(rust::String riff_daw_plugin_uuid, rust::Slice<uint8_t> preset_buffer);
 

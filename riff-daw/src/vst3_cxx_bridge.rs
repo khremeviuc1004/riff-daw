@@ -54,6 +54,7 @@ pub mod ffi {
             channel2OutputBuffer: &mut [f32]) -> bool;
         fn addEvent(riff_daw_plugin_uuid: String, eventType: EventType, blockPosition: i32, data1: u32, data2: u32, data3: i32, data4: f64) -> bool;
         fn getVstPluginName(riff_daw_plugin_uuid: String) -> String;
+        fn vst3_plugin_get_latency(riff_daw_plugin_uuid: String) -> i32;
 
         fn setProcessing(riff_daw_plugin_uuid: String, processing: bool) -> bool;
         fn setActive(riff_daw_plugin_uuid: String, active: bool) -> bool;

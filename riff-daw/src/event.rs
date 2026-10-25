@@ -606,6 +606,9 @@ pub struct ClapInstanceParts {
     pub plugin: simple_clap_host_helper_lib::plugin::instance::PluginRawHandle,
     pub process_data: simple_clap_host_helper_lib::plugin::instance::process::ProcessData,
     pub host_receiver: crossbeam_channel::Receiver<simple_clap_host_helper_lib::host::DAWCallback>,
+    /// the plugin's reported group delay in frames (clap latency extension), fetched
+    /// on the main thread at creation - the track thread can never query the plugin
+    pub latency_frames: i64,
 }
 
 // SAFETY: CLAP explicitly splits the plugin's use across two threads - everything
@@ -633,6 +636,7 @@ pub enum ClapPluginCall {
     SavePreset, // -> Preset
     LoadPreset(Vec<u8>),
     EnumerateParams, // -> Params
+    GetLatency, // the plugin's reported group delay in frames -> Latency
 }
 
 /// The reply to a `ClapPluginCall`.
@@ -643,6 +647,7 @@ pub enum ClapCallReply {
     Buffers(Box<Vec<Vec<Vec<f32>>>>, Box<Vec<Vec<Vec<f32>>>>),
     Preset(Vec<u8>),
     Params(SendParamInfo, Vec<(i32, String, f32)>), // (plugin parameter info, param id/name/value rows)
+    Latency(i64), // plugin reported group delay in frames
     Done,
     Failed,
 }

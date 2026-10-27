@@ -290,7 +290,10 @@ pub enum AudioLayerInwardEvent {
     RemoveTrack(String),                           // track uuid
     NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
 
-    PreviewSample(String), // absolute path sample file name
+    // the sample is loaded on the ui thread: a wav decode (file open, allocation,
+    // sndfile read) on the realtime thread can blow the jack deadline whenever the
+    // disk takes a hitch-up - the inward event only carries the finished data
+    PreviewSample(Box<SampleData>), // pre-loaded sample data
 
     // the track's inherent output presentation delay in whole blocks: tracks whose
     // effect chain is fed by inter-track audio routing cannot be input-offset (the

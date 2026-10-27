@@ -4816,6 +4816,25 @@ pub static JACK_RESTART_GRACE_UNTIL_MILLIS: std::sync::atomic::AtomicU64 = std::
 /// again must not re-arm unlimited restarts.
 pub static JACK_STABLE_CYCLES_SINCE_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The value of JACK_LAST_CYCLE_MILLIS at the moment the last client rebuild
+/// was triggered. If the heartbeat never advances past this, the rebuild
+/// produced ZERO process cycles - the server (not our client) is at fault, and
+/// piling another immediate rebuild on top just churns the graph further.
+pub static JACK_LAST_CYCLE_AT_RESTART_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Consecutive rebuilds that produced no process cycles at all. Past a small
+/// number the watchdog holds the slow-probe cadence and says the quiet part:
+/// every rebuild that gets zero cycles cannot be helped by more rebuilds.
+pub static JACK_ZERO_CYCLE_RESTARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Set when a stall rebuild happened while the transport was playing; the
+/// playback is re-armed on the FIRST real cycle of the rebuilt client, not
+/// immediately after the rebuild. Re-arming into a server that grants no
+/// cycles leaves a full session of playing track threads hammering a wedged
+/// graph, and their parked-then-released blocks replay stale audio at the
+/// wrong tempo the moment cycles do return.
+pub static JACK_REARM_PLAYBACK_ON_FIRST_CYCLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 static LIVE_TRACK_THREAD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn live_track_thread_count() -> usize {
@@ -4842,17 +4861,51 @@ impl Drop for TrackThreadLivenessGuard {
 
 /// `write_blocking` that gives up when the application is exiting, so a track
 /// thread waiting on a vanished consumer still reaches its loop-exit check.
+///
+/// It also gives up when the jack callback has stopped consuming altogether
+/// (a stalled/timed-out client): parking every track thread on a 50ms
+/// write-timeout loop means (a) the threads cannot react to coast/stop events
+/// for seconds and (b) the instant jack starts cycling again the whole parked
+/// backlog of stale blocks is dumped into the ring buffers at once - the mix
+/// then runs minutes of stale audio against the live transport, which sounds
+/// like the glitching onset and provokes the overrun wave that times the
+/// client out in the first place. Dropping the block costs that track one
+/// silent block while the layer is wedged anyway.
 fn write_blocking_or_exit<T, P: rb::RbProducer<T>>(producer: &P, data: &[T]) {
+    const STALL_GIVEUP_WRITES: usize = 20; // 20 * 50ms = 1s of full ring buffer
+    let mut timed_out_writes: usize = 0;
     loop {
         if TRACK_THREADS_SHOULD_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         match producer.write_blocking_timeout(data, Duration::from_millis(50)) {
             Ok(_) => return,
-            Err(rb::RbError::TimedOut) => continue,
+            Err(rb::RbError::TimedOut) => {
+                timed_out_writes += 1;
+                if timed_out_writes >= STALL_GIVEUP_WRITES && jack_cycles_stalled() {
+                    // the consumer has not run a cycle in over 2s - the client is
+                    // out of the graph; drop this block and keep the thread
+                    // responsive to control events until the watchdog rebuilds it
+                    return;
+                }
+            }
             Err(_) => return,
         }
     }
+}
+
+/// True when the jack callback thread has not published a cycle heartbeat for
+/// more than 2s (or no cycle has run yet, which must not look like a stall).
+pub fn jack_cycles_stalled() -> bool {
+    let last_cycle = JACK_LAST_CYCLE_MILLIS.load(std::sync::atomic::Ordering::Relaxed);
+    if last_cycle == 0 {
+        return false;
+    }
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    now_millis.saturating_sub(last_cycle) > 2000
 }
 
 /// Reconcile this track thread's scheduling priority with the jack callback thread's.

@@ -2489,7 +2489,10 @@ impl DAWState {
                 }
                 Err(error) => {
                     warn!("JACK: could not open the client (attempt {}/3): {:?}", attempt, error);
-                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    // growing backoff: while the server tears down the previous
+                    // same-named client a fixed 250ms retry can fail all three
+                    // attempts and give up before the name is actually free
+                    std::thread::sleep(std::time::Duration::from_millis(250 * attempt as u64));
                 }
             }
         }
@@ -2605,7 +2608,10 @@ impl DAWState {
                             }
                             Err(error) => {
                                 warn!("JACK: could not open the restarted client (attempt {}/3): {:?}", attempt, error);
-                                std::thread::sleep(std::time::Duration::from_millis(250));
+                                // growing backoff, same reason as start_jack: the
+                                // server needs time to drain the close of the old
+                                // same-named client before a reopen can succeed
+                                std::thread::sleep(std::time::Duration::from_millis(250 * attempt as u64));
                             }
                         }
                     }

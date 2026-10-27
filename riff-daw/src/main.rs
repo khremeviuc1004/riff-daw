@@ -9452,7 +9452,15 @@ win.connect_close_request(|window| {
                 gui.ui.riff_sequences_box.queue_draw();
             }
             DAWEvents::PreviewSample(file_name) => {
-                match tx_to_audio.send(AudioLayerInwardEvent::PreviewSample(file_name)) {
+                // decode the wav here on the ui thread: loading it inside the jack
+                // callback (disk I/O + allocation on the realtime thread) is a
+                // guaranteed missed deadline when the read goes long
+                let sample_rate = match state.lock() {
+                    Ok(state) => state.configuration.audio.sample_rate,
+                    Err(_) => 44100,
+                };
+                let sample_data = SampleData::new(file_name, sample_rate);
+                match tx_to_audio.send(AudioLayerInwardEvent::PreviewSample(Box::new(sample_data))) {
                     Ok(_) => {}
                     Err(_) => {}
                 }
@@ -17690,9 +17698,32 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                 Ok(state) => state.playing(),
                 Err(_) => false,
             };
-            if playing && now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 3000 {
+            // if the heartbeat has not advanced since the last rebuild, that
+            // rebuild produced zero cycles: the problem is server side (wedged
+            // driver loop / zombie client in the graph), and rapid rebuilds only
+            // churn the connection graph - slow the probe cadence down to 30s
+            let zero_cycle_restart = last_cycle <= JACK_LAST_CYCLE_AT_RESTART_MILLIS.load(Ordering::Relaxed);
+            let min_trigger_gap = if zero_cycle_restart { 30000 } else { 3000 };
+            if playing && now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > min_trigger_gap {
                 let attempts = JACK_STALLED_RESTART_ATTEMPTS.load(Ordering::Relaxed);
-                if attempts < 3 {
+                if zero_cycle_restart && attempts >= 3 {
+                    let zero_cycle_restarts = JACK_ZERO_CYCLE_RESTARTS.load(Ordering::Relaxed);
+                    if zero_cycle_restarts < 4 {
+                        JACK_ZERO_CYCLE_RESTARTS.store(zero_cycle_restarts + 1, Ordering::Relaxed);
+                        warn!("JACK: the previous client rebuild produced ZERO process cycles - the jack server's driver loop is wedged or a zombie client is holding up the graph, not our client. One more slow rebuild (probe {}/4) - if this does not restore cycles, restart the jack server (qjackctl) or reduce the load; further rebuilds are paused until cycles actually return.", zero_cycle_restarts + 1);
+                        LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                    }
+                    else if now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 60000 {
+                        // keep a very slow reconnect probe alive: if the user
+                        // restarts jackd, only re-opening the client can attach
+                        // to the fresh server - but never at graph-churning rates
+                        LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
+                        warn!("JACK: still no process cycles after {} zero-cycle rebuilds - holding at one slow reconnect probe per minute (this also catches a jack server restart).", 4);
+                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                    }
+                }
+                else if attempts < 3 {
                     JACK_STALLED_RESTART_ATTEMPTS.store(attempts + 1, Ordering::Relaxed);
                     warn!("JACK: no process cycles for {}ms while the transport is playing - the client appears to have been taken out of the graph, triggering client restart attempt {}/3.", now_millis - last_cycle, attempts + 1);
                     LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
@@ -17712,6 +17743,30 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
             }
         }
         else if last_cycle > 0 && !stalled {
+            // the rebuilt client is actually cycling: remember that for the
+            // zero-cycle-restart detector and re-arm playback that was stopped
+            // by the stall (only now - re-arming into a dead server keeps a
+            // full session of playing track threads hammering a wedged graph)
+            if last_cycle > JACK_LAST_CYCLE_AT_RESTART_MILLIS.load(Ordering::Relaxed) {
+                if JACK_ZERO_CYCLE_RESTARTS.load(Ordering::Relaxed) > 0 {
+                    // cycles are flowing again - future restarts start the zero-cycle count fresh
+                    JACK_ZERO_CYCLE_RESTARTS.store(0, Ordering::Relaxed);
+                }
+                if JACK_REARM_PLAYBACK_ON_FIRST_CYCLE.load(Ordering::Relaxed) {
+                    JACK_REARM_PLAYBACK_ON_FIRST_CYCLE.store(false, Ordering::Relaxed);
+                    let playing = match state.lock() {
+                        Ok(state) => state.playing(),
+                        Err(_) => false,
+                    };
+                    if playing {
+                        warn!("JACK: process cycles returned after the client rebuild - resuming playback from the current transport position.");
+                        match state.lock() {
+                            Ok(mut state) => { state.play_song(tx_to_audio.clone()); }
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
             // require 15s of uninterrupted cycles before clearing escalation
             let since = JACK_STABLE_CYCLES_SINCE_MILLIS.load(Ordering::Relaxed);
             if since == 0 {
@@ -17915,6 +17970,12 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                             }
                             else {
                                 let was_playing = state.playing();
+                                // remember the heartbeat value before tearing the
+                                // client down: if it never advances past this after
+                                // the rebuild, the rebuild produced zero cycles and
+                                // the fault is server side, not our client
+                                JACK_LAST_CYCLE_AT_RESTART_MILLIS.store(
+                                    JACK_LAST_CYCLE_MILLIS.load(Ordering::Relaxed), Ordering::Relaxed);
                                 // arm the grace BEFORE the rebuild: deactivation,
                                 // the client reopen retries and the server
                                 // re-wiring the graph all sit inside the stale
@@ -17923,10 +17984,13 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                 LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
                                 state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
                                 if was_playing {
-                                    // the fresh client starts idle - re-arm playback
-                                    // from the current transport position so a stall
-                                    // self-heals instead of leaving silent playback
-                                    state.play_song(tx_to_audio.clone());
+                                    // do NOT re-arm playback into a server that has
+                                    // not granted any cycles yet: playing track
+                                    // threads hammer a wedged graph and dump their
+                                    // parked stale backlog the instant cycles return
+                                    // (wrong-tempo glitch audio). The watchdog
+                                    // resumes playback on the first real cycle.
+                                    JACK_REARM_PLAYBACK_ON_FIRST_CYCLE.store(true, Ordering::Relaxed);
                                 }
                             }
                         }

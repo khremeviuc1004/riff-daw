@@ -430,7 +430,15 @@ impl Audio {
                     self.block = start_block.max(0);
                     self.play_position_in_frames = self.block as u32 * self.block_size as u32;
                     self.blocks_total = number_of_blocks;
-                    TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
+                    // never block the realtime thread on a lock the ui or a track
+                    // thread may be holding: the position is re-published every cycle
+                    // by update_position_and_notify, so a skipped publish here only
+                    // delays it by one cycle - a blocked write here delays (or with
+                    // parking_lot's writer-priority handoff, deadlocks into) the whole
+                    // graph and jack times the client out
+                    if let Some(mut transport) = TRANSPORT.get().try_write() {
+                        transport.position_in_frames = self.play_position_in_frames;
+                    }
                     self.reset_audio_watchdogs();
                 }
                 AudioLayerInwardEvent::Seek(start_block) => {
@@ -441,13 +449,16 @@ impl Audio {
                     let start_block = start_block.max(0);
                     self.block = start_block;
                     self.play_position_in_frames = start_block as u32 * self.block_size as u32;
-                    TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
+                    if let Some(mut transport) = TRANSPORT.get().try_write() {
+                        transport.position_in_frames = self.play_position_in_frames;
+                    }
                     self.reset_audio_watchdogs();
 
                     let ppq_pos = (self.play_position_in_frames as f64 * self.tempo) / (60.0 * self.sample_rate_in_frames);
-                    let mut time_info = self.vst_host_time_info.write();
-                    time_info.sample_pos = self.play_position_in_frames as f64;
-                    time_info.ppq_pos = ppq_pos;
+                    if let Some(mut time_info) = self.vst_host_time_info.try_write() {
+                        time_info.sample_pos = self.play_position_in_frames as f64;
+                        time_info.ppq_pos = ppq_pos;
+                    }
                 }
                 AudioLayerInwardEvent::Stop => {
                     // debug!(root_logger, "*************Jack stop play received.");
@@ -507,9 +518,11 @@ impl Audio {
                         debug!("Failed to add a midi out port for track={}", track_uuid.as_str());
                     }
                 }
-                AudioLayerInwardEvent::PreviewSample(file_name) => {
-                    debug!("Audio layer received preview sample: file name = {}", file_name);
-                    self.preview_sample = Some(SampleData::new(file_name, self.sample_rate_in_frames as i32));
+                AudioLayerInwardEvent::PreviewSample(sample_data) => {
+                    // the data arrives pre-loaded from the ui thread - nothing here
+                    // may touch the disk or the allocator beyond the pointer swap
+                    debug!("Audio layer received preview sample data.");
+                    self.preview_sample = Some(*sample_data);
                     self.preview_sample_current_frame = 0;
                 }
             }
@@ -763,46 +776,53 @@ impl Audio {
     }
 
     fn process_preview_sample(&mut self, process_scope: &ProcessScope, frames_written: usize, number_of_consumers: &mut f32, left_pan: f32, right_pan: f32) {
+        // mix straight into the jack buffers: the old version pushed every preview
+        // frame through two scratch Vecs (a heap allocation per cycle on the
+        // realtime thread) before writing them out
         let preview_sample_current_frame = self.preview_sample_current_frame() as usize;
-        let sample_channels = if let Some(sample) = self.preview_sample_mut() {
-            sample.channels() as usize
-        } else {
-            0
-        };
-        let sample_length = if let Some(sample) = self.preview_sample_mut() {
-            sample.samples().len()
-        } else {
-            0
-        };
-        let mut left_samples: Vec<f32> = vec![];
-        let mut right_samples: Vec<f32> = vec![];
+        let mut sample_length = 0usize;
+        let mut sample_channels = 0usize;
+        let mut has_sample = false;
         if let Some(sample) = self.preview_sample_mut() {
+            has_sample = true;
+            sample_channels = sample.channels() as usize;
+            sample_length = sample.samples().len();
+        }
+        if has_sample {
+            let scale = 1.0 / *number_of_consumers * self.master_volume * 2.0;
             for frame in 0..frames_written {
                 let left_channel_sample_index = (frame + preview_sample_current_frame) * sample_channels;
                 let right_channel_sample_index = left_channel_sample_index + 1;
-
-                if left_channel_sample_index < sample_length {
-                    if sample.channels() == 1 {
-                        left_samples.push(*sample.samples().get(left_channel_sample_index).unwrap());
-                        right_samples.push(*sample.samples().get(left_channel_sample_index).unwrap());
-                    } else {
-                        left_samples.push(*sample.samples().get(left_channel_sample_index).unwrap());
-                        right_samples.push(*sample.samples().get(right_channel_sample_index).unwrap());
+                // copy the two values out (a reborrow of the port buffers per frame
+                // is just a pointer read) instead of holding the sample borrow and
+                // the buffer borrow of *self at the same time
+                let frames = if left_channel_sample_index < sample_length {
+                    self.preview_sample().as_ref().map(|sample| {
+                        if sample_channels == 1 {
+                            let value = *sample.samples().get(left_channel_sample_index).unwrap_or(&0.0);
+                            (value, value)
+                        }
+                        else {
+                            let left = *sample.samples().get(left_channel_sample_index).unwrap_or(&0.0);
+                            let right = *sample.samples().get(right_channel_sample_index).unwrap_or(&0.0);
+                            (left, right)
+                        }
+                    })
+                } else {
+                    None
+                };
+                if let Some((left_channel, right_channel)) = frames {
+                    let out_left = self.out_l.as_mut_slice(process_scope);
+                    let out_right = self.out_r.as_mut_slice(process_scope);
+                    if frame < out_left.len() && frame < out_right.len() {
+                        out_left[frame] += left_channel * scale * left_pan;
+                        out_right[frame] += right_channel * scale * right_pan;
                     }
                 }
             }
         }
 
         self.set_preview_sample_current_frame(self.preview_sample_current_frame() + frames_written as i32);
-
-        let mut frame: usize = 0;
-        let out_left = self.out_l.as_mut_slice(process_scope);
-        let out_right = self.out_r.as_mut_slice(process_scope);
-        for left_sample in left_samples.iter() {
-            out_left[frame] += (*left_sample / *number_of_consumers) * self.master_volume * 2.0 * left_pan;
-            out_right[frame] += (*right_samples.get(frame).unwrap() / *number_of_consumers) * self.master_volume * 2.0 * right_pan;
-            frame += 1;
-        }
     }
 
     fn process_midi_out(&mut self, process_scope: &ProcessScope) {
@@ -970,7 +990,9 @@ impl Audio {
             }
             else if event.bytes.len() >= 3 && event.bytes.len() == 6 && event.bytes[0] == 240 && event.bytes[1] == 127 && event.bytes[3] == 6 {
                 let mmc_sysex_bytes: [u8; 6] = [240, 127, event.bytes[2], 6, event.bytes[4], 247];
-                match self.jack_midi_sender.send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes)) {
+                // try_send, never send: a blocking channel send on the realtime
+                // thread parks the jack cycle whenever the consumer pauses
+                match self.jack_midi_sender.try_send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes)) {
                     Ok(_) => {}
                     Err(err) => {
                         debug!("jack problem sending General MMC event: {:?}", err);
@@ -993,7 +1015,16 @@ impl Audio {
                 self.play_position_in_frames += self.block_size as u32;
             }
 
-            TRANSPORT.get().write().position_in_frames = self.play_position_in_frames;
+            // the realtime thread must never park on a lock: the ui thread takes the
+            // transport write lock while playing back edits, and plugins read the host
+            // time info on their (real-time-priority) track threads for the length of a
+            // plugin block. A blocking write here stalls the jack cycle until the
+            // deadline is missed, jackd overruns the client and - after sustained
+            // misses - takes it out of the graph with no cycles at all. Skipping a
+            // publish costs one cycle of position latency, blocking costs the session.
+            if let Some(mut transport) = TRANSPORT.get().try_write() {
+                transport.position_in_frames = self.play_position_in_frames;
+            }
 
             {
                 let ppq_pos = (self.play_position_in_frames as f64 * self.tempo) / (60.0 * self.sample_rate_in_frames);
@@ -1001,12 +1032,13 @@ impl Audio {
                 flags |= TimeInfoFlags::TRANSPORT_PLAYING.bits(); // transport playing
                 flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
                 flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
-                flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
-                
-                let mut time_info =  self.vst_host_time_info.write();
-                time_info.flags = flags;
-                time_info.sample_pos = self.play_position_in_frames as f64;
-                time_info.ppq_pos = ppq_pos;
+                flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq pos valid
+
+                if let Some(mut time_info) = self.vst_host_time_info.try_write() {
+                    time_info.flags = flags;
+                    time_info.sample_pos = self.play_position_in_frames as f64;
+                    time_info.ppq_pos = ppq_pos;
+                }
             }
 
             if self.play_position_in_frames % self.frames_per_beat < self.block_size as u32 {
@@ -1014,23 +1046,27 @@ impl Audio {
             }
         }
         else if !self.play { // not playing anymore
-            // If we can't get the lock this time maybe we can get it next time
-            let mut time_info =  self.vst_host_time_info.write();
-            if time_info.flags & (1 << 1) == 2 { // transport playing need to stop
-                let mut flags = TimeInfoFlags::TRANSPORT_CHANGED.bits(); // transport changed
+            // try_lock (was: blocking write) - the time info read lock is held by
+            // track threads inside plugin blocks, and the transport stopped flag must
+            // never be gated on lock contention in the realtime cycle: a blocked write
+            // here is a missed deadline and eventually a timed-out jack client
+            if let Some(mut time_info) = self.vst_host_time_info.try_write() {
+                if time_info.flags & (1 << 1) == 2 { // transport playing need to stop
+                    let mut flags = TimeInfoFlags::TRANSPORT_CHANGED.bits(); // transport changed
 
-                flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
-                flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
-                flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
-                time_info.flags = flags;
-            }
-            else if time_info.flags & 1 == 1 { // transport changed but not playing
-                let mut flags = 0; // transport not changed
+                    flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
+                    flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
+                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
+                    time_info.flags = flags;
+                }
+                else if time_info.flags & 1 == 1 { // transport changed but not playing
+                    let mut flags = 0; // transport not changed
 
-                flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
-                flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
-                flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
-                time_info.flags = flags;
+                    flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
+                    flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
+                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
+                    time_info.flags = flags;
+                }
             }
         }
     }

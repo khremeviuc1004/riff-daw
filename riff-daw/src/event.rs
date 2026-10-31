@@ -535,7 +535,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
     // event instead of the preset data it asked for.
     RequestPresetData(Sender<TrackPluginPresetResponse>),
 
-    PlayNoteImmediate(i32, i32), // note number, midi channel number
+    PlayNoteImmediate(i32, i32, i32), // note number, velocity, midi channel number
     StopNoteImmediate(i32, i32), // note number, midi channel number
 
     PlayControllerImmediate(i32, i32, i32), // controller number, controller value, midi channel number

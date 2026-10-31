@@ -608,7 +608,7 @@ impl DAWUtils {
                 }
                 TrackEvent::NoteOn(note_on) => {
                     let note_on = MidiEvent {
-                        data: [144 + (midi_channel as u8), note_on.note() as u8, note_on.velocity() as u8],
+                        data: [144 + (note_on.channel() as i32) as u8, note_on.note() as u8, note_on.velocity() as u8],
                         delta_frames: note_on.position() as i32,
                         live: false,
                         note_length: None,
@@ -620,7 +620,7 @@ impl DAWUtils {
                 }
                 TrackEvent::NoteOff(note_off) => {
                     let note_off = MidiEvent {
-                        data: [128 + (midi_channel as u8), note_off.note() as u8, 0],
+                        data: [128 + (note_off.channel() as i32) as u8, note_off.note() as u8, 0],
                         delta_frames: note_off.position() as i32,
                         live: false,
                         note_length: None,
@@ -755,7 +755,7 @@ impl DAWUtils {
                         port_index: note_on.port() as i16,
                         channel: note_on.channel() as i16,
                         key: note_on.note() as i16,
-                        velocity: note_on.velocity() as f64,
+                        velocity: note_on.velocity() as f64 / 127.0,
                     };
                     events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Note(note_on_clap_event));
                 }
@@ -771,8 +771,8 @@ impl DAWUtils {
                         note_id: note_off.note_id(),
                         port_index: note_off.port() as i16,
                         channel: note_off.channel() as i16,
-                        key: note_off.note() as i16,
-                        velocity: note_off.velocity() as f64,
+                         key: note_off.note() as i16,
+                         velocity: note_off.velocity() as f64 / 127.0,
                     };
                     events_all.push(simple_clap_host_helper_lib::plugin::instance::process::Event::Note(note_off_clap_event));
                 }

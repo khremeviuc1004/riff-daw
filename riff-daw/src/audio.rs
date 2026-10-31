@@ -861,9 +861,9 @@ impl Audio {
                 delta_frames = self.block * self.block_size as i32 /* + event.time as i32 */;
             }
 
-            if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
+            if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 && event.bytes[2] > 0 { // note on
                 let note_on = MidiEvent {
-                    data: [144, event.bytes[1], event.bytes[2]],
+                    data: [event.bytes[0], event.bytes[1], event.bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -874,9 +874,10 @@ impl Audio {
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(note_on));
             }
-            else if event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143 { //note off
+            else if (event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143)
+                || (event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 && event.bytes[2] == 0) { // note off (a zero velocity note on is a note off)
                 let note_off = MidiEvent {
-                    data: [128, event.bytes[1], event.bytes[2]],
+                    data: [128 + (event.bytes[0] & 0x0F), event.bytes[1], event.bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,

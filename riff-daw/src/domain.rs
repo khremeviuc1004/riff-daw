@@ -5624,14 +5624,15 @@ impl TrackBackgroundProcessorHelper {
                     self.event_processor.set_mute(false);
                     self.mute = false;
                 },
-                TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel) => {
+                TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, velocity, midi_channel) => {
                     debug!("Track background processor: Received play note immediate.");
 
-                    let note_on = NoteOn::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, 127);
+                    let mut note_on = NoteOn::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, velocity);
+                    note_on.set_channel(midi_channel as u16);
                     self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::NoteOn(note_on));
 
                     let note_on = MidiEvent {
-                        data: [144 + (midi_channel as u8), note as u8, 127_u8],
+                        data: [144 + (midi_channel as u8), note as u8, velocity as u8],
                         delta_frames: 0,
                         live: true,
                         note_length: None,
@@ -5644,7 +5645,8 @@ impl TrackBackgroundProcessorHelper {
                 TrackBackgroundProcessorInwardEvent::StopNoteImmediate(note, midi_channel) => {
                     debug!("Track background processor layer received stop note immediate.");
 
-                    let note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, 127);
+                    let mut note_off = NoteOff::new_with_params(MidiPolyphonicExpressionNoteId::ALL as i32, 0.0, note, 127);
+                    note_off.set_channel(midi_channel as u16);
                     self.event_processor.audio_plugin_immediate_events_mut().push(TrackEvent::NoteOff(note_off));
 
                     let note_off = MidiEvent {
@@ -6811,6 +6813,23 @@ impl TrackBackgroundProcessorHelper {
     pub fn process_jack_midi_out_events(&mut self, producer: &mut Producer<(u32, u8, u8, u8, bool)>) {
         // get the events for this block
         let (track_events, _) = self.event_processor.process_events();
+
+        // route outgoing events to their destination tracks/instruments - the same as
+        // the instrument track path does in process_plugin_events, so live notes and
+        // played riffs on a midi track reach the instrument tracks they are routed to
+        if track_events.len() > 0 {
+            for (route_uuid, _) in self.track_events_outward_routings.iter() {
+                if let Some(outward_producer) = self.track_events_outward_producers.get_mut(route_uuid) {
+                    let mut event_buffer: [TrackEvent; 1] = [TrackEvent::default()];
+
+                    for event in track_events.iter() {
+                        event_buffer[0] = event.clone();
+                        let _ = outward_producer.write(&event_buffer);
+                    }
+                }
+            }
+        }
+
         let mut jack_events: Vec<(u32, u8, u8, u8, bool)> = vec![];
 
         for event in track_events.iter() {

@@ -3097,7 +3097,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                                 0
                                             };
                                             for (note, _position, _duration) in new_notes.iter() {
-                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(*note, midi_channel));
+                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(*note, 127, midi_channel));
                                             }
                                         },
                                         None => debug!("Play note immediate: Could not find track number."),
@@ -7564,7 +7564,7 @@ win.connect_close_request(|window| {
                                         if state.riff_arrangement_instrument_override(&track_uuid).is_some() {
                                             state.send_to_track_background_processor(track_uuid.clone(), TrackBackgroundProcessorInwardEvent::SetOverrideInstrumentActive(true));
                                         }
-                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, midi_channel));
+                                        state.send_to_track_background_processor(track_uuid, TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(note, 127, midi_channel));
                                     },
                                     None => debug!("Play note immediate: Could not find track number."),
                                 }
@@ -17298,10 +17298,10 @@ fn create_jack_time_critical_event_processing_thread(
                                                             let midi_channel = if let TrackType::MidiTrack(midi_track) = track {
                                                                 midi_track.midi_device().midi_channel()
                                                             } else {
-                                                                0
+                                                                (jack_midi_event.data[0] & 0x0F) as i32
                                                             };
                                                             if (144..=159).contains(&midi_msg_type) {
-                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
+                                                                state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::PlayNoteImmediate(jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32, midi_channel));
                                                             } else if (128..=143).contains(&midi_msg_type) {
                                                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::StopNoteImmediate(jack_midi_event.data[1] as i32, midi_channel));
                                                              } else if (176..=191).contains(&midi_msg_type) {

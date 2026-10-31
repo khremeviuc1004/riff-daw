@@ -3418,7 +3418,8 @@ pub struct BackgroundProcessorClapAudioPlugin {
     latency_frames: i64,
     stop_now: bool,
     param_gesture_begin: HashMap<i32, bool>,
-    // outward channel to the application main thread (the RPC bus for ClapCall)
+    // outward channel to the application main thread (instance create/release;
+    // CLAP function RPCs now travel over the global CLAP_RPC_QUEUE instead)
     tx_vst_thread: Sender<TrackBackgroundProcessorOutwardEvent>,
 }
 
@@ -3480,6 +3481,68 @@ pub fn clap_registry_leak_all() {
             std::mem::forget(entry);
         }
     });
+}
+
+/// The thread id of the application main thread (the GTK/CLAP main loop). The
+/// CLAP instance registry is thread-local and every non-audio plugin call must
+/// run on exactly this thread.
+pub static APP_MAIN_THREAD_ID: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+pub fn register_app_main_thread() {
+    let _ = APP_MAIN_THREAD_ID.set(std::thread::current().id());
+}
+
+pub fn is_app_main_thread() -> bool {
+    APP_MAIN_THREAD_ID.get() == Some(&std::thread::current().id())
+}
+
+/// Pending main-thread CLAP plugin calls. Callers (track threads and anything
+/// else that needs plugin state) queue onto this global and block until the
+/// application main thread runs them - either from the 8ms event pump (which
+/// now drains the queue BEFORE taking the state lock) or from the preset-save
+/// wait loop when the save itself runs on the main thread. The calls used to
+/// travel over the track's outward event channel, whose only pump takes the
+/// state lock - the very lock a save holds while it waits for the preset
+/// data back - so every CLAP preset capture deadlocked against the save
+/// timeout and silently persisted the stale preset.
+static CLAP_RPC_QUEUE: std::sync::LazyLock<Mutex<std::collections::VecDeque<(usize, ClapPluginCall, std::sync::mpsc::SyncSender<ClapCallReply>)>>> = std::sync::LazyLock::new(|| Mutex::new(std::collections::VecDeque::new()));
+
+/// Queues one main-thread CLAP plugin call and blocks the calling thread until
+/// the main thread has executed it.
+pub fn clap_rpc_call(plugin_ptr: usize, call: ClapPluginCall) -> ClapCallReply {
+    let (tx_reply, rx_reply) = std::sync::mpsc::sync_channel::<ClapCallReply>(1);
+    match CLAP_RPC_QUEUE.lock() {
+        Ok(mut queue) => queue.push_back((plugin_ptr, call, tx_reply)),
+        Err(_) => return ClapCallReply::Failed,
+    };
+    match rx_reply.recv_timeout(Duration::from_secs(20)) {
+        Ok(reply) => reply,
+        Err(_) => {
+            debug!("Timed out waiting for the main thread to run a CLAP call for plugin {:#x}.", plugin_ptr);
+            ClapCallReply::Failed
+        }
+    }
+}
+
+/// Runs every CLAP call currently queued. A no-op on any thread but the
+/// application main thread (the CLAP registry is thread-local there).
+pub fn pump_clap_rpc_calls() {
+    if !is_app_main_thread() {
+        return;
+    }
+    loop {
+        let next_call = match CLAP_RPC_QUEUE.lock() {
+            Ok(mut queue) => queue.pop_front(),
+            Err(_) => return,
+        };
+        match next_call {
+            Some((plugin_ptr, call, tx_reply)) => {
+                let reply = clap_registry_execute(plugin_ptr, call);
+                let _ = tx_reply.send(reply);
+            }
+            None => return,
+        }
+    }
 }
 
 /// Executes one main-thread CLAP plugin call on behalf of a track background
@@ -3960,29 +4023,14 @@ impl BackgroundProcessorClapAudioPlugin {
         plugin
     }
 
-    /// Sends a main-thread CLAP call over the outward channel and blocks for the
-    /// reply. The plugin's non-audio functions are main-thread only; calling them
-    /// here (the realtime track thread) trips the plugins' own thread checks and,
-    /// for gui functions, deadlocks their JUCE message loops.
+    /// Queues a main-thread CLAP call over the global RPC queue and blocks for
+    /// the reply. The plugin's non-audio functions are main-thread only; calling
+    /// them here (the realtime track thread) trips the plugins' own thread checks
+    /// and, for gui functions, deadlocks their JUCE message loops. The queue is
+    /// serviced by the application main thread's pump (and by any save running on
+    /// that thread while it waits for preset data).
     fn call_clap(&self, call: ClapPluginCall) -> ClapCallReply {
-        // bounded(1): the crossbeam SyncSender in the event keeps the reply channel
-        // Send (a std mpsc SyncSender is not), so the reply can travel over the
-        // track's crossbeam outward channel
-        let (tx_reply, rx_reply) = std::sync::mpsc::sync_channel(1);
-        match self.tx_vst_thread.send(TrackBackgroundProcessorOutwardEvent::ClapCall(self.plugin.as_ptr() as usize, call, tx_reply)) {
-            Ok(_) => (),
-            Err(error) => {
-                debug!("Could not send a CLAP call to the main thread for plugin {}: {:?}", self.uuid, error);
-                return ClapCallReply::Failed;
-            }
-        }
-        match rx_reply.recv_timeout(std::time::Duration::from_secs(20)) {
-            Ok(reply) => reply,
-            Err(_) => {
-                debug!("Timed out waiting for the main thread to run a CLAP call for plugin {}.", self.uuid);
-                ClapCallReply::Failed
-            }
-        }
+        crate::domain::clap_rpc_call(self.plugin.as_ptr() as usize, call)
     }
 
     pub fn process_events(&self, events: &Vec<TrackEvent>) {
@@ -6305,10 +6353,26 @@ impl TrackBackgroundProcessorHelper {
 
     pub fn handle_request_plugin_preset_data(&mut self) {
         if let Some(response_sender) = self.pending_preset_response_sender.take() {
+            // A CLAP's state is fetched with a blocking main-thread RPC, so it must
+            // NOT be captured under the VST2/3 lifecycle read guard: holding that
+            // guard across the round trip stalls every other track thread's per-pass
+            // lifecycle write lock, and on a multi-plugin project the convoy pushed
+            // captures past the save deadline so stale CLAP presets got persisted.
+            // VST2/3 state reads never leave this thread and stay guarded.
+            fn capture_preset(plugin: &mut BackgroundProcessorAudioPluginType) -> String {
+                if matches!(plugin, BackgroundProcessorAudioPluginType::Clap(_)) {
+                    plugin.preset_data()
+                }
+                else {
+                    let _vst24_dispatch_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
+                    plugin.preset_data()
+                }
+            }
+
             let mut effect_presets = vec![];
 
             let instrument_preset = if let Some(instrument_plugin) = self.instrument_plugin_instances.get_mut(0) {
-                instrument_plugin.preset_data()
+                capture_preset(instrument_plugin)
             }
             else {
                 String::from("")
@@ -6318,11 +6382,11 @@ impl TrackBackgroundProcessorHelper {
                 // uuid keyed so the save path can match presets to effects by identity
                 // rather than position (a failed/removed effect used to shift every
                 // later preset onto the wrong plugin).
-                effect_presets.push((effect.uuid().to_string(), effect.preset_data()));
+                effect_presets.push((effect.uuid().to_string(), capture_preset(effect)));
             }
 
             let override_instrument_preset = if let Some(instrument_plugin) = self.override_instrument_plugin_instances.get_mut(0) {
-                instrument_plugin.preset_data()
+                capture_preset(instrument_plugin)
             }
             else {
                 String::from("")
@@ -6335,7 +6399,7 @@ impl TrackBackgroundProcessorHelper {
 
             let mut override_effect_presets = vec![];
             for effect in self.override_effect_plugin_instances.iter_mut() {
-                override_effect_presets.push((effect.uuid().to_string(), effect.preset_data()));
+                override_effect_presets.push((effect.uuid().to_string(), capture_preset(effect)));
             }
 
             let response = TrackPluginPresetResponse {
@@ -6416,6 +6480,14 @@ impl TrackBackgroundProcessorHelper {
             let mut plugin_parameters = vec![];
             for effect in self.effect_plugin_instances.iter_mut().chain(self.override_effect_plugin_instances.iter_mut()) {
                 if effect.uuid().to_string() == self.request_effect_params_for_uuid {
+                    // VST2/3 parameter reads need the lifecycle guard; the CLAP
+                    // EnumerateParams call is a blocking main-thread RPC and must
+                    // not hold it (see handle_request_plugin_preset_data).
+                    let _vst24_dispatch_guard = if matches!(effect, BackgroundProcessorAudioPluginType::Clap(_)) {
+                        None
+                    } else {
+                        Some(crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read())
+                    };
                     match effect {
                         BackgroundProcessorAudioPluginType::Vst24(effect) => {
                             let effect_info = effect.vst_plugin_instance().get_info();
@@ -7229,18 +7301,25 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                     }
 
                     {
-                        // editor idling and preset/parameter fetches are non-audio plugin
-                        // calls - keep them out the way of any lifecycle work in progress.
+                        // editor idling is a non-audio plugin call - keep it out
+                        // the way of any lifecycle work in progress.
                         let _vst24_dispatch_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
 
                         if iteration_count % ITERATIONS_UNTIL_REFRESH_PLUGIN_EDITORS == 0 {
                             track_background_processor_helper.refresh_instrument_plugin_editor();
                             track_background_processor_helper.refresh_effect_plugin_editors();
                         }
-
-                        track_background_processor_helper.handle_request_plugin_preset_data();
-                        track_background_processor_helper.handle_request_effect_plugins_parameters();
                     }
+
+                    // preset/parameter fetches run OUTSIDE the lifecycle read guard:
+                    // a CLAP capture is a blocking RPC to the main thread, and holding
+                    // the guard across it stalls every other track thread's per-pass
+                    // lifecycle write lock for the whole round trip - the convoy that
+                    // made multi-plugin projects miss the save deadline and silently
+                    // persist stale presets. The fetchers take the guard themselves
+                    // for the VST2/3 state they read on this thread.
+                    track_background_processor_helper.handle_request_plugin_preset_data();
+                    track_background_processor_helper.handle_request_effect_plugins_parameters();
                     iteration_count += 1;
 
                     let had_plugin_host_events = track_background_processor_helper.handle_host_events_from_plugins();
@@ -7716,9 +7795,14 @@ impl TrackBackgroundProcessor for AudioTrackBackgroundProcessor {
                         let _vst24_process_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.read();
                         track_background_processor_helper.process_audio_events();
                         track_background_processor_helper.refresh_effect_plugin_editors();
-                        track_background_processor_helper.handle_request_plugin_preset_data();
-                        track_background_processor_helper.handle_request_effect_plugins_parameters();
                     }
+
+                    // preset/parameter fetches run outside the lifecycle read guard -
+                    // a CLAP capture is a blocking main-thread RPC and holding the
+                    // guard across it stalls every other track thread's lifecycle
+                    // write lock (see the instrument track loop).
+                    track_background_processor_helper.handle_request_plugin_preset_data();
+                    track_background_processor_helper.handle_request_effect_plugins_parameters();
 
                     // zero the live output channels for the block about to be produced.
                     // the sample reader accumulates into these buffers with += and only

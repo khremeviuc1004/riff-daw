@@ -79,6 +79,11 @@ thread_local!(static THREAD_POOL: RefCell<rayon::ThreadPool> = RefCell::new(
 
 
 fn main() {
+    // the CLAP registry lives on this thread and every non-audio plugin call must
+    // run here - record the id so the RPC pumps (and the save wait loop) know when
+    // they are on it.
+    crate::domain::register_app_main_thread();
+
     // setup history
     let mut history_manager = Arc::new(Mutex::new(HistoryManager::new()));
 
@@ -89,6 +94,7 @@ fn main() {
             // RUST_LOG unset: debug level by default - the audio layer's diagnostics
             // (health reports, watchdog drops, jack shutdown notices) are debug! and
             // were invisible at the previous default filter level
+            .format(flexi_logger::opt_format)
             // .log_to_file(FileSpec::default())
             // .write_mode(WriteMode::Async)
             .start();
@@ -208,6 +214,12 @@ fn main() {
             if !UI_RUNNING.load(Ordering::Relaxed) {
                 return glib::ControlFlow::Break;
             }
+            // service queued CLAP main-thread RPCs at the very top of the tick,
+            // before any of the event pumps below can block on the state lock
+            // (a background save holds that lock while waiting for exactly these
+            // calls to be answered - if the tick stalls before here first, the
+            // save times out and persists a stale CLAP preset).
+            pump_clap_rpc_calls();
             process_jack_events(
                 &tx_from_ui,
                 &jack_midi_receiver,
@@ -314,13 +326,11 @@ fn main() {
                 let _ = tx_to_audio.send(AudioLayerInwardEvent::Shutdown);
             }
             let drain_track_events = |state: &DAWState| {
+                // the Kill handlers' CLAP calls are reply-blocked on this thread
+                pump_clap_rpc_calls();
                 for (_track_uuid, receiver) in state.instrument_track_receivers() {
                     while let Ok(event) = receiver.try_recv() {
                         match event {
-                            TrackBackgroundProcessorOutwardEvent::ClapCall(plugin_ptr, call, tx_reply) => {
-                                let reply = clap_registry_execute(plugin_ptr, call);
-                                let _ = tx_reply.send(reply);
-                            }
                             TrackBackgroundProcessorOutwardEvent::ClapInstanceRelease(plugin_ptr) => {
                                 clap_registry_release(plugin_ptr);
                             }
@@ -379,7 +389,19 @@ fn main() {
 pub fn start_autosave(state: Arc<Mutex<DAWState>>, autosave_keep_alive: Arc<Mutex<bool>>)     {
     let _ = std::thread::Builder::new().name(DAW_AUTO_SAVE_THREAD_NAME.to_string()).spawn(move || {
         loop {
+            // pull the live plugin state in two phases WITHOUT holding the state
+            // lock across the wait: CLAP captures are answered by a main-thread
+            // RPC, and if this thread held the lock while waiting, the main
+            // thread (blocked on that same lock in its event pumps) could never
+            // service the capture - every CLAP preset on disk would silently be
+            // the stale one from the last manual save.
+            let preset_responses = match state.lock() {
+                Ok(mut state) => state.request_presets_from_all_tracks(),
+                Err(_) => vec![],
+            };
+            let collected = DAWState::wait_for_preset_responses(preset_responses);
             if let Ok(mut state) = state.lock() {
+                state.apply_preset_responses(collected);
                 if !state.playing() {
                     state.autosave();
                 }
@@ -840,11 +862,22 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             *coast = TrackBackgroundProcessorMode::Coast;
                         }
                         thread::sleep(Duration::from_millis(1000));
+                        // capture the live plugin state in phases WITHOUT holding
+                        // the state lock across the wait: a CLAP capture is answered
+                        // by a main-thread RPC, and the main thread's event pumps all
+                        // take this same lock - holding it here would deadlock the
+                        // capture against the save (the stale preset got persisted).
+                        let preset_responses = match state.lock() {
+                            Ok(mut state) => state.request_presets_from_all_tracks(),
+                            Err(_) => vec![],
+                        };
+                        let collected = DAWState::wait_for_preset_responses(preset_responses);
                         match state.lock() {
                             Ok(state) => {
-                                debug!("main - DAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
                                 let mut state = state;
-                                state.save();
+                                debug!("main - DAWEvents::Save - number of riff sequences={}", state.project().song().riff_sequences().len());
+                                state.apply_preset_responses(collected);
+                                state.save_without_capture();
                             },
                             Err(_) => debug!("Main - rx_ui processing loop - Save File - could not get lock on state"),
                         }
@@ -1320,13 +1353,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     let state = state.clone();
                     let tx_from_ui = tx_from_ui;
                     let _ = THREAD_POOL.with_borrow(|thread_pool| thread_pool.spawn(move || {
+                        // dispatch the preset capture, wait for it WITHOUT the
+                        // state lock (so the main thread can service the CLAP
+                        // capture RPCs), then apply + export under the lock -
+                        // the export writes whatever the domain model holds,
+                        // which without this could be a stale preset from the
+                        // last manual save.
+                        let preset_responses = match state.lock() {
+                            Ok(mut state) => state.request_presets_from_all_tracks(),
+                            Err(_) => vec![],
+                        };
+                        let collected = DAWState::wait_for_preset_responses(preset_responses);
                         match state.lock() {
                             Ok(mut state) => {
                                 debug!("Main - rx_ui processing loop - Export Dawproject File - attempting to export.");
-                                // pull the live plugin state first - the export writes
-                                // whatever the domain model holds, which without this
-                                // could be a stale preset from the last manual save.
-                                state.capture_plugin_presets();
+                                state.apply_preset_responses(collected);
                                 if let Err(error) = dawproject_parser::write_dawproject(state.project(), path.to_str().unwrap()) {
                                     let _ = tx_from_ui.send(DAWEvents::Notification(NotificationType::Error, format!("Could not export dawproject file: {}", error)));
                                 }
@@ -18032,6 +18073,13 @@ fn process_track_background_processor_events(
     gui: &mut MainWindow,
     clap_plugin_loaders: &Arc<Mutex<HashMap<String, simple_clap_host_helper_lib::plugin::library::PluginLibrary>>>,
 ) {
+    // service queued CLAP main-thread RPCs FIRST, before taking the state lock:
+    // a save running on one of the background threads (autosave, export) holds
+    // that lock for its whole duration while its track threads wait on a plugin
+    // state capture - pumping after the lock (or not at all) made those captures
+    // time out and persisted stale CLAP presets.
+    pump_clap_rpc_calls();
+
     match state.lock() {
         Ok(mut state) => {
             let mut track_to_plugins_to_plugin_params_map = HashMap::new();
@@ -18159,10 +18207,6 @@ fn process_track_background_processor_events(
                                 Err(error) => Err(error),
                             };
                             let _ = tx_reply.send(result);
-                        },
-                        TrackBackgroundProcessorOutwardEvent::ClapCall(plugin_ptr, call, tx_reply) => {
-                            let reply = clap_registry_execute(plugin_ptr, call);
-                            let _ = tx_reply.send(reply);
                         },
                         TrackBackgroundProcessorOutwardEvent::ClapInstanceRelease(plugin_ptr) => {
                             clap_registry_release(plugin_ptr);

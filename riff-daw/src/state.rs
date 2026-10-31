@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use apres::MIDI;
 use apres::MIDIEvent::{InstrumentName, TrackName};
@@ -791,7 +791,7 @@ impl DAWState {
     // to pick up unrelated queued events - level meters, automation, even a
     // previous save's stale response - instead of the preset data it asked
     // for, silently persisting outdated presets).
-    fn request_presets_from_all_tracks(&mut self) -> Vec<(String, Receiver<TrackPluginPresetResponse>)> {
+    pub fn request_presets_from_all_tracks(&mut self) -> Vec<(String, Receiver<TrackPluginPresetResponse>)> {
         debug!("Entering request_presets_from_all_tracks...");
         let mut uuids = vec![];
         {
@@ -831,21 +831,55 @@ impl DAWState {
         response_receivers
     }
 
-    fn save_presets_for_all_tracks(&mut self, preset_responses: Vec<(String, Receiver<TrackPluginPresetResponse>)>) {
-        debug!("Entering save_presets_for_all_tracks...");
-        for (track_uuid, response_receiver) in preset_responses {
-            // all requests were dispatched before collecting, so these waits
-            // overlap rather than stack up; the timeout means a wedged or dead
-            // plugin thread can never freeze the save (and the state mutex)
-            // forever, and the previously stored presets are kept untouched.
-            let response = match response_receiver.recv_timeout(Duration::from_millis(1500)) {
-                Ok(response) => response,
-                Err(error) => {
-                    debug!("No preset data received for track {} ({}) - keeping previously stored presets.", track_uuid, error);
-                    continue;
+    // Waits (without touching `self`, so it can run with the state lock held or
+    // released) for the dispatched preset capture requests to answer. A shared
+    // deadline bounds the whole wait, not each track.
+    //
+    // CLAP plugins capture their state with a main-thread RPC. When this wait
+    // runs ON the main thread (manual save / save-as) the UI tick cannot also
+    // run to service the queue - the loop drives the CLAP pumps itself between
+    // polls; without that the capture request would sit unanswered until the
+    // deadline and the stale preset would silently be what gets persisted.
+    // When it runs on a background thread (autosave / export) the caller must
+    // NOT hold the state lock, so the main thread's tick keeps pumping.
+    pub fn wait_for_preset_responses(preset_responses: Vec<(String, Receiver<TrackPluginPresetResponse>)>) -> Vec<(String, TrackPluginPresetResponse)> {
+        let on_app_main_thread = is_app_main_thread();
+        debug!("Entering wait_for_preset_responses (main thread: {}, {} tracks)...", on_app_main_thread, preset_responses.len());
+        let deadline = Instant::now() + Duration::from_millis(10000);
+        let mut pending = preset_responses;
+        let mut collected = vec![];
+        loop {
+            if on_app_main_thread {
+                pump_clap_rpc_calls();
+                clap_registry_pump();
+            }
+            let mut index = 0;
+            while index < pending.len() {
+                match pending[index].1.try_recv() {
+                    Ok(response) => {
+                        let (track_uuid, _) = pending.swap_remove(index);
+                        collected.push((track_uuid, response));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        pending.swap_remove(index);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => index += 1,
                 }
-            };
+            }
+            if pending.is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        for (track_uuid, _) in pending.iter() {
+            debug!("No preset data received for track {} (timed out) - keeping previously stored presets.", track_uuid);
+        }
+        collected
+    }
 
+    pub fn apply_preset_responses(&mut self, collected: Vec<(String, TrackPluginPresetResponse)>) {
+        debug!("Entering apply_preset_responses...");
+        for (track_uuid, response) in collected {
             for track_type in self.get_project().song_mut().tracks_mut() {
                 match track_type {
                     TrackType::InstrumentTrack(track) => {
@@ -897,7 +931,7 @@ impl DAWState {
                 }
             }
         }
-        debug!("Exiting save_presets_for_all_tracks...");
+        debug!("Exiting apply_preset_responses...");
     }
 
     fn apply_captured_effect_presets(effects: &mut Vec<AudioPlugin>, captured_presets: &Vec<(String, String)>) {
@@ -917,13 +951,26 @@ impl DAWState {
     // serialised (save / save-as / autosave / export) so what goes to disk
     // matches what the plugins are actually playing.
     pub fn capture_plugin_presets(&mut self) {
+        debug!("Entering save_presets_for_all_tracks...");
         let preset_responses = self.request_presets_from_all_tracks();
-        self.save_presets_for_all_tracks(preset_responses);
+        let collected = Self::wait_for_preset_responses(preset_responses);
+        self.apply_preset_responses(collected);
+        debug!("Exiting save_presets_for_all_tracks...");
     }
 
     pub fn save(&mut self) {
-        debug!("Entering save...");
         self.capture_plugin_presets();
+        self.save_without_capture();
+    }
+
+    // The serialise + write half of save WITHOUT pulling the live plugin state
+    // first - for callers (autosave, the pooled Save/SaveAs handlers, export)
+    // that dispatch/collect the capture while the state lock is released: a
+    // CLAP capture is a main-thread RPC and the main thread must be able to
+    // take this very lock to service it. Callers using this must have applied
+    // their preset responses (or deliberately skipped the capture).
+    pub fn save_without_capture(&mut self) {
+        debug!("Entering save...");
 
         self.get_project().song_mut().recalculate_song_length();
 
@@ -951,9 +998,11 @@ impl DAWState {
         debug!("Exited save.");
     }
 
+    // NOTE: does NOT capture the live plugin presets - the autosave thread
+    // dispatches/collects those while the state lock is released (CLAP state
+    // is fetched by a main-thread RPC that this lock would otherwise block).
     pub fn autosave(&mut self) {
         debug!("Entering autosave...");
-        self.capture_plugin_presets();
 
         self.get_project().song_mut().recalculate_song_length();
 
@@ -989,7 +1038,12 @@ impl DAWState {
 
     pub fn save_as(&mut self, path: &str) {
         self.capture_plugin_presets();
+        self.save_as_without_capture(path);
+    }
 
+    // See save_without_capture: the caller must have captured/applied the live
+    // plugin presets first (or deliberately skipped them).
+    pub fn save_as_without_capture(&mut self, path: &str) {
         self.current_file_path = Some(path.to_string());
         match serde_json::to_string_pretty(self.get_project()) {
             Ok(json_text) => {

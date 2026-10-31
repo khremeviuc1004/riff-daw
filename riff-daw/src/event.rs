@@ -599,9 +599,6 @@ pub enum TrackBackgroundProcessorOutwardEvent {
     // registered as the plugin's CLAP audio thread, audio configuration, and the reply
     // channel carrying the created instance parts or the load error)
     ClapInstanceCreate(String, Uuid, String, Option<String>, std::thread::ThreadId, f64, i64, f64, i32, i32, SyncSender<Result<ClapInstanceParts, String>>),
-    // a CLAP plugin function call that must be executed on the application main
-    // thread (clap_plugin pointer, the call, and the reply channel)
-    ClapCall(usize, ClapPluginCall, SyncSender<ClapCallReply>),
     // release the main thread's ownership of a CLAP plugin instance (clap_plugin
     // pointer) so it can be deactivated/destroyed on that thread
     ClapInstanceRelease(usize),

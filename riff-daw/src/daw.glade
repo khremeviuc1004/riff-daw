@@ -19375,6 +19375,9 @@
                     <property name="visible">True</property>
                     <property name="can-focus">False</property>
                     <property name="orientation">vertical</property>
+                    <style>
+                      <class name="automation-view"/>
+                    </style>
                     <child>
                       <object class="GtkToolbar">
                         <property name="height-request">30</property>

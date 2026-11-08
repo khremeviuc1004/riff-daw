@@ -16574,14 +16574,17 @@
                                         <property name="tooltip-text" translatable="yes">Set the add note length and the note end quantize in the piano roll</property>
                                       </object>
                                     </child>
-                                    <child>
-                              </child>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="visible">True</property>
-                                        <property name="label" translatable="yes">Quantize and Snap: </property>
-                                      </object>
-                                    </child>
+                                 <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="label" translatable="yes">Quantize and Snap: </property>
+                                  </object>
+                                </child>
                                     <child>
                                       <object class="GtkDropDown" id="piano_roll_quantise_start_choice">
                                         <property name="visible">True</property>
@@ -17095,6 +17098,7 @@
                       <object class="GtkBox" id="automation_component">
                         <property name="visible">True</property>
                         <property name="orientation">vertical</property>
+                        <property name="css-classes">automation-view</property>
                         <child>
                           <object class="GtkScrolledWindow">
                             <property name="hscrollbar-policy">automatic</property>
@@ -17152,7 +17156,10 @@
                                   </object>
                                 </child>
                                 <child>
-                          </child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkButton" id="automation_cut_btn">
                                     <property name="visible">True</property>
@@ -17194,7 +17201,10 @@
                                   </object>
                                 </child>
                                  <child>
-                          </child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkButton" id="automation_translate_left_btn">
                                     <property name="visible">True</property>
@@ -17227,8 +17237,11 @@
                                     <property name="icon-name">go-down</property>
                                   </object>
                                 </child>
-                                <child>
-                          </child>
+                                 <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkLabel">
                                     <property name="visible">True</property>
@@ -17355,8 +17368,11 @@
                                     <property name="group">automation_grid_edit_note_velocity</property>
                                   </object>
                                 </child>
-                                <child>
-                          </child>
+                                 <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_track">
                                     <property name="visible">True</property>
@@ -17373,8 +17389,11 @@
                                     <property name="group">automation_grid_edit_track</property>
                                   </object>
                                 </child>
-                                <child>
-                          </child>
+                                 <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_mode_point">
                                     <property name="visible">True</property>
@@ -17399,8 +17418,11 @@
                                     <property name="active">False</property>
                                   </object>
                                 </child>
-                                <child>
-                          </child>
+                                 <child>
+                                  <object class="GtkSeparator">
+                                    <property name="visible">True</property>
+                                  </object>
+                                </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_discrete_events_btn">
                                     <property name="visible">True</property>

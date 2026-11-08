@@ -30,3 +30,8 @@ window.popup {
 .riff-daw-selected {
     background-color: #3f3f3f;
 }
+
+.automation-view separator {
+    margin-left: 8px;
+    margin-right: 8px;
+}

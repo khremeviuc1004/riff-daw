@@ -120,7 +120,7 @@ impl NotificationHandler for JackNotificationHandler {
         crate::domain::flush_denormals_to_zero();
         debug!("JACK: async thread started");
     }
-    fn shutdown(&mut self, status: ClientStatus, reason: &str) {
+    unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
         // the jack server has taken this client out - sustained overruns end with jack
         // timing the client out and never calling the callback again: the transport
         // freezes (stop does not stop the glitching output, play does nothing, the

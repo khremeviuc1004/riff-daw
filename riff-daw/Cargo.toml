@@ -12,7 +12,7 @@ gio = "0.22"
 serde = { version = "1.0.132", features = ["derive"] }
 serde_json = { version = "1.0.73", features = ["preserve_order"] }
 cairo-rs = "0.22"
-jack = "0.10.0"
+jack = "0.14.0"
 alsa = "0.12.1"
 libc = "0.2"
 rb = "0.4.1"

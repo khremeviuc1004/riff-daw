@@ -99,6 +99,7 @@ fn check_audio_plugin(audio_plugin_path: &str) {
                                                 println!("Plugin descriptor - features:");
                                                 let mut ptr = plugin_descriptor_ref.features;
                                                 let mut plugin_type = 0;
+                                                let mut feature_words: Vec<String> = Vec::new();
                                                 while !(ptr).is_null() && !(*ptr).is_null() {
                                                     let feature_cstr = CStr::from_ptr(*ptr);
 
@@ -114,11 +115,13 @@ fn check_audio_plugin(audio_plugin_path: &str) {
 
                                                     if let Ok(feature) = feature_cstr.to_str() {
                                                         println!("\t{}", feature);
+                                                        feature_words.push(feature.replace(':', " ").to_string());
                                                     }
                                                     ptr = ptr.offset(1);
                                                 }
+                                                let categories = feature_words.join(" ");
         
-                                                println!("##########{}:{}:{}::{}:CLAP", plugin_name, audio_plugin_path, CStr::from_ptr(plugin_descriptor_ref.id).to_str().unwrap(), plugin_type);
+                                                println!("##########{}:{}:{}::{}:CLAP:{}", plugin_name, audio_plugin_path, CStr::from_ptr(plugin_descriptor_ref.id).to_str().unwrap(), plugin_type, categories);
 
                                                 (plugin_descriptor_ref.id, plugin_name, plugin_type)
                                             }

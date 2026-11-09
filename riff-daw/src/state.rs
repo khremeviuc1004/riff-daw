@@ -520,6 +520,7 @@ impl DAWState {
                                     id: effect.uid().to_string(),
                                     sub_id: effect.sub_plugin_id().clone(),
                                     audio_plugin_stack,
+                                    categories: String::new(),
                                 };
 
                                 match tx_to_vst_ref.send(TrackBackgroundProcessorInwardEvent::AddEffect(vst24_plugin_loaders.clone(), clap_plugin_loaders.clone(), effect.uuid(), effect_plugin)) {
@@ -542,6 +543,7 @@ impl DAWState {
                             id: instrument.uid().to_string(),
                             sub_id: instrument.sub_plugin_id().clone(),
                             audio_plugin_stack,
+                            categories: String::new(),
                         }),
                         Err(_) => None,
                     };

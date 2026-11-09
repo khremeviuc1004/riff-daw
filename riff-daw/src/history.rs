@@ -2173,6 +2173,7 @@ pub fn scanned_plugin_from_audio_plugin(plugin: &crate::domain::AudioPlugin) -> 
             id: plugin.uid().to_string(),
             sub_id: plugin.sub_plugin_id().clone(),
             audio_plugin_stack,
+            categories: String::new(),
         }),
         Err(_) => None,
     }

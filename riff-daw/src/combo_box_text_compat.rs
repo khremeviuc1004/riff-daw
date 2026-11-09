@@ -20,6 +20,9 @@ mod imp {
     pub struct ComboItem {
         pub id: RefCell<Option<String>>,
         pub text: RefCell<String>,
+        // extra searchable text (e.g. the effect types a plugin implements) -
+        // searched by the dropdown's GtkStringFilter, never displayed
+        pub search: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -39,6 +42,7 @@ mod imp {
                     vec![
                         glib::ParamSpecString::builder("id").build(),
                         glib::ParamSpecString::builder("text").build(),
+                        glib::ParamSpecString::builder("search").build(),
                     ]
                 })
                 .as_slice()
@@ -52,6 +56,9 @@ mod imp {
                 "text" => {
                     self.text.replace(value.get::<String>().unwrap_or_default());
                 }
+                "search" => {
+                    self.search.replace(value.get::<Option<String>>().ok().flatten());
+                }
                 _ => unimplemented!(),
             }
         }
@@ -63,6 +70,13 @@ mod imp {
                     None => None::<&str>.into(),
                 },
                 "text" => self.text.borrow().as_str().to_value(),
+                // the searchable text of the item: the explicit search string
+                // when there is one, otherwise the display text (the dropdown
+                // search filter evaluates this property)
+                "search" => match self.search.borrow().as_deref() {
+                    Some(search) => search.to_value(),
+                    None => self.text.borrow().as_str().to_value(),
+                },
                 _ => unimplemented!(),
             }
         }
@@ -78,6 +92,17 @@ impl ComboItemObject {
         let item: Self = glib::Object::new();
         item.imp().id.replace(id.map(str::to_string));
         item.imp().text.replace(text.to_string());
+        item
+    }
+
+    /// An item whose dropdown *search* also matches text beyond the display
+    /// string (e.g. the effect types a plugin implements). The extra text is
+    /// never displayed.
+    pub fn new_with_search(id: Option<&str>, text: &str, search: &str) -> Self {
+        let item: Self = glib::Object::new();
+        item.imp().id.replace(id.map(str::to_string));
+        item.imp().text.replace(text.to_string());
+        item.imp().search.replace(Some(search.to_string()));
         item
     }
 
@@ -170,18 +195,52 @@ fn list_store_for(drop_down: &gtk4::DropDown) -> gio::ListStore {
     if let Some(model) = drop_down.model() {
         if let Ok(store) = model.downcast::<gio::ListStore>() {
             ensure_ellipsized_factory(drop_down);
+            ensure_search_enabled(drop_down);
             return store;
         }
     }
     let store = gio::ListStore::new::<ComboItemObject>();
     drop_down.set_model(Some(&store));
+    set_default_expression(drop_down);
+    ensure_ellipsized_factory(drop_down);
+    ensure_search_enabled(drop_down);
+    store
+}
+
+/// Every combo box in the application is searchable: the popup carries a
+/// search entry that (case insensitively) matches anywhere in the dropdown's
+/// search expression value - the item's display text by default, or the
+/// richer searchable text for dropdowns opted into type search (see
+/// `ComboBoxTextCompat::enable_search_by_type`). Applied whenever a combo is
+/// first given its compat model, so no call site has to wire it up.
+fn ensure_search_enabled(drop_down: &gtk4::DropDown) {
+    if !drop_down.enables_search() {
+        drop_down.set_enable_search(true);
+    }
+    drop_down.set_search_match_mode(gtk4::StringFilterMatchMode::Substring);
+}
+
+/// The expression the dropdown's search filter evaluates: the "text" property
+/// unless the call site has already opted into a richer searchable expression
+/// (see `ComboBoxTextCompat::enable_search_by_type`) - the model is replaced
+/// on every `remove_all`/repopulate, so an installed expression must survive
+/// it.
+fn set_default_expression(drop_down: &gtk4::DropDown) {
+    if drop_down.expression().is_none() {
+        drop_down.set_expression(Some(gtk4::PropertyExpression::new(
+            ComboItemObject::static_type(),
+            None::<gtk4::ConstantExpression>,
+            "text",
+        )));
+    }
+}
+
+fn set_search_expression(drop_down: &gtk4::DropDown) {
     drop_down.set_expression(Some(gtk4::PropertyExpression::new(
         ComboItemObject::static_type(),
         None::<gtk4::ConstantExpression>,
-        "text",
+        "search",
     )));
-    ensure_ellipsized_factory(drop_down);
-    store
 }
 
 fn store_for(drop_down: &gtk4::DropDown) -> Option<gio::ListStore> {
@@ -202,6 +261,20 @@ fn selected_item_id(item: glib::Object) -> Option<String> {
 /// `GtkDropDown`, so call sites written against `ComboBoxText` keep working.
 pub trait ComboBoxTextCompat {
     fn append(&self, id: Option<&str>, text: &str);
+    /// Append an item whose dropdown *search* also matches text beyond the
+    /// display string (pair with `enable_search_by_type`).
+    fn append_with_search(&self, id: Option<&str>, text: &str, search: &str);
+    /// Searchability is automatic: every combo the compat layer populates
+    /// shows a search entry in its popup and matches it anywhere (ignoring
+    /// case) in the item's display text. This is an explicit, idempotent
+    /// request for it - call sites use it to document intent.
+    fn enable_search(&self);
+    /// As the automatic search, but the search matches the items' "search"
+    /// text - the display text when they have no extra searchable text,
+    /// otherwise whatever `append_with_search` attached (e.g. effect type
+    /// words). Must be called before repopulation for the expression to be
+    /// the one in effect.
+    fn enable_search_by_type(&self);
     fn remove_all(&self);
     fn remove(&self, position: i32);
     fn active_id(&self) -> Option<String>;
@@ -223,15 +296,29 @@ impl ComboBoxTextCompat for gtk4::DropDown {
         list_store_for(self).append(&ComboItemObject::new(id, text));
     }
 
+    fn append_with_search(&self, id: Option<&str>, text: &str, search: &str) {
+        list_store_for(self).append(&ComboItemObject::new_with_search(id, text, search));
+    }
+
+    fn enable_search(&self) {
+        list_store_for(self);
+        self.set_enable_search(true);
+        self.set_search_match_mode(gtk4::StringFilterMatchMode::Substring);
+    }
+
+    fn enable_search_by_type(&self) {
+        list_store_for(self);
+        set_search_expression(self);
+        self.set_enable_search(true);
+        self.set_search_match_mode(gtk4::StringFilterMatchMode::Substring);
+    }
+
     fn remove_all(&self) {
         let store = gio::ListStore::new::<ComboItemObject>();
         self.set_model(Some(&store));
-        self.set_expression(Some(gtk4::PropertyExpression::new(
-            ComboItemObject::static_type(),
-            None::<gtk4::ConstantExpression>,
-            "text",
-        )));
+        set_default_expression(self);
         ensure_ellipsized_factory(self);
+        ensure_search_enabled(self);
     }
 
     fn remove(&self, position: i32) {
@@ -366,5 +453,74 @@ mod tests {
         assert_eq!(dd.len(), 1);
         assert_eq!(dd.active_id(), None);
         assert_eq!(dd.active_text().as_deref(), Some("No id"));
+    }
+
+    #[gtk4::test]
+    fn dropdown_search_by_type_semantics() {
+        use gtk4::prelude::FilterExt;
+
+        // every combo populated through the compat layer is searchable by
+        // item text without any extra wiring
+        let instruments = gtk4::DropDown::builder().build();
+        assert!(!instruments.enables_search());
+        instruments.append(Some("p1"), "Hive");
+        instruments.append(Some("p2"), "PianoV2");
+        assert!(instruments.enables_search());
+        // the search filter evaluates the "text" expression property
+        let expr = instruments.expression().unwrap();
+        let prop: gtk4::PropertyExpression = expr.downcast().unwrap();
+        assert_eq!(prop.pspec().name(), "text");
+
+        // the automatic search matches anywhere in the item text
+        let filter = gtk4::StringFilter::new(Some(&prop));
+        filter.set_match_mode(gtk4::StringFilterMatchMode::Substring);
+        let store = instruments.model().unwrap().downcast::<gio::ListStore>().unwrap();
+        filter.set_search(Some("ian"));
+        assert!(filter.match_(&store.item(1).unwrap()));
+        filter.set_search(Some("hive"));
+        assert!(filter.match_(&store.item(0).unwrap()));
+        filter.set_search(Some("synth"));
+        assert!(!filter.match_(&store.item(0).unwrap()));
+
+        // an effects style dropdown: the search evaluates the "search"
+        // property - the extra searchable text when set, the display text
+        // otherwise - while the display stays clean
+        let effects = gtk4::DropDown::builder().build();
+        effects.enable_search_by_type();
+        effects.append_with_search(Some("e1"), "SpaceH", "spaceh reverb room hall");
+        effects.append(Some("e2"), "Mystery Box");
+        assert!(effects.enables_search());
+        let expr = effects.expression().unwrap();
+        let prop: gtk4::PropertyExpression = expr.downcast().unwrap();
+        assert_eq!(prop.pspec().name(), "search");
+
+        let store = effects.model().unwrap().downcast::<gio::ListStore>().unwrap();
+        let first = store.item(0).unwrap().downcast::<ComboItemObject>().unwrap();
+        assert_eq!(first.text(), "SpaceH");
+        assert_eq!(prop.evaluate(Some(&first)).unwrap().get::<String>().unwrap(), "spaceh reverb room hall");
+        let second = store.item(1).unwrap().downcast::<ComboItemObject>().unwrap();
+        // no explicit search text: the filter falls back to the display text
+        assert_eq!(prop.evaluate(Some(&second)).unwrap().get::<String>().unwrap(), "Mystery Box");
+
+        // the search expression survives a repopulation (remove_all)
+        effects.remove_all();
+        effects.append_with_search(Some("e3"), "Glue", "glue compressor dynamics");
+        let expr = effects.expression().unwrap();
+        let prop: gtk4::PropertyExpression = expr.downcast().unwrap();
+        assert_eq!(prop.pspec().name(), "search");
+
+        // the actual search filter mechanism: GtkStringFilter (what the
+        // dropdown popup installs over the expression) substring-matches the
+        // type words against the item
+        let filter = gtk4::StringFilter::new(Some(&prop));
+        filter.set_match_mode(gtk4::StringFilterMatchMode::Substring);
+        filter.set_search(Some("compressor"));
+        let store = effects.model().unwrap().downcast::<gio::ListStore>().unwrap();
+        let item = store.item(0).unwrap();
+        assert!(filter.match_(&item));
+        filter.set_search(Some("glue"));
+        assert!(filter.match_(&item));
+        filter.set_search(Some("reverb"));
+        assert!(!filter.match_(&item));
     }
 }

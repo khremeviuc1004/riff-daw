@@ -4650,6 +4650,7 @@ impl AudioPlugin {
                 id: self.uid.clone(),
                 sub_id: self.sub_plugin_id.clone(),
                 audio_plugin_stack,
+                categories: String::new(),
             }),
             Err(_) => None,
         }
@@ -9634,7 +9635,13 @@ pub struct ScannedPlugin {
     pub(crate) path: String,
     pub(crate) id: String,
     pub(crate) sub_id: Option<String>,
-    pub(crate) audio_plugin_stack: AudioPluginType
+    pub(crate) audio_plugin_stack: AudioPluginType,
+    /// the effect/instrument types the plugin declares (space separated -
+    /// VST3 sub categories, CLAP features): used to make the plugin dropdowns
+    /// searchable by type ("reverb", "compressor", "delay"...). Empty for
+    /// plugins scanned before this was captured (re-scan to populate).
+    #[serde(default)]
+    pub(crate) categories: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

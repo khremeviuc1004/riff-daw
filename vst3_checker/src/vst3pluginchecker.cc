@@ -35,8 +35,15 @@ void checkPlugin(char* vst3_plugin_path)
             bool instrument = false;
 
             auto subCategories = classInfo.subCategories();
+            std::string categoryWords;
             for (auto & element : subCategories) {
                 std::cout << "Sub-category: " << element << std::endl;
+
+                if (!categoryWords.empty())
+                {
+                    categoryWords += " ";
+                }
+                categoryWords += element;
 
                 if (element.contains(instrumentString))
                 {
@@ -44,7 +51,7 @@ void checkPlugin(char* vst3_plugin_path)
                 }
             }
 
-            std::cout << "##########" << classInfo.name() << ":" << path << ":" << classInfo.ID().toString() << ":" << ":" << (instrument ? 2 : 1) << ":VST3" << std::endl;
+            std::cout << "##########" << classInfo.name() << ":" << path << ":" << classInfo.ID().toString() << ":" << ":" << (instrument ? 2 : 1) << ":VST3:" << categoryWords << std::endl;
 
             plugProvider = Steinberg::owned(new Steinberg::Vst::PlugProvider(module->getFactory(), classInfo, true));
             std::cout << "Created PlugProvider." << std::endl;

@@ -1323,7 +1323,133 @@ gtk4_builder_from!(TrackAudioRoutingPanel {
     track_audio_routing_delete_button: Button,
 });
 
+/// Effect type words appended to an effect's searchable dropdown text when
+/// the given (lower-case) keyword appears in its name or declared categories.
+/// Enables "search by effect type" (reverb, delay/echo, compressor...).
+const EFFECT_TYPE_SYNONYMS: &[(&str, &str)] = &[
+    ("verb", "reverb room hall space"),
+    ("reverb", "reverb room hall space"),
+    ("hall", "reverb"),
+    ("chamber", "reverb"),
+    ("plate", "reverb"),
+    ("spring", "reverb"),
+    ("room", "reverb"),
+    ("space", "reverb"),
+    ("cavern", "reverb"),
+    ("tail", "reverb"),
+    ("echo", "delay echo repeat"),
+    ("delay", "delay echo repeat"),
+    ("repeat", "delay echo"),
+    ("slap", "delay echo"),
+    ("dubb", "delay echo"),
+    ("tape", "delay echo saturation lo-fi"),
+    ("chorus", "chorus ensemble doubler"),
+    ("ensemble", "chorus ensemble"),
+    ("doubler", "chorus"),
+    ("flang", "flanger chorus modulation"),
+    ("phas", "phaser chorus modulation"),
+    ("modul", "modulation"),
+    ("trem", "tremolo modulation"),
+    ("vibr", "vibrato modulation"),
+    ("autopan", "auto-pan panner modulation"),
+    ("panner", "auto-pan modulation"),
+    ("wah", "wah auto-wah filter"),
+    ("dist", "distortion"),
+    ("overdrive", "distortion overdrive drive"),
+    ("fuzz", "distortion fuzz drive"),
+    ("satur", "saturation distortion warmth drive"),
+    ("drive", "overdrive distortion drive"),
+    ("@amp", "amplifier cabinet speaker"),
+    ("reamp", "amplifier cabinet reamp"),
+    ("cabinet", "cabinet speaker impulse"),
+    ("impulse", "cabinet speaker impulse response"),
+    ("compress", "compressor compression dynamics"),
+    ("compr", "compressor dynamics"),
+    ("glue", "compressor bus glue dynamics"),
+    ("squash", "compressor dynamics"),
+    ("transient", "dynamics transient"),
+    ("limit", "limiter limiting dynamics ceiling"),
+    ("maximiz", "limiter loudness maximizer"),
+    ("loudness", "limiter loudness maximizer"),
+    ("gate", "gate gating dynamics"),
+    ("expander", "gate expander dynamics"),
+    ("equali", "equalizer eq"),
+    ("@eq", "equalizer eq"),
+    ("pro-q", "equalizer eq"),
+    ("tilt", "eq filter"),
+    ("shelf", "eq filter"),
+    ("filter", "filter eq sweep"),
+    ("sweep", "filter sweep modulation"),
+    ("sibil", "de-esser"),
+    ("de-ess", "de-esser"),
+    ("@ess", "de-esser"),
+    ("pitch", "pitch shifter"),
+    ("tune", "tuner pitch"),
+    ("harmon", "harmonizer pitch vocals"),
+    ("correct", "pitch correction tuning"),
+    ("vocod", "vocoder"),
+    ("formant", "vocoder"),
+    ("crush", "bitcrusher lo-fi degradation"),
+    ("lo-fi", "bitcrusher lo-fi"),
+    ("lofi", "bitcrusher lo-fi"),
+    ("vinyl", "lo-fi"),
+    ("denois", "noise cleanup restoration"),
+    ("noise", "noise cleanup"),
+    ("repair", "cleanup restoration"),
+    ("restor", "cleanup restoration"),
+    ("click", "cleanup restoration"),
+    ("excit", "exciter harmonics enhancement"),
+    ("enhanc", "enhancer exciter"),
+    ("widener", "stereo imager widener"),
+    ("imager", "stereo widener"),
+    ("spat", "stereo spatializer"),
+    ("multiband", "multiband mastering"),
+    ("master", "mastering"),
+    ("clip", "clipper distortion"),
+    ("gain", "gain utility volume"),
+    ("utility", "utility gain volume"),
+    ("@meter", "metering analysis"),
+    ("analyz", "analysis metering"),
+    ("spectrum", "spectrum analysis metering"),
+    ("scope", "metering analysis"),
+    ("fft", "spectrum analysis"),
+];
+
 impl MainWindow {
+
+    /// Build the searchable text for an effect dropdown entry so the effects
+    /// choices can be searched by name *and* by effect type. The searchable
+    /// text is the (lower-cased) display name, the plugin's declared
+    /// categories (VST3 sub categories / CLAP features captured when the
+    /// plugin was scanned), and a set of type words inferred from well known
+    /// tokens in the name/categories (so typing "reverb" also finds a plugin
+    /// named "Space" and typing "compressor" finds "Glue"). It never affects
+    /// what is displayed - only what the search entry matches.
+    fn effect_search_text(display_name: &str, categories: &str) -> String {
+        let mut base = display_name.to_lowercase();
+        base.push(' ');
+        base.push_str(categories.to_lowercase().as_str());
+
+        let mut search = base.clone();
+        let tokens: Vec<String> = base.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_string())
+            .collect();
+        for (keyword, type_words) in EFFECT_TYPE_SYNONYMS.iter() {
+            // keywords starting with '@' must match a whole token (short ones
+            // like "eq"/"amp" would false-positive inside longer words); the
+            // rest match as substrings of the name/categories
+            let matched = match keyword.strip_prefix('@') {
+                Some(token) => tokens.iter().any(|t| t == token),
+                None => base.contains(keyword),
+            };
+            if matched {
+                search.push(' ');
+                search.push_str(type_words);
+            }
+        }
+        search
+    }
 
     fn hit_test_in(child: &Widget, container: &impl IsA<Widget>, x: i32, y: i32) -> bool {
         match child.compute_bounds(container) {
@@ -3703,6 +3829,13 @@ impl MainWindow {
 
         let track_details_dialogue: TrackDetailsDialogue = TrackDetailsDialogue::from_string(track_details_dialogue_glade_src).unwrap();
         Self::populate_track_details_combos(&track_details_dialogue);
+
+        // every combo is searchable by item text automatically (the compat
+        // layer switches them all to substring search over the display text);
+        // the effects dropdowns additionally match the effect type words
+        // carried in each item's searchable text
+        track_details_dialogue.track_effects_choice.enable_search_by_type();
+        track_details_dialogue.track_override_effects_choice.enable_search_by_type();
 
         // the track details dialogue is shown via set_visible(), so centre it
         // on the main window here rather than from run().
@@ -11572,6 +11705,9 @@ impl MainWindow {
         // taken before the song borrow below - used to resolve the scanned plugin key of
         // each instrument track's current instrument in the track details dialogues.
         let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
+        // scanned effect plugins - the effects dropdowns carry each plugin's
+        // declared categories as searchable text (search effects by type)
+        let scanned_effect_plugins = state.configuration.scanned_effect_plugins.successfully_scanned.clone();
 
         // the currently selected arrangement (only when the active view is the riff
         // arrangement) drives the override controls in the track details dialogues
@@ -11642,7 +11778,7 @@ impl MainWindow {
                     );
                 }
             }
-            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track, riff_arrangement.as_ref());
+            self.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &scanned_effect_plugins, &mut track_number, &track, riff_arrangement.as_ref());
             match self.track_midi_routing_dialogues.get_mut(&track.uuid_string()) {
                 Some(midi_routing_dialogue) => {
                     for route in track.midi_routings().iter() {
@@ -12236,6 +12372,7 @@ impl MainWindow {
         instrument_plugins: &mut IndexMap<String, String>,
         effects_plugins: &mut IndexMap<String, String>,
         scanned_instrument_plugins: &HashMap<String, ScannedPlugin>,
+        scanned_effect_plugins: &HashMap<String, ScannedPlugin>,
         track_number: &mut i32,
         track: &&mut TrackType,
         riff_arrangement: Option<&RiffArrangement>,
@@ -12377,18 +12514,18 @@ impl MainWindow {
                             }
                         }
 
-                        Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+                        Self::update_track_details_effects(effects_plugins, scanned_effect_plugins, track_details_dialogue, track);
 
                         // riff arrangement instrument/effects override controls
                         Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
-                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
+                        Self::update_track_details_effects_override(effects_plugins, scanned_effect_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
                     }
                     TrackType::AudioTrack(track) => {
-                        Self::update_track_details_effects(effects_plugins, track_details_dialogue, track);
+                        Self::update_track_details_effects(effects_plugins, scanned_effect_plugins, track_details_dialogue, track);
 
                         // no instrument on an audio track - only the effects override applies
                         Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
-                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
+                        Self::update_track_details_effects_override(effects_plugins, scanned_effect_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, riff_arrangement, riff_arrangement.is_some());
                     }
                     TrackType::MidiTrack(track) => {
                         track_details_dialogue.track_midi_channel_choice.set_active_id(Some(track.midi_device().midi_channel().to_string().as_str()));
@@ -12403,7 +12540,7 @@ impl MainWindow {
 
                         // no plugins on a midi track - hide all the override controls
                         Self::update_track_details_instrument_override(instrument_plugins, scanned_instrument_plugins, self.track_details_dialogue_track_override_instrument_choice_signal_handlers.get(&track_uuid), self.track_details_dialogue_instrument_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
-                        Self::update_track_details_effects_override(effects_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
+                        Self::update_track_details_effects_override(effects_plugins, scanned_effect_plugins, self.track_details_dialogue_effects_override_check_button_signal_handlers.get(&track_uuid), track_details_dialogue, &track_uuid, None, false);
                     }
                 }
             }
@@ -12411,7 +12548,7 @@ impl MainWindow {
         }
     }
 
-    fn update_track_details_effects(effects_plugins: &mut IndexMap<String, String>, track_details_dialogue: &mut TrackDetailsDialogue, track: &dyn AudioEffectTrack) {
+    fn update_track_details_effects(effects_plugins: &mut IndexMap<String, String>, scanned_effect_plugins: &HashMap<String, ScannedPlugin>, track_details_dialogue: &mut TrackDetailsDialogue, track: &dyn AudioEffectTrack) {
         // re-populate the track effects choice
         let track_effects_choice = track_details_dialogue.track_effects_choice.clone();
         track_effects_choice.remove_all();
@@ -12420,7 +12557,9 @@ impl MainWindow {
             if let Some(value) = effects_plugins.get(*key) {
                 let adjusted_key = key.replace(char::from(0), "");
                 let adjusted_value = value.replace(char::from(0), "");
-                track_effects_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                // searchable by name and by the plugin's declared effect types
+                let categories = scanned_effect_plugins.get(*key).map(|plugin| plugin.categories.as_str()).unwrap_or("");
+                track_effects_choice.append_with_search(Some(adjusted_key.as_str()), adjusted_value.as_str(), MainWindow::effect_search_text(adjusted_value.as_str(), categories).as_str());
             }
         }
 
@@ -12530,6 +12669,7 @@ impl MainWindow {
     /// list (only shown while the override is enabled).
     fn update_track_details_effects_override(
         effects_plugins: &mut IndexMap<String, String>,
+        scanned_effect_plugins: &HashMap<String, ScannedPlugin>,
         override_check_button_signal_handler_id: Option<&SignalHandlerId>,
         track_details_dialogue: &mut TrackDetailsDialogue,
         track_uuid: &String,
@@ -12579,7 +12719,9 @@ impl MainWindow {
                 if let Some(value) = effects_plugins.get(*key) {
                     let adjusted_key = key.replace(char::from(0), "");
                     let adjusted_value = value.replace(char::from(0), "");
-                    track_override_effects_choice.append(Some(adjusted_key.as_str()), adjusted_value.as_str());
+                    // searchable by name and by the plugin's declared effect types
+                    let categories = scanned_effect_plugins.get(*key).map(|plugin| plugin.categories.as_str()).unwrap_or("");
+                    track_override_effects_choice.append_with_search(Some(adjusted_key.as_str()), adjusted_value.as_str(), MainWindow::effect_search_text(adjusted_value.as_str(), categories).as_str());
                 }
             }
 
@@ -12620,7 +12762,9 @@ impl MainWindow {
             panel.track_effects_choice.remove_all();
             let effect_keys = effect_plugins.iter().sorted_by(|(key1, _value1), (key2, _value2)| key1.cmp(key2)).map(|(key, _value)| key).collect_vec();
             for key in effect_keys.iter() {
-                panel.track_effects_choice.append(Some(key.as_str()), key.as_str());
+                // searchable by name and by the plugin's declared effect types
+                let categories = effect_plugins.get(*key).map(|plugin| plugin.categories.as_str()).unwrap_or("");
+                panel.track_effects_choice.append_with_search(Some(key.as_str()), key.as_str(), MainWindow::effect_search_text(key.as_str(), categories).as_str());
             }
         });
     }
@@ -14203,6 +14347,42 @@ mod riff_sequence_blade_combobox_tests {
             Ok(_) => panic!("expected RiffSequenceAdd event"),
             Err(error) => panic!("no event sent: {error}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod effect_search_text_tests {
+    use super::*;
+
+    #[test]
+    fn effect_search_text_contains_the_name_and_type_words() {
+        // the (lower-cased) name is always part of the searchable text
+        let text = MainWindow::effect_search_text("SpaceH (VST3)", "");
+        assert!(text.contains("spaceh"));
+        // "space"/"h" - the space token marks it as a reverb type
+        assert!(text.contains("reverb"));
+
+        // declared categories (VST3 sub categories / CLAP features) become
+        // searchable even when the name says nothing about the type
+        let text = MainWindow::effect_search_text("Pro-L 2 (VST3)", "Fx Limiter Loudness");
+        assert!(text.contains("pro-l 2"));
+        assert!(text.contains("limiter"));
+        assert!(text.contains("dynamics"));
+        let text = MainWindow::effect_search_text("Mythical Beast (CLAP)", "delay stereo");
+        assert!(text.contains("delay"));
+        assert!(text.contains("echo"));
+
+        // short token keywords must not false-positive inside longer words:
+        // a name containing "amp" (as in "Sample") is not an amplifier
+        let text = MainWindow::effect_search_text("Sampler One (VST24)", "");
+        assert!(!text.contains("amplifier"));
+        // and "frequency" contains "eq" as a substring but is not an equalizer
+        let text = MainWindow::effect_search_text("Frequency Shift (VST3)", "");
+        assert!(!text.contains("equalizer"));
+
+        // a cryptic name with no categories falls back to just the name
+        let text = MainWindow::effect_search_text("Zephyr (VST3)", "");
+        assert_eq!(text.trim(), "zephyr (vst3)");
     }
 }
 

@@ -6609,6 +6609,7 @@ win.connect_close_request(|window| {
                                 }
 
                                 let scanned_instrument_plugins = state.configuration.scanned_instrument_plugins.successfully_scanned.clone();
+                                let scanned_effect_plugins = state.configuration.scanned_effect_plugins.successfully_scanned.clone();
 
                                 // the currently selected arrangement (only when the active
                                 // view is the riff arrangement) drives the override controls
@@ -6621,7 +6622,7 @@ win.connect_close_request(|window| {
                                 for (track_number, track) in state.get_project().song_mut().tracks_mut().iter_mut().enumerate() {
                                     if track.uuid().to_string() == track_uuid {
                                         let mut track_number = track_number as i32;
-                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &mut track_number, &track, riff_arrangement.as_ref());
+                                        gui.update_track_details_dialogue(&midi_input_devices, &mut instrument_plugins, &mut effect_plugins, &scanned_instrument_plugins, &scanned_effect_plugins, &mut track_number, &track, riff_arrangement.as_ref());
                                         break;
                                     }
                                 }

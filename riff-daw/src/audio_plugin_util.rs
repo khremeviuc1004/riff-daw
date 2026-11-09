@@ -534,6 +534,13 @@ fn do_plugin_check(
                                 Some(plugin_type) => *plugin_type,
                                 None => "unknown",
                             };
+                            // optional 7th field: the effect/instrument types the
+                            // plugin declares (VST3 sub categories, CLAP features) -
+                            // space separated, feeds the searchable-by-type dropdowns
+                            let plugin_categories = match elements.get(6) {
+                                Some(categories) => categories.replace(char::from(0), "").replace('|', " ").split_whitespace().collect::<Vec<&str>>().join(" "),
+                                None => String::new(),
+                            };
 
 
                             if !plugin_name.is_empty() &&
@@ -552,6 +559,7 @@ fn do_plugin_check(
                                     id: plugin_id.to_string(),
                                     sub_id: sub_plugin_id,
                                     audio_plugin_stack,
+                                    categories: plugin_categories,
                                 };
 
                                 match plugin_category {
@@ -593,6 +601,7 @@ mod tests {
             id: id.to_string(),
             sub_id: sub_id.map(|s| s.to_string()),
             audio_plugin_stack: AudioPluginType::CLAP,
+            categories: String::new(),
         }
     }
 

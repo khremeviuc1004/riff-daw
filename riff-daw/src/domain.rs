@@ -9572,10 +9572,18 @@ impl<T> AudioConsumerDetails<T> {
     }
 }
 
+/// A midi output port for a track, abstracted over the audio/midi backend.
+/// The engine drains a track's midi ring and writes the events to whichever
+/// port flavour the currently configured backend created for the track.
+pub enum MidiOutPort {
+    Jack(Port<MidiOut>),          // a jack midi out port on the DAW client
+    Alsa(alsa::seq::Addr),        // a port on the DAW's alsa sequencer client
+}
+
 pub struct MidiConsumerDetails<T> {
     track_uuid: String,
     consumer: Consumer<T>,
-    midi_out_port: Option<Port<MidiOut>>,
+    midi_out_port: Option<MidiOutPort>,
 }
 
 impl<T> MidiConsumerDetails<T> {
@@ -9607,11 +9615,15 @@ impl<T> MidiConsumerDetails<T> {
         &mut self.consumer
     }
 
-    pub fn midi_out_port_mut(&mut self) -> Option<&mut Port<MidiOut>> {
+    pub fn midi_out_port_mut(&mut self) -> Option<&mut MidiOutPort> {
         self.midi_out_port.as_mut()
     }
 
-    pub fn set_midi_out_port(&mut self, midi_out_port: Option<Port<MidiOut>>) {
+    pub fn midi_out_port(&self) -> Option<&MidiOutPort> {
+        self.midi_out_port.as_ref()
+    }
+
+    pub fn set_midi_out_port(&mut self, midi_out_port: Option<MidiOutPort>) {
         self.midi_out_port = midi_out_port;
     }
 }
@@ -9694,10 +9706,59 @@ impl DAWConfiguration {
     }
 }
 
+/// The audio/midi system the application drives the sound hardware with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioBackend {
+    Jack,
+    Alsa,
+}
+
+impl AudioBackend {
+    pub fn jack() -> Self { AudioBackend::Jack }
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "alsa" => AudioBackend::Alsa,
+            _ => AudioBackend::Jack,
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        match self {
+            AudioBackend::Jack => "jack",
+            AudioBackend::Alsa => "alsa",
+        }
+    }
+}
+
+fn default_alsa_device() -> String { "default".to_string() }
+fn default_alsa_midi_in() -> String { "".to_string() }
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AudioConfiguration {
     pub block_size: i32,
     pub sample_rate: i32,
+    /// The audio system used for the master output (jack server or direct ALSA).
+    #[serde(default = "AudioBackend::jack")]
+    pub backend: AudioBackend,
+    /// The ALSA pcm playback device used when the alsa backend is selected
+    /// ("default", "hw:X", "plughw:X", ...).
+    #[serde(default = "default_alsa_device")]
+    pub alsa_device: String,
+    /// The midi system (jack midi ports or the alsa sequencer). Direct ALSA
+    /// audio forces the alsa midi backend (there is no jack client to route
+    /// midi through when the audio backend is alsa).
+    #[serde(default = "AudioBackend::jack")]
+    pub midi_backend: AudioBackend,
+    /// Comma separated alsa sequencer "client:port" addresses subscribed to the
+    /// DAW's "midi_in" port when the alsa midi backend is active (live keys /
+    /// pads recorded into riffs).
+    #[serde(default = "default_alsa_midi_in")]
+    pub alsa_midi_in: String,
+    /// Comma separated alsa sequencer "client:port" addresses subscribed to the
+    /// DAW's "midi_control_in" port when the alsa midi backend is active (MMC
+    /// controllers, control surfaces).
+    #[serde(default = "default_alsa_midi_in")]
+    pub alsa_midi_control_in: String,
 }
 
 impl AudioConfiguration {
@@ -9705,6 +9766,11 @@ impl AudioConfiguration {
         Self {
             block_size: 1024,
             sample_rate: 44100,
+            backend: AudioBackend::Jack,
+            alsa_device: "default".to_string(),
+            midi_backend: AudioBackend::Jack,
+            alsa_midi_in: "".to_string(),
+            alsa_midi_control_in: "".to_string(),
         }
     }
 }

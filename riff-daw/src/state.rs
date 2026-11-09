@@ -20,7 +20,8 @@ use uuid::Uuid;
 use vst::api::TimeInfo;
 use vst::host::PluginLoader;
 
-use crate::{Audio, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse, AutomationEditType}, GeneralTrackType, JackNotificationHandler};
+use crate::{AudioEngine, AudioLayerOutwardEvent, DAWUtils, domain::*, event::{AudioLayerInwardEvent, CurrentView, DAWEvents, TrackBackgroundProcessorInwardEvent, TrackBackgroundProcessorOutwardEvent, TrackPluginPresetResponse, AutomationEditType}, JackNotificationHandler, JackProcessHandler};
+use crate::alsa::{AlsaAudioLayer, AlsaMidiCommand, AlsaMidiInEvent, AlsaMidiInput, AlsaMidiOut};
 use crate::constants::{BLOCK_SIZE_MAX, EVENT_BUFFER_SIZE, MAX_RECENT_FILES, RECENT_FILES_FILE_NAME};
 use crate::event::{AudioLayerTimeCriticalOutwardEvent, EventProcessorType};
 use crate::TrackType;
@@ -130,8 +131,28 @@ pub struct DAWState {
     parameter_index: Option<i32>,
     selected_effect_plugin_uuid: Option<String>,
     selected_riff_arrangement_uuid: Option<String>,
-    jack_client: Vec<AsyncClient<JackNotificationHandler, Audio>>,
+    jack_client: Vec<AsyncClient<JackNotificationHandler, JackProcessHandler>>,
     jack_connections: HashMap<String, String>,
+    // the alsa audio/midi layer: the engine loop thread handle, the command
+    // channel into its sequencer frontend, the per-track seq ports, the saved
+    // track->device subscriptions (replayed when the alsa layer is rebuilt)
+    // and the sequencer input frontend thread
+    alsa_layer: Option<AlsaAudioLayer>,
+    alsa_midi_cmd_tx: Option<crossbeam_channel::Sender<AlsaMidiCommand>>,
+    alsa_midi_client: i32,
+    alsa_track_ports: HashMap<String, i32>,
+    alsa_midi_subscriptions: HashMap<String, alsa::seq::Addr>,
+    alsa_midi_input: Option<AlsaMidiInput>,
+    alsa_midi_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+    alsa_midi_control_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+    // the input device configuration the running frontend was started with
+    // (so a preferences change to the list forces the frontend to be rebuilt)
+    alsa_midi_in_config: String,
+    alsa_midi_control_in_config: String,
+    // what the alsa pcm actually granted (rate, period frames) after
+    // negotiation, so the audio configuration can be reconciled the same way
+    // the jack granted parameters are
+    alsa_granted_configuration: Option<(i32, i32)>,
     sample_data: HashMap<String, SampleData>,
     track_render_audio_consumers: Arc<Mutex<HashMap<String, AudioConsumerDetails<AudioBlock>>>>,
     mixer_blade_channel_levels: Arc<Mutex<HashMap<String, MixerBladeChannelLevels>>>,
@@ -200,6 +221,17 @@ impl DAWState {
             selected_effect_plugin_uuid: None,
             jack_client: vec![],
             jack_connections: HashMap::new(),
+            alsa_layer: None,
+            alsa_midi_cmd_tx: None,
+            alsa_midi_client: -1,
+            alsa_track_ports: HashMap::new(),
+            alsa_midi_subscriptions: HashMap::new(),
+            alsa_midi_input: None,
+            alsa_midi_in_rx: None,
+            alsa_midi_control_in_rx: None,
+            alsa_midi_in_config: "".to_string(),
+            alsa_midi_control_in_config: "".to_string(),
+            alsa_granted_configuration: None,
             sample_data: HashMap::new(),
             track_render_audio_consumers: Arc::new(Mutex::new(HashMap::new())),
             mixer_blade_channel_levels: Arc::new(Mutex::new(HashMap::new())),
@@ -2505,7 +2537,7 @@ impl DAWState {
         }
     }
 
-    pub fn set_jack_client(&mut self, jack_client: AsyncClient<JackNotificationHandler, Audio>) {
+    pub fn set_jack_client(&mut self, jack_client: AsyncClient<JackNotificationHandler, JackProcessHandler>) {
         self.jack_client.clear();
         self.jack_client.push(jack_client);
     }
@@ -2519,7 +2551,112 @@ impl DAWState {
         }
     }
 
-    pub fn start_jack(
+    /// The configured audio backend.
+    pub fn audio_backend(&self) -> AudioBackend {
+        self.configuration.audio.backend
+    }
+
+    /// The effective midi backend - the direct alsa audio backend forces the
+    /// alsa midi backend (jack midi ports need a jack cycle to pump them).
+    pub fn midi_backend(&self) -> AudioBackend {
+        if self.configuration.audio.backend == AudioBackend::Alsa {
+            AudioBackend::Alsa
+        }
+        else {
+            self.configuration.audio.midi_backend
+        }
+    }
+
+    /// Parse the leading "client:port" address of an alsa midi device name.
+    pub fn alsa_midi_output_device_addr(name: &str) -> Option<alsa::seq::Addr> {
+        let first = name.split_whitespace().next()?;
+        first.parse::<alsa::seq::Addr>().ok()
+    }
+
+    /// The (sample rate, block size) the active backend actually granted -
+    /// the jack server's values or the alsa negotiated ones.
+    pub fn granted_audio_configuration(&self) -> Option<(i32, i32)> {
+        if let Some(client) = self.jack_client() {
+            Some((client.sample_rate() as i32, client.buffer_size() as i32))
+        }
+        else {
+            self.alsa_granted_configuration
+        }
+    }
+
+    /// Stop whatever audio layer is running and hand back the track consumers
+    /// of its engine so the replacement layer can adopt them - the track
+    /// background processor threads keep running through the switch (their
+    /// rings are the only link to the audio layer, and the plugin state stays
+    /// exactly where it is).
+    fn stop_audio_layer_take_consumers(&mut self)
+        -> (Vec<AudioConsumerDetails<AudioBlock>>, Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>) {
+        let mut audio_consumers = vec![];
+        let mut midi_consumers = vec![];
+        if self.jack_client.len() == 1 {
+            let async_client = self.jack_client.remove(0_usize);
+            match async_client.deactivate() {
+                Ok((_client, _notification_handler, mut process_handler)) => {
+                    audio_consumers = process_handler.engine.get_all_audio_consumers();
+                    midi_consumers = process_handler.engine.get_all_midi_consumers();
+                }
+                Err(_) => {
+                    warn!("JACK: could not deactivate the client - its track consumers cannot be salvaged.");
+                }
+            }
+        }
+        else if let Some(mut alsa_layer) = self.alsa_layer.take() {
+            if let Some(mut engine) = alsa_layer.stop_and_take_engine() {
+                audio_consumers = engine.get_all_audio_consumers();
+                midi_consumers = engine.get_all_midi_consumers();
+            }
+        }
+        // the alsa midi output frontend died with the old layer (its sequencer
+        // client and per-track ports are gone) - the replacement rebuilds the
+        // ports and replays the saved track->device subscriptions
+        self.alsa_midi_cmd_tx = None;
+        self.alsa_track_ports.clear();
+        self.alsa_granted_configuration = None;
+        (audio_consumers, midi_consumers)
+    }
+
+    /// Ensure the alsa sequencer input frontend (the client carrying the
+    /// "midi_in" and "midi_control_in" ports subscribed from the
+    /// configuration) is running; its receiver clones are handed to
+    /// whichever thread runs the engine cycle.
+    fn ensure_alsa_midi_input(&mut self) {
+        if self.alsa_midi_input.is_some() {
+            return;
+        }
+        let in_devices = crate::alsa::parse_midi_addr_list(&self.configuration.audio.alsa_midi_in.clone());
+        let control_devices = crate::alsa::parse_midi_addr_list(&self.configuration.audio.alsa_midi_control_in.clone());
+        match AlsaMidiInput::start(in_devices, control_devices) {
+            Some(frontend) => {
+                self.alsa_midi_in_config = self.configuration.audio.alsa_midi_in.clone();
+                self.alsa_midi_control_in_config = self.configuration.audio.alsa_midi_control_in.clone();
+                self.alsa_midi_in_rx = Some(frontend.in_rx.clone());
+                self.alsa_midi_control_in_rx = Some(frontend.control_rx.clone());
+                self.alsa_midi_input = Some(frontend);
+            }
+            None => {
+                warn!("ALSA midi: the sequencer input frontend could not be started - live midi input is disabled.");
+            }
+        }
+    }
+
+    fn stop_alsa_midi_input(&mut self) {
+        self.alsa_midi_input = None; // drop joins the frontend thread
+        self.alsa_midi_in_rx = None;
+        self.alsa_midi_control_in_rx = None;
+    }
+
+    /// Start (or restart / switch) the audio layer so it matches the
+    /// configured audio and midi backends. Whatever layer is currently
+    /// running is stopped first and its track consumers are adopted by the
+    /// new layer; selecting alsa in the preferences stops jack and starts the
+    /// alsa layer (and the other way round) without disturbing the track
+    /// background processors.
+    pub fn start_audio_layer(
         &mut self,
         rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
         jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
@@ -2528,12 +2665,50 @@ impl DAWState {
         coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
         vst_host_time_info: Arc<RwLock<TimeInfo>>,
     ) {
-        // never unwrap here: the stalled-client watchdog re-triggers restarts and
-        // jackd may briefly reject a new same-named client while it drains the
-        // close of the previous one (NameNotUnique), so retry a few times before
-        // giving up; all failures log at warn! - the release build compiles debug!
-        // out and these messages are the only clue when a restart does not recover
-        // the cycle stream.
+        let audio_backend = self.configuration.audio.backend;
+        let midi_backend = self.midi_backend();
+
+        let (audio_consumers, midi_consumers) = self.stop_audio_layer_take_consumers();
+
+        // the alsa sequencer input frontend lives beside the audio layer:
+        // recreate it when its configured device list changed, drop it when
+        // the midi backend is jack
+        if midi_backend == AudioBackend::Alsa {
+            if self.alsa_midi_input.is_some()
+                && (self.alsa_midi_in_config != self.configuration.audio.alsa_midi_in
+                    || self.alsa_midi_control_in_config != self.configuration.audio.alsa_midi_control_in) {
+                self.stop_alsa_midi_input();
+            }
+            self.ensure_alsa_midi_input();
+        }
+        else {
+            self.stop_alsa_midi_input();
+        }
+
+        match audio_backend {
+            AudioBackend::Jack => self.start_jack_layer(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info, audio_consumers, midi_consumers, midi_backend),
+            AudioBackend::Alsa => self.start_alsa_layer(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info, audio_consumers, midi_consumers),
+        }
+    }
+
+    fn start_jack_layer(
+        &mut self,
+        rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
+        jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
+        coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
+        mut midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
+        midi_backend: AudioBackend,
+    ) {
+        // never unwrap here: the stalled-layer watchdog re-triggers restarts
+        // and jackd may briefly reject a new same-named client while it drains
+        // the close of the previous one (NameNotUnique), so retry a few times
+        // before giving up; all failures log at warn! - the release build
+        // compiles debug! out and these messages are the only clue when a
+        // restart does not recover the cycle stream.
         let mut jack_client_result = None;
         for attempt in 1..=3 {
             match Client::new("DAW", ClientOptions::NO_START_SERVER) {
@@ -2559,42 +2734,109 @@ impl DAWState {
         };
         let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
 
-        // the jack server is not obliged to honour the requested buffer size (the
-        // driver constrains it) and the sample rate is server wide - reconcile the
-        // configuration with the parameters the server actually granted *before*
-        // anything is built on top of them. if the track producers emit fewer
-        // frames per block than the jack callback consumes (e.g. a configured
-        // 1024 against a server running at 2048) the playback comes out at the
-        // wrong tempo with stale repeated frames - crackly, robotic audio.
+        // the jack server is not obliged to honour the requested buffer size
+        // (the driver constrains it) and the sample rate is server wide -
+        // reconcile the configuration with the parameters the server actually
+        // granted *before* anything is built on top of them. if the track
+        // producers emit fewer frames per block than the jack callback consumes
+        // (e.g. a configured 1024 against a server running at 2048) the
+        // playback comes out at the wrong tempo with stale repeated frames -
+        // crackly, robotic audio.
         let actual_sample_rate = jack_client.sample_rate() as i32;
         let actual_block_size = jack_client.buffer_size() as i32;
-        if actual_sample_rate != self.configuration.audio.sample_rate
-            || actual_block_size != self.configuration.audio.block_size {
+        let audio_configuration_adjusted = actual_sample_rate != self.configuration.audio.sample_rate
+            || actual_block_size != self.configuration.audio.block_size;
+        if audio_configuration_adjusted {
             debug!(
                 "Jack granted sample rate={} and buffer size={} - configured were sample rate={} block size={} - reconfiguring to match.",
                 actual_sample_rate, actual_block_size, self.configuration.audio.sample_rate, self.configuration.audio.block_size
             );
             self.configuration.audio.sample_rate = actual_sample_rate;
             self.configuration.audio.block_size = actual_block_size;
-            self.apply_actual_audio_configuration(vst_host_time_info.clone());
+        }
+
+        // the salvaged consumers carry the previous layer's midi out ports -
+        // replace them with ports of the new backend before the engine adopts
+        // the consumers
+        match midi_backend {
+            AudioBackend::Jack => {
+                for midi_consumer in midi_consumers.iter_mut() {
+                    match jack_client.register_port(midi_consumer.track_uuid().as_str(), MidiOut::default()) {
+                        Ok(midi_out_port) => midi_consumer.set_midi_out_port(Some(MidiOutPort::Jack(midi_out_port))),
+                        Err(_) => debug!("Jack: couldn't register the midi out port for track={}", midi_consumer.track_uuid().as_str()),
+                    }
+                }
+            }
+            AudioBackend::Alsa => (), // handled below with the sequencer frontend
+        }
+
+        let mut alsa_midi_out = None;
+        let mut alsa_midi_in_rx = None;
+        let mut alsa_midi_control_in_rx = None;
+        if midi_backend == AudioBackend::Alsa {
+            // the engine cycle runs on the jack callback - attach the alsa
+            // sequencer frontend to it so track midi still goes out on the
+            // alsa ports and live alsa midi still reaches the engine
+            let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<AlsaMidiCommand>();
+            match AlsaMidiOut::new(cmd_rx) {
+                Ok(mut midi_out) => {
+                    self.alsa_midi_cmd_tx = Some(cmd_tx);
+                    self.alsa_midi_client = midi_out.client;
+                    midi_out.setup_track_ports(&mut midi_consumers, &self.alsa_midi_subscriptions);
+                    alsa_midi_in_rx = self.alsa_midi_in_rx.clone();
+                    alsa_midi_control_in_rx = self.alsa_midi_control_in_rx.clone();
+                    alsa_midi_out = Some(midi_out);
+                }
+                Err(error) => {
+                    warn!("ALSA midi: the sequencer output frontend could not be started: {} - midi output is disabled.", error);
+                }
+            }
         }
 
         let xruns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let audio = Audio::new(
-            &jack_client,
-            rx_to_audio,
-            jack_midi_sender,
-            jack_midi_sender_ui.clone(),
-            jack_time_critical_midi_sender,
-            coast,
-            vst_host_time_info,
-            self.configuration.audio.sample_rate,
-            self.configuration.audio.block_size,
-            self.project().song().tempo(),
-            xruns.clone(),
-        );
-        let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
-        let jack_async_client = match jack_client.activate_async(notifications, audio) {
+        let jack_midi_sender_ui_for_notifications = jack_midi_sender_ui.clone();
+        let engine = if audio_consumers.is_empty() && midi_consumers.is_empty() {
+            AudioEngine::new(
+                rx_to_audio,
+                jack_midi_sender,
+                jack_midi_sender_ui,
+                jack_time_critical_midi_sender,
+                coast,
+                vst_host_time_info.clone(),
+                self.configuration.audio.sample_rate,
+                self.configuration.audio.block_size,
+                self.project().song().tempo(),
+                xruns.clone(),
+            )
+        }
+        else {
+            AudioEngine::new_with_consumers(
+                rx_to_audio,
+                jack_midi_sender,
+                jack_midi_sender_ui,
+                jack_time_critical_midi_sender,
+                coast,
+                audio_consumers,
+                midi_consumers,
+                vst_host_time_info.clone(),
+                self.configuration.audio.sample_rate,
+                self.configuration.audio.block_size,
+                self.project().song().tempo(),
+                xruns.clone(),
+            )
+        };
+        let mut jack_process_handler = match JackProcessHandler::new(&jack_client, engine) {
+            Ok(handler) => handler,
+            Err(error) => {
+                warn!("JACK: could not build the process handler: {:?} - the restart watchdog will retry.", error);
+                return;
+            }
+        };
+        if alsa_midi_out.is_some() || alsa_midi_in_rx.is_some() {
+            jack_process_handler.set_alsa_midi(alsa_midi_out, alsa_midi_in_rx, alsa_midi_control_in_rx);
+        }
+        let notifications = JackNotificationHandler::new(jack_midi_sender_ui_for_notifications, xruns);
+        let jack_async_client = match jack_client.activate_async(notifications, jack_process_handler) {
             Ok(client) => client,
             Err(error) => {
                 warn!("JACK: could not activate the client: {:?} - the restart watchdog will retry.", error);
@@ -2604,146 +2846,167 @@ impl DAWState {
 
         self.set_jack_client(jack_async_client);
 
-        // these should come from configuration and be selected from a menu and dialogue -
-        // successful default connections are recorded in the jack connections map so that
-        // they get re-established when the jack client is restarted (e.g. after an audio
-        // configuration change).
-        let default_connections = [
-            ("DAW:out_l", "system:playback_1"),
-            ("DAW:out_r", "system:playback_2"),
-            ("a2j:Akai MPD24 [16] (capture): Akai MPD24 MIDI 1", "DAW:midi_control_in"),
-            ("a2j:nanoPAD2 [20] (capture): nanoPAD2 MIDI 1", "DAW:midi_in"),
-        ];
+        // the first start establishes the default connections (the saved
+        // connections map is empty then); every later rebuild restores the
+        // connections recorded in it so an audio configuration change or a
+        // self-heal restart does not silently drop the routing
         let mut established_connections: Vec<(String, String)> = vec![];
-        if let Some(client) = self.jack_client() {
-            for (from, to) in default_connections {
-                if client.connect_ports_by_name(from, to).is_ok() {
-                    established_connections.push((from.to_string(), to.to_string()));
-                }
-            }
-        }
-        for (from, to) in established_connections {
-            self.jack_connection_add(from, to);
-        }
-    }
-
-    pub fn stop_jack(&mut self) {
-        if self.jack_client.len() == 1 {
-            let async_client = self.jack_client.remove(0_usize);
-            if let Err(err) =  async_client.deactivate() {
-                debug!("Problem stopping jack; {}", err);
-            }
-        }
-    }
-
-    pub fn restart_jack(&mut self,
-                        rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
-                        jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
-                        jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
-                        jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
-                        coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-                        vst_host_time_info: Arc<RwLock<TimeInfo>>,
-    ) {
-        if self.jack_client.len() == 1 {
-            let async_client = self.jack_client.remove(0_usize);
-            match async_client.deactivate() {
-                Ok((_client, _notification_handler, mut process_handler)) => {
-                    let consumers = process_handler.get_all_audio_consumers();
-                    // the midi out ports belong to the old jack client - the consumers
-                    // are kept (their ring buffers are shared with the track threads) but
-                    // new ports must be registered against the new client.
-                    let mut midi_consumers = process_handler.get_all_midi_consumers();
-                    let mut restart_client_result = None;
-                    for attempt in 1..=3 {
-                        match Client::new("DAW", ClientOptions::NO_START_SERVER) {
-                            Ok((client, _status)) => {
-                                restart_client_result = Some(client);
-                                break;
-                            }
-                            Err(error) => {
-                                warn!("JACK: could not open the restarted client (attempt {}/3): {:?}", attempt, error);
-                                // growing backoff, same reason as start_jack: the
-                                // server needs time to drain the close of the old
-                                // same-named client before a reopen can succeed
-                                std::thread::sleep(std::time::Duration::from_millis(250 * attempt as u64));
-                            }
-                        }
+        if self.jack_connections.is_empty() {
+            let default_connections = [
+                ("DAW:out_l", "system:playback_1"),
+                ("DAW:out_r", "system:playback_2"),
+            ];
+            if let Some(client) = self.jack_client() {
+                for (from, to) in default_connections {
+                    if client.connect_ports_by_name(from, to).is_ok() {
+                        established_connections.push((from.to_string(), to.to_string()));
                     }
-                    let jack_client = match restart_client_result {
-                        Some(client) => client,
-                        None => {
-                            warn!("JACK: giving up opening the restarted client - the restart watchdog will trigger again.");
-                            return;
-                        }
-                    };
-                    let _ = jack_client.set_buffer_size(self.configuration.audio.block_size as Frames);
-                    // same reconciliation as in start_jack - the server may grant a
-                    // different buffer size than the one requested.
-                    let actual_sample_rate = jack_client.sample_rate() as i32;
-                    let actual_block_size = jack_client.buffer_size() as i32;
-                    let audio_configuration_adjusted = actual_sample_rate != self.configuration.audio.sample_rate
-                        || actual_block_size != self.configuration.audio.block_size;
-                    if audio_configuration_adjusted {
-                        debug!(
-                            "Jack restart granted sample rate={} and buffer size={} - configured were sample rate={} block size={} - reconfiguring to match.",
-                            actual_sample_rate, actual_block_size, self.configuration.audio.sample_rate, self.configuration.audio.block_size
-                        );
-                        self.configuration.audio.sample_rate = actual_sample_rate;
-                        self.configuration.audio.block_size = actual_block_size;
-                    }
-                    for midi_consumer in midi_consumers.iter_mut() {
-                        match jack_client.register_port(midi_consumer.track_uuid().as_str(), MidiOut::default()) {
-                            Ok(midi_out_port) => midi_consumer.set_midi_out_port(Some(midi_out_port)),
-                            Err(_) => debug!("Jack restart: couldn't re-register the midi out port for track={}", midi_consumer.track_uuid().as_str()),
-                        }
-                    }
-                    let xruns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                    let audio = Audio::new_with_consumers(
-                        &jack_client,
-                        rx_to_audio,
-                        jack_midi_sender,
-                        jack_midi_sender_ui.clone(),
-                        jack_time_critical_midi_sender.clone(),
-                        coast,
-                        consumers,
-                        midi_consumers,
-                        vst_host_time_info.clone(),
-                        self.configuration.audio.sample_rate,
-                        self.configuration.audio.block_size,
-                        self.project().song().tempo(),
-                        xruns.clone(),
-                    );
-                    let notifications = JackNotificationHandler::new(jack_midi_sender_ui, xruns);
-                    let jack_async_client = match jack_client.activate_async(notifications, audio) {
-                        Ok(client) => client,
-                        Err(error) => {
-                            warn!("JACK: could not activate the restarted client: {:?} - the restart watchdog will retry.", error);
-                            return;
-                        }
-                    };
-                    for (from_name, to_name) in self.jack_connections.iter() {
-                        let _ = jack_async_client.as_client().connect_ports_by_name(from_name.as_str(), to_name.as_str());
-                    }
-                    self.set_jack_client(jack_async_client);
-                    if audio_configuration_adjusted {
-                        self.apply_actual_audio_configuration(vst_host_time_info);
-                    }
-                }
-                Err(_) => {
-                    self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
                 }
             }
         }
         else {
-            self.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, coast, vst_host_time_info);
+            if let Some(client) = self.jack_client() {
+                for (from, to) in self.jack_connections.iter() {
+                    if client.connect_ports_by_name(from.as_str(), to.as_str()).is_ok() {
+                        established_connections.push((from.clone(), to.clone()));
+                    }
+                }
+            }
+        }
+        // re-record the map from what actually connected (connections that
+        // failed - a device that went away - must not linger and churn on
+        // every subsequent rebuild)
+        self.jack_connections.clear();
+        for (from, to) in established_connections {
+            self.jack_connection_add(from, to);
+        }
+
+        if audio_configuration_adjusted {
+            self.apply_actual_audio_configuration(vst_host_time_info);
         }
     }
 
-    /// Push the actual (server granted) sample rate and block size - which must
-    /// already have been stored into the configuration - into every part of the
-    /// audio engine that paces itself by them: the global transport, the vst host
-    /// time info and all running track background processors (which reconfigure
-    /// their plugins through the AudioConfigurationChange event).
+    fn start_alsa_layer(
+        &mut self,
+        rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
+        jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
+        jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
+        coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
+        vst_host_time_info: Arc<RwLock<TimeInfo>>,
+        audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
+        mut midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
+    ) {
+        let device = self.configuration.audio.alsa_device.clone();
+        let (pcm, actual_sample_rate, actual_block_size) = match crate::alsa::open_playback(device.as_str(), self.configuration.audio.sample_rate, self.configuration.audio.block_size) {
+            Ok(granted) => granted,
+            Err(error) => {
+                error!("ALSA: could not open the playback device \"{}\": {}", device.as_str(), error);
+                let _ = self.sender.send(crate::event::DAWEvents::Notification(crate::event::NotificationType::Error,
+                    format!("The ALSA audio device \"{}\" could not be started: {}", device.as_str(), error)));
+                return;
+            }
+        };
+        let audio_configuration_adjusted = actual_sample_rate != self.configuration.audio.sample_rate
+            || actual_block_size != self.configuration.audio.block_size;
+        if audio_configuration_adjusted {
+            debug!(
+                "ALSA granted sample rate={} and block size={} - configured were sample rate={} block size={} - reconfiguring to match.",
+                actual_sample_rate, actual_block_size, self.configuration.audio.sample_rate, self.configuration.audio.block_size
+            );
+            self.configuration.audio.sample_rate = actual_sample_rate;
+            self.configuration.audio.block_size = actual_block_size;
+        }
+        self.alsa_granted_configuration = Some((actual_sample_rate, actual_block_size));
+
+        // the audio backend is alsa, so the midi backend is alsa too - rebuild
+        // the sequencer output frontend with fresh per-track ports and replay
+        // the saved track->device subscriptions onto the salvaged consumers
+        let mut midi_out = None;
+        if self.midi_backend() == AudioBackend::Alsa {
+            let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<AlsaMidiCommand>();
+            match AlsaMidiOut::new(cmd_rx) {
+                Ok(mut alsa_midi_out) => {
+                    self.alsa_midi_cmd_tx = Some(cmd_tx);
+                    self.alsa_midi_client = alsa_midi_out.client;
+                    alsa_midi_out.setup_track_ports(&mut midi_consumers, &self.alsa_midi_subscriptions);
+                    midi_out = Some(alsa_midi_out);
+                }
+                Err(error) => {
+                    warn!("ALSA midi: the sequencer output frontend could not be started: {} - midi output is disabled.", error);
+                }
+            }
+        }
+
+        let xruns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let engine = if audio_consumers.is_empty() && midi_consumers.is_empty() {
+            AudioEngine::new(
+                rx_to_audio,
+                jack_midi_sender,
+                jack_midi_sender_ui,
+                jack_time_critical_midi_sender,
+                coast,
+                vst_host_time_info.clone(),
+                self.configuration.audio.sample_rate,
+                self.configuration.audio.block_size,
+                self.project().song().tempo(),
+                xruns,
+            )
+        }
+        else {
+            AudioEngine::new_with_consumers(
+                rx_to_audio,
+                jack_midi_sender,
+                jack_midi_sender_ui,
+                jack_time_critical_midi_sender,
+                coast,
+                audio_consumers,
+                midi_consumers,
+                vst_host_time_info.clone(),
+                self.configuration.audio.sample_rate,
+                self.configuration.audio.block_size,
+                self.project().song().tempo(),
+                xruns,
+            )
+        };
+        let in_rx = self.alsa_midi_in_rx.clone().unwrap_or_else(|| crossbeam_channel::bounded::<AlsaMidiInEvent>(1).1);
+        let control_in_rx = self.alsa_midi_control_in_rx.clone().unwrap_or_else(|| crossbeam_channel::bounded::<AlsaMidiInEvent>(1).1);
+        match AlsaAudioLayer::start(engine, pcm, actual_block_size as usize, midi_out, in_rx, control_in_rx) {
+            Ok(layer) => {
+                info!("ALSA: audio loop started on device \"{}\".", device.as_str());
+                self.alsa_layer = Some(layer);
+            }
+            Err(error) => {
+                error!("ALSA: could not start the audio loop thread: {}", error);
+            }
+        }
+
+        if audio_configuration_adjusted {
+            self.apply_actual_audio_configuration(vst_host_time_info);
+        }
+    }
+
+    pub fn stop_audio_layer(&mut self) {
+        if self.jack_client.len() == 1 {
+            let async_client = self.jack_client.remove(0_usize);
+            if let Err(err) = async_client.deactivate() {
+                debug!("Problem stopping jack; {}", err);
+            }
+        }
+        else if let Some(mut alsa_layer) = self.alsa_layer.take() {
+            alsa_layer.stop_and_take_engine();
+        }
+        self.alsa_midi_cmd_tx = None;
+        self.alsa_track_ports.clear();
+        self.stop_alsa_midi_input();
+    }
+
+    /// Push the actual (backend granted) sample rate and block size - which
+    /// must already have been stored into the configuration - into every part
+    /// of the audio engine that paces itself by them: the global transport,
+    /// the vst host time info and all running track background processors
+    /// (which reconfigure their plugins through the AudioConfigurationChange
+    /// event).
     fn apply_actual_audio_configuration(&self, vst_host_time_info: Arc<RwLock<TimeInfo>>) {
         let actual_sample_rate = self.configuration.audio.sample_rate as f64;
         let actual_block_size = self.configuration.audio.block_size as f64;
@@ -2768,20 +3031,100 @@ impl DAWState {
         self.jack_connections.insert(from_name, to_name);
     }
 
-    pub fn jack_midi_connection_add(&mut self, track_uuid: String, to_name: String) {
-        debug!("Jack midi connection added: track={}, to={}", track_uuid.as_str(), to_name.as_str());
-        if let Some(jack_client) = self.jack_client.get(0) {
-            let _ = jack_client.as_client().connect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+    /// Register the track's midi output port on the active midi backend and
+    /// return it (the caller hands it to the audio layer as an inward event).
+    pub fn register_track_midi_out_port(&mut self, track_uuid: &str) -> Option<MidiOutPort> {
+        match self.midi_backend() {
+            AudioBackend::Jack => {
+                if let Some(jack_client) = self.jack_client() {
+                    match jack_client.register_port(track_uuid, MidiOut::default()) {
+                        Ok(port) => Some(MidiOutPort::Jack(port)),
+                        Err(_) => {
+                            debug!("Could not register the jack midi out port for track={}", track_uuid);
+                            None
+                        }
+                    }
+                }
+                else {
+                    None
+                }
+            }
+            AudioBackend::Alsa => {
+                let cmd_tx = self.alsa_midi_cmd_tx.clone()?;
+                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+                match cmd_tx.send(AlsaMidiCommand::CreateTrackPort { track_uuid: track_uuid.to_string(), reply: reply_tx }) {
+                    Ok(_) => {
+                        // the engine thread answers this at the start of a
+                        // cycle - wait a few cycles worth at most
+                        match reply_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                            Ok(Some(port)) => {
+                                self.alsa_track_ports.insert(track_uuid.to_string(), port);
+                                Some(MidiOutPort::Alsa(alsa::seq::Addr { client: self.alsa_midi_client, port }))
+                            }
+                            Ok(None) => {
+                                warn!("ALSA midi: creating the track output port failed for {}", track_uuid);
+                                None
+                            }
+                            Err(_) => {
+                                warn!("ALSA midi: timed out waiting for the track output port for {}", track_uuid);
+                                None
+                            }
+                        }
+                    }
+                    Err(_) => None,
+                }
+            }
         }
-        self.jack_connections.insert(track_uuid, to_name);
     }
 
-    pub fn jack_midi_connection_remove(&mut self, track_uuid: String, to_name: String) {
-        debug!("Jack midi connection removed: track={}, to={}", track_uuid.as_str(), to_name.as_str());
-        if let Some(jack_client) = self.jack_client.get(0) {
-            let _ = jack_client.as_client().disconnect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+    /// Connect the track's midi output port to a device port. For jack the
+    /// name is the jack port name, for alsa it is the enumeration string
+    /// starting with the "client:port" address.
+    pub fn midi_connection_add(&mut self, track_uuid: String, to_name: String) {
+        match self.midi_backend() {
+            AudioBackend::Jack => {
+                debug!("Jack midi connection added: track={}, to={}", track_uuid.as_str(), to_name.as_str());
+                if let Some(jack_client) = self.jack_client.get(0) {
+                    let _ = jack_client.as_client().connect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+                }
+                self.jack_connections.insert(track_uuid, to_name);
+            }
+            AudioBackend::Alsa => {
+                match Self::alsa_midi_output_device_addr(to_name.as_str()) {
+                    Some(addr) => {
+                        debug!("ALSA midi connection added: track={}, to={}:{}", track_uuid.as_str(), addr.client, addr.port);
+                        self.alsa_midi_subscriptions.insert(track_uuid.clone(), addr);
+                        if let Some(cmd_tx) = self.alsa_midi_cmd_tx.clone() {
+                            let _ = cmd_tx.send(AlsaMidiCommand::SubscribeTrack { track_uuid, dest: addr });
+                        }
+                    }
+                    None => {
+                        warn!("ALSA midi: could not parse the device address of \"{}\"", to_name.as_str());
+                    }
+                }
+            }
         }
-        self.jack_connections.remove(&track_uuid);
+    }
+
+    pub fn midi_connection_remove(&mut self, track_uuid: String, to_name: String) {
+        match self.midi_backend() {
+            AudioBackend::Jack => {
+                debug!("Jack midi connection removed: track={}, to={}", track_uuid.as_str(), to_name.as_str());
+                if let Some(jack_client) = self.jack_client.get(0) {
+                    let _ = jack_client.as_client().disconnect_ports_by_name(format!("DAW:{}", track_uuid.as_str()).as_str(), to_name.as_str());
+                }
+                self.jack_connections.remove(&track_uuid);
+            }
+            AudioBackend::Alsa => {
+                if let Some(addr) = Self::alsa_midi_output_device_addr(to_name.as_str()) {
+                    debug!("ALSA midi connection removed: track={}, to={}:{}", track_uuid.as_str(), addr.client, addr.port);
+                    self.alsa_midi_subscriptions.remove(&track_uuid);
+                    if let Some(cmd_tx) = self.alsa_midi_cmd_tx.clone() {
+                        let _ = cmd_tx.send(AlsaMidiCommand::UnsubscribeTrack { track_uuid, dest: addr });
+                    }
+                }
+            }
+        }
     }
 
     pub fn sample_data(&self) -> &HashMap<String, SampleData> {
@@ -2792,11 +3135,19 @@ impl DAWState {
         &mut self.sample_data
     }
 
+    /// The selectable midi output devices of the active midi backend.
     pub fn midi_devices(&mut self) -> Vec<String> {
-        if let Some(client) = self.jack_client() {
-            client.ports(None, Some("8 bit raw midi"), PortFlags::IS_INPUT).iter().filter(|port_name| !port_name.starts_with("DAW")).map(|port_name| port_name.to_string()).collect()
-        } else {
-            vec![]
+        match self.midi_backend() {
+            AudioBackend::Jack => {
+                if let Some(client) = self.jack_client() {
+                    client.ports(None, Some("8 bit raw midi"), PortFlags::IS_INPUT).iter().filter(|port_name| !port_name.starts_with("DAW")).map(|port_name| port_name.to_string()).collect()
+                } else {
+                    vec![]
+                }
+            }
+            AudioBackend::Alsa => {
+                crate::alsa::alsa_midi_output_devices()
+            }
         }
     }
 

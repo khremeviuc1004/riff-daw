@@ -11,7 +11,6 @@ use gdk4_x11::X11Surface;
 use gtk4::{glib, prelude::*, Adjustment, Viewport, Window};
 use indexmap::IndexMap;
 use itertools::Itertools;
-use jack::MidiOut;
 use log::*;
 use mlua::{Lua, MultiValue, Value};
 use parking_lot::RwLock;
@@ -32,7 +31,7 @@ use ui::*;
 use crate::gtk4_compat::{GtkContainerCompat, GtkDialogRunCompat};
 
 use crate::{grid::Grid, utils::DAWUtils};
-use crate::audio::Audio;
+use crate::audio::{AudioEngine, JackProcessHandler};
 use crate::constants::EVENT_DELETION_BEAT_TOLERANCE;
 
 mod combo_box_text_compat;
@@ -45,6 +44,7 @@ mod ui;
 mod state;
 mod event;
 mod audio;
+mod alsa;
 mod grid;
 mod utils;
 mod audio_plugin_util;
@@ -282,7 +282,7 @@ fn main() {
 
         match state.lock() {
             Ok(mut state) => {
-                state.start_jack(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, jack_audio_coast, vst_host_time_info);
+                state.start_audio_layer(rx_to_audio, jack_midi_sender, jack_midi_sender_ui, jack_time_critical_midi_sender, jack_audio_coast, vst_host_time_info);
             }
             Err(_) => {}
         }
@@ -823,16 +823,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
 
                     match state_arc2.lock() {
-                        Ok(state) => {
+                        Ok(mut state) => {
                             let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Creating track midi ports...".to_string()));
                             // add midi track ports
                             for (track_uuid, _) in midi_tracks {
-                                if let Some(jack_client) = state.jack_client() {
-                                    if let Ok(midi_out_port) = jack_client.register_port(track_uuid.as_str(), MidiOut::default()) {
-                                        match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
-                                            Ok(_) => (),
-                                            Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
-                                        }
+                                if let Some(midi_out_port) = state.register_track_midi_out_port(track_uuid.as_str()) {
+                                    match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
+                                        Ok(_) => (),
+                                        Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to the audio layer: {}", error),
                                     }
                                 }
                             }
@@ -1319,16 +1317,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     }
 
                     match state_arc2.lock() {
-                        Ok(state) => {
+                        Ok(mut state) => {
                             let _ = tx_from_ui.send(DAWEvents::UpdateProgressBarMessage("Creating track midi ports...".to_string()));
                             // add midi track ports
                             for (track_uuid, _) in midi_tracks {
-                                if let Some(jack_client) = state.jack_client() {
-                                    if let Ok(midi_out_port) = jack_client.register_port(track_uuid.as_str(), MidiOut::default()) {
-                                        match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
-                                            Ok(_) => (),
-                                            Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
-                                        }
+                                if let Some(midi_out_port) = state.register_track_midi_out_port(track_uuid.as_str()) {
+                                    match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid.clone(), midi_out_port)) {
+                                        Ok(_) => (),
+                                        Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to the audio layer: {}", error),
                                     }
                                 }
                             }
@@ -1934,12 +1930,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         );
                                     }
                                     thread::sleep(Duration::from_secs(1));
-                                    if let Some(jack_client) = state.jack_client() {
-                                        if let Ok(midi_out_port) = jack_client.register_port(uuid.as_str(), MidiOut::default()) {
-                                            match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(uuid, midi_out_port)) {
-                                                Ok(_) => (),
-                                                Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to jack layer: {}", error),
-                                            }
+                                    if let Some(midi_out_port) = state.register_track_midi_out_port(uuid.as_str()) {
+                                        match tx_to_audio.send(AudioLayerInwardEvent::NewMidiOutPortForTrack(uuid, midi_out_port)) {
+                                            Ok(_) => (),
+                                            Err(error) => debug!("Problem using tx_to_audio to send new midi out port message to the audio layer: {}", error),
                                         }
                                     }
                                     debug!("Added a midi track to the state.");
@@ -2129,9 +2123,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     track.midi_device_mut().set_name(new_name.clone());
                                 }
                                 if !previous_name.is_empty() {
-                                    state.jack_midi_connection_remove(track_uuid.clone(), previous_name);
+                                    state.midi_connection_remove(track_uuid.clone(), previous_name);
                                 }
-                                state.jack_midi_connection_add(track_uuid, new_name);
+                                state.midi_connection_add(track_uuid, new_name);
                                 vec![]
                             })
                         },
@@ -2143,9 +2137,9 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 if let Some(TrackType::MidiTrack(track)) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
                                     track.midi_device_mut().set_name(previous_name.clone());
                                 }
-                                state.jack_midi_connection_remove(track_uuid.clone(), new_name);
+                                state.midi_connection_remove(track_uuid.clone(), new_name);
                                 if !previous_name.is_empty() {
-                                    state.jack_midi_connection_add(track_uuid, previous_name);
+                                    state.midi_connection_add(track_uuid, previous_name);
                                 }
                                 vec![]
                             })
@@ -9842,8 +9836,9 @@ win.connect_close_request(|window| {
                     Err(_) => debug!("Main - rx_ui processing loop - DAWEvents::RiffReferenceRegenerateIds - could not get lock on state"),
                 }
             }
-            DAWEvents::AudioConfigurationChanged(sample_rate, block_size) => {
-                debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - sample_rate={}, block_size={}", sample_rate, block_size);
+            DAWEvents::AudioConfigurationChanged(audio_configuration) => {
+                debug!("Main - rx_ui processing loop - DAWEvents::AudioConfigurationChanged - sample_rate={}, block_size={}, backend={}, alsa_device={}, midi_backend={}",
+                    audio_configuration.sample_rate, audio_configuration.block_size, audio_configuration.backend.name(), audio_configuration.alsa_device, audio_configuration.midi_backend.name());
                 match state.lock() {
                     Ok(mut state) => {
                         // stop the transport (if running) so playback is not torn out of
@@ -9855,10 +9850,10 @@ win.connect_close_request(|window| {
                             for track in song.tracks() {
                                 state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Stop);
                             }
-                            let number_of_blocks = (song_length_in_beats / bpm * 60.0 * sample_rate as f64 / block_size as f64) as i32;
+                            let number_of_blocks = (song_length_in_beats / bpm * 60.0 * audio_configuration.sample_rate as f64 / audio_configuration.block_size as f64) as i32;
                             match tx_to_audio.send(AudioLayerInwardEvent::Play(false, number_of_blocks, 0)) {
                                 Ok(_) => (),
-                                Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when stopping play for an audio configuration change: {}", error),
+                                Err(error) => debug!("Problem using tx_to_audio to send message to the audio layer when stopping play for an audio configuration change: {}", error),
                             }
                             state.set_playing(false);
                             state.set_playing_riff_set(None);
@@ -9867,29 +9862,27 @@ win.connect_close_request(|window| {
                             state.set_playing_riff_grid(None);
                         }
 
-                        // apply the requested configuration and restart the jack client -
-                        // the restarted client requests the new buffer size from the jack
-                        // server before activation and the track audio consumers are moved
-                        // over intact, so the track plugin threads keep running and keep
-                        // their state.
-                        state.configuration.audio.sample_rate = sample_rate;
-                        state.configuration.audio.block_size = block_size;
-                        state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+                        // apply the requested audio system configuration (backend, alsa
+                        // device, sample rate, block size, midi system) and rebuild the
+                        // audio layer: the currently running layer (jack or alsa) is
+                        // stopped, the configured one is started, and the track audio and
+                        // midi consumers are moved over intact - the track plugin threads
+                        // keep running and keep their state throughout the switch.
+                        state.configuration.audio = audio_configuration.clone();
+                        state.start_audio_layer(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
 
                         // the sample rate is a jack server wide setting and the server can
                         // also override the requested buffer size (it picks the largest of
-                        // all client requests) - reconcile the configuration with what the
-                        // jack server actually gave us.
-                        let actual_configuration = match state.jack_client() {
-                            Some(client) => Some((client.sample_rate() as i32, client.buffer_size() as i32)),
-                            None => None,
-                        };
+                        // all client requests); an alsa device negotiates its rate and
+                        // period too - reconcile the configuration with what the backend
+                        // actually granted.
+                        let actual_configuration = state.granted_audio_configuration();
                         if let Some((actual_sample_rate, actual_block_size)) = actual_configuration {
                             if actual_sample_rate != state.configuration.audio.sample_rate {
-                                debug!("The jack server is running at {} - the requested sample rate of {} cannot be applied to a running server.", actual_sample_rate, sample_rate);
+                                debug!("The audio backend is running at {} - the requested sample rate of {} cannot be applied.", actual_sample_rate, audio_configuration.sample_rate);
                             }
                             if actual_block_size != state.configuration.audio.block_size {
-                                debug!("The jack server granted a buffer size of {} - the requested block size of {} was adjusted to match.", actual_block_size, block_size);
+                                debug!("The audio backend granted a block size of {} - the requested block size of {} was adjusted to match.", actual_block_size, audio_configuration.block_size);
                             }
                             state.configuration.audio.sample_rate = actual_sample_rate;
                             state.configuration.audio.block_size = actual_block_size;
@@ -17753,7 +17746,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                         JACK_ZERO_CYCLE_RESTARTS.store(zero_cycle_restarts + 1, Ordering::Relaxed);
                         warn!("JACK: the previous client rebuild produced ZERO process cycles - the jack server's driver loop is wedged or a zombie client is holding up the graph, not our client. One more slow rebuild (probe {}/4) - if this does not restore cycles, restart the jack server (qjackctl) or reduce the load; further rebuilds are paused until cycles actually return.", zero_cycle_restarts + 1);
                         LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
-                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
                     }
                     else if now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 60000 {
                         // keep a very slow reconnect probe alive: if the user
@@ -17761,25 +17754,25 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                         // to the fresh server - but never at graph-churning rates
                         LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
                         warn!("JACK: still no process cycles after {} zero-cycle rebuilds - holding at one slow reconnect probe per minute (this also catches a jack server restart).", 4);
-                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                        let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
                     }
                 }
                 else if attempts < 3 {
                     JACK_STALLED_RESTART_ATTEMPTS.store(attempts + 1, Ordering::Relaxed);
                     warn!("JACK: no process cycles for {}ms while the transport is playing - the client appears to have been taken out of the graph, triggering client restart attempt {}/3.", now_millis - last_cycle, attempts + 1);
                     LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
-                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
                 }
                 else if attempts == 3 {
                     warn!("JACK: the stall returned after 3 client rebuilds and each reconnect churns the graph (xrun waves) - this is a restart storm, so rebuilds are paused. The jack server is overloaded or its audio driver loop has wedged: restart the jack server (e.g. qjackctl) or reduce the load. One opportunistic rebuild will be tried every 30s until cycles stay stable.");
                     JACK_STALLED_RESTART_ATTEMPTS.store(4, Ordering::Relaxed);
                     LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
-                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
                 }
                 else if now_millis.saturating_sub(LAST_JACK_RESTART_TRIGGER_MILLIS.load(Ordering::Relaxed)) > 30000 {
                     warn!("JACK: still stalling - one opportunistic client rebuild (escalation clears after 15s of stable cycles).");
                     LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
-                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+                    let _ = jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
                 }
             }
         }
@@ -17995,7 +17988,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                         Err(_) => {}
                     }
                 }
-                AudioLayerOutwardEvent::JackRestartRequired => {
+                AudioLayerOutwardEvent::AudioLayerRestartRequired => {
                     match state.lock() {
                         Ok(mut state) => {
                             let now_millis = std::time::SystemTime::now()
@@ -18023,7 +18016,7 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                                 // heartbeat window the watchdog watches
                                 JACK_RESTART_GRACE_UNTIL_MILLIS.store(now_millis + 12000, Ordering::Relaxed);
                                 LAST_JACK_RESTART_TRIGGER_MILLIS.store(now_millis, Ordering::Relaxed);
-                                state.restart_jack(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
+                                state.start_audio_layer(rx_to_audio.clone(), jack_midi_sender.clone(), jack_midi_sender_ui.clone(), jack_time_critical_midi_sender.clone(), jack_audio_coast.clone(), vst_host_time_info.clone());
                                 if was_playing {
                                     // do NOT re-arm playback into a server that has
                                     // not granted any cycles yet: playing track

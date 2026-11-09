@@ -146,6 +146,42 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">2</property>
+                    <property name="label" translatable="yes">Audio System</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="audio_backend_combobox">
+                    <property name="width-request">100</property>
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">2</property>
+                    <property name="label" translatable="yes">Alsa Device</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="alsa_device_combobox">
+                    <property name="width-request">300</property>
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                  </object>
+                </child>
+                <child>
                   <placeholder />
                 </child>
               </object>
@@ -159,14 +195,61 @@
             <child>
               <object class="GtkBox">
                 <property name="visible">True</property>
+                <property name="margin-start">10</property>
+                <property name="margin-top">10</property>
                 <property name="hexpand">True</property>
                 <property name="vexpand">True</property>
                 <property name="orientation">vertical</property>
                 <child>
-                  <placeholder />
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="margin-bottom">2</property>
+                    <property name="label" translatable="yes">Midi System</property>
+                  </object>
                 </child>
                 <child>
-                  <placeholder />
+                  <object class="GtkDropDown" id="midi_backend_combobox">
+                    <property name="width-request">100</property>
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">2</property>
+                    <property name="label" translatable="yes">Alsa Midi Input Devices (client:port, comma separated) - feeds DAW midi_in</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="alsa_midi_in_entry">
+                    <property name="visible">True</property>
+                    <property name="valign">center</property>
+                    <property name="hexpand">True</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">2</property>
+                    <property name="label" translatable="yes">Alsa Midi Control Input Devices (client:port, comma separated) - feeds DAW midi_control_in</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="alsa_midi_control_in_entry">
+                    <property name="visible">True</property>
+                    <property name="valign">center</property>
+                    <property name="hexpand">True</property>
+                  </object>
                 </child>
                 <child>
                   <placeholder />

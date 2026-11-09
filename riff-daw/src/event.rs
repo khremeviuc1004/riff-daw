@@ -5,14 +5,13 @@ use std::{
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, SyncSender};
 
-use jack::{MidiOut, Port};
 use rb::{Consumer, Producer, SpscRb};
 use simple_clap_host_helper_lib::plugin::library::PluginLibrary;
 use uuid::Uuid;
 use vst::{event::MidiEvent, host::PluginLoader};
 
 use crate::{MidiConsumerDetails, SampleData, domain::Riff};
-use crate::domain::{AudioBlock, AudioConsumerDetails, AudioRouting, NoteExpressionType, PluginParameter, RiffItemType, ScannedPlugin, TrackEvent, TrackEventRouting, VstHost};
+use crate::domain::{AudioBlock, AudioConfiguration, AudioConsumerDetails, AudioRouting, MidiOutPort, NoteExpressionType, PluginParameter, RiffItemType, ScannedPlugin, TrackEvent, TrackEventRouting, VstHost};
 use crate::state::{MidiPolyphonicExpressionNoteId};
 
 #[derive(Clone)]
@@ -288,7 +287,7 @@ pub enum AudioLayerInwardEvent {
     Pan(f32),    // pan
     Shutdown,
     RemoveTrack(String),                           // track uuid
-    NewMidiOutPortForTrack(String, Port<MidiOut>), // track uuid, jack midi port
+    NewMidiOutPortForTrack(String, MidiOutPort), // track uuid, backend midi out port
 
     // the sample is loaded on the ui thread: a wav decode (file open, allocation,
     // sndfile read) on the realtime thread can blow the jack deadline whenever the
@@ -468,7 +467,7 @@ pub enum DAWEvents {
     RepaintRiffSetsBox,
     RepaintRiffSequencesBox,
 
-    AudioConfigurationChanged(i32, i32),
+    AudioConfigurationChanged(AudioConfiguration), // full new audio/midi layer draft from the preferences dialogue
 }
 
 pub enum TrackBackgroundProcessorInwardEvent {
@@ -673,7 +672,7 @@ pub enum AudioLayerOutwardEvent {
     MidiControlEvent(MidiEvent),
     GeneralMMCEvent([u8; 6]),
     PlayPositionInFrames(u32),
-    JackRestartRequired,
+    AudioLayerRestartRequired,
     JackConnect(String, String), // from, to
     MasterChannelLevels(f32, f32),
 }

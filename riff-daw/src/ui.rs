@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::constants::{RIFF_ARRANGEMENT_VIEW_TRACK_PANEL_HEIGHT, RIFF_SEQUENCE_VIEW_TRACK_PANEL_HEIGHT, RIFF_SET_VIEW_TRACK_PANEL_HEIGHT, GTK_APPLICATION_ID, PLUGIN_PATHS_SEPARATOR};
 use crate::{AudioEffectTrack, GeneralTrackType, RiffArrangement, RiffItemType};
-use crate::domain::{AudioPluginType, DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, ScannedPlugin};
+use crate::domain::{AudioBackend, AudioPluginType, DAWItemPosition, DAWItemLength, DAWItemID, NoteExpressionType, Track, TrackType, Note, TrackEvent, Riff, RiffItem, ScannedPlugin};
 use crate::audio_plugin_util::{clap_plugin_id, clap_plugin_id_from};
 use crate::event::{AutomationChangeData, CurrentView, DAWEvents, LoopChangeType, MasterChannelChangeType, NoteExpressionData, OperationModeType, ShowType, TrackChangeType, AutomationEditType, AudioLayerInwardEvent, RiffGridChangeType};
 use crate::grid::{AutomationCustomPainter, AutomationMouseCoordHelper, BeatGrid, BeatGridRuler, Grid as FreedomGrid, MouseButton, MouseHandler, Piano, PianoRollCustomPainter, PianoRollMouseCoordHelper, PianoRollVerticalScaleCustomPainter, RiffSetTrackCustomPainter, SampleRollCustomPainter, SampleRollMouseCoordHelper, TrackGridCustomPainter, TrackGridMouseCoordHelper, EditItemHandler, DrawingAreaType, RiffGridMouseCoordHelper, RiffGridCustomPainter, DrawMode, AutomationEditItemHandler, RiffArrangementOverviewDummyCustomPainter, RiffArrangementOverviewCustomPainter, RiffArrangementOverviewMouseCoordHelper};
@@ -75,6 +75,11 @@ pub struct Ui {
     pub configuration_dialogue_cancel_button: Button,
     pub sample_rate_combobox: DropDown,
     pub block_size_combobox: DropDown,
+    pub audio_backend_combobox: DropDown,
+    pub alsa_device_combobox: DropDown,
+    pub midi_backend_combobox: DropDown,
+    pub alsa_midi_in_entry: Entry,
+    pub alsa_midi_control_in_entry: Entry,
     pub vst24_plugin_paths_entry: Entry,
     pub add_vst24_path_button: Button,
     pub clap_plugin_paths_entry: Entry,
@@ -789,6 +794,11 @@ gtk4_builder_from!(Ui {
     configuration_dialogue_cancel_button: Button,
     sample_rate_combobox: DropDown,
     block_size_combobox: DropDown,
+    audio_backend_combobox: DropDown,
+    alsa_device_combobox: DropDown,
+    midi_backend_combobox: DropDown,
+    alsa_midi_in_entry: Entry,
+    alsa_midi_control_in_entry: Entry,
     vst24_plugin_paths_entry: Entry,
     add_vst24_path_button: Button,
     clap_plugin_paths_entry: Entry,
@@ -1630,6 +1640,13 @@ impl MainWindow {
                 ("16", "16"), ("32", "32"), ("64", "64"), ("128", "128"), ("256", "256"), ("512", "512"), ("1024", "1024"), ("2048", "2048"),
             ];
             Self::populate_combo(&self.ui.block_size_combobox, &items);
+        }
+        {
+            let items = [
+                ("jack", "Jack"), ("alsa", "Alsa"),
+            ];
+            Self::populate_combo(&self.ui.audio_backend_combobox, &items);
+            Self::populate_combo(&self.ui.midi_backend_combobox, &items);
         }
         {
             let items = [
@@ -4977,14 +4994,30 @@ impl MainWindow {
             let tx_from_ui = tx_from_ui.clone();
             let sample_rate_combobox = self.ui.sample_rate_combobox.clone();
             let block_size_combobox = self.ui.block_size_combobox.clone();
+            let audio_backend_combobox = self.ui.audio_backend_combobox.clone();
+            let alsa_device_combobox = self.ui.alsa_device_combobox.clone();
+            let midi_backend_combobox = self.ui.midi_backend_combobox.clone();
+            let alsa_midi_in_entry = self.ui.alsa_midi_in_entry.clone();
+            let alsa_midi_control_in_entry = self.ui.alsa_midi_control_in_entry.clone();
             let vst24_plugin_paths_entry = self.ui.vst24_plugin_paths_entry.clone();
             let clap_plugin_paths_entry = self.ui.clap_plugin_paths_entry.clone();
             let vst3_plugin_paths_entry = self.ui.vst3_plugin_paths_entry.clone();
             let action = gio::SimpleAction::new("preferences", None);
             action.connect_activate(move |_, _| {
                 if let Ok(state) = state.lock() {
+                    audio_backend_combobox.set_active_id(Some(state.configuration.audio.backend.name()));
+                    // enumerate the alsa playback devices fresh each time the
+                    // dialogue opens (cards can come and go)
+                    alsa_device_combobox.remove_all();
+                    for (device, description) in crate::alsa::alsa_playback_devices() {
+                        alsa_device_combobox.append(Some(device.as_str()), description.as_str());
+                    }
+                    alsa_device_combobox.set_active_id(Some(state.configuration.audio.alsa_device.as_str()));
                     sample_rate_combobox.set_active_id(Some(format!("{}", state.configuration.audio.sample_rate).as_str()));
                     block_size_combobox.set_active_id(Some(format!("{}", state.configuration.audio.block_size).as_str()));
+                    midi_backend_combobox.set_active_id(Some(state.configuration.audio.midi_backend.name()));
+                    alsa_midi_in_entry.set_text(state.configuration.audio.alsa_midi_in.as_str());
+                    alsa_midi_control_in_entry.set_text(state.configuration.audio.alsa_midi_control_in.as_str());
                     vst24_plugin_paths_entry.set_text(state.configuration.vst24_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
                     clap_plugin_paths_entry.set_text(state.configuration.clap_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
                     vst3_plugin_paths_entry.set_text(state.configuration.vst3_plugin_paths.iter().join(PLUGIN_PATHS_SEPARATOR).as_str());
@@ -4992,12 +5025,30 @@ impl MainWindow {
                 if configuration_dialogue.run() == ResponseType::Ok {
                     debug!("***************************************---------------------------");
                     if let Ok(mut state) = state.lock() {
-                        let possible_new_sample_rate = sample_rate_combobox.active_id().unwrap().to_string();
-                        let possible_new_block_size = block_size_combobox.active_id().unwrap().to_string();
-                        if format!("{}", state.configuration.audio.sample_rate) != possible_new_sample_rate ||
-                            format!("{}", state.configuration.audio.block_size) != possible_new_block_size {
-                            let _ = tx_from_ui.send(DAWEvents::AudioConfigurationChanged(
-                                possible_new_sample_rate.parse().expect("Not a number"), possible_new_block_size.parse().expect("Not a number")));
+                        let mut draft = state.configuration.audio.clone();
+                        draft.sample_rate = sample_rate_combobox.active_id().unwrap().to_string().parse().expect("Not a number");
+                        draft.block_size = block_size_combobox.active_id().unwrap().to_string().parse().expect("Not a number");
+                        draft.backend = AudioBackend::from_name(audio_backend_combobox.active_id().unwrap_or_else(|| "jack".into()).as_str());
+                        if let Some(device) = alsa_device_combobox.active_id() {
+                            draft.alsa_device = device.to_string();
+                        }
+                        draft.midi_backend = AudioBackend::from_name(midi_backend_combobox.active_id().unwrap_or_else(|| "jack".into()).as_str());
+                        draft.alsa_midi_in = alsa_midi_in_entry.text().trim().to_string();
+                        draft.alsa_midi_control_in = alsa_midi_control_in_entry.text().trim().to_string();
+
+                        let audio_changed = draft.backend != state.configuration.audio.backend
+                            || draft.alsa_device != state.configuration.audio.alsa_device
+                            || draft.sample_rate != state.configuration.audio.sample_rate
+                            || draft.block_size != state.configuration.audio.block_size;
+                        let midi_changed = draft.midi_backend != state.configuration.audio.midi_backend
+                            || draft.alsa_midi_in != state.configuration.audio.alsa_midi_in
+                            || draft.alsa_midi_control_in != state.configuration.audio.alsa_midi_control_in;
+                        if audio_changed || midi_changed {
+                            // stop the running audio layer and start the configured
+                            // one (this is the "selecting alsa stops jack and starts
+                            // alsa" path - the track consumers and plugin threads
+                            // carry over intact)
+                            let _ = tx_from_ui.send(DAWEvents::AudioConfigurationChanged(draft));
                         }
 
                         state.configuration.vst24_plugin_paths.clear();

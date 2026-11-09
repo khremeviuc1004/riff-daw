@@ -1,4 +1,3 @@
-use std::convert::From;
 use std::sync::{Arc, Mutex};
 use jack::{AudioOut, Client, ClientStatus, Control, Frames, MidiIn, MidiOut, NotificationHandler, Port, PortId, ProcessHandler, ProcessScope, RawMidi};
 use rb::RbConsumer;
@@ -7,44 +6,87 @@ use vst::event::MidiEvent;
 
 use log::*;
 use parking_lot::RwLock;
-use crate::domain::{AudioBlock, TRANSPORT};
+use crate::alsa::{AlsaMidiInEvent, AlsaMidiOut};
+use crate::domain::{AudioBlock, MidiOutPort, TRANSPORT};
 
 use crate::{AudioConsumerDetails, AudioLayerInwardEvent, AudioLayerOutwardEvent, DAWUtils, MidiConsumerDetails, SampleData, TrackBackgroundProcessorMode};
 use crate::constants::{EVENT_BUFFER_SIZE, BLOCK_SIZE_MAX};
 use crate::event::AudioLayerTimeCriticalOutwardEvent;
 
-const MAX_MIDI_BYTES: usize = 3;
+/// Longest raw midi message the audio layer decodes (MMC system exclusive is
+/// six bytes; anything longer is truncated).
+pub const MIDI_IN_MAX_BYTES: usize = 8;
 
+/// A raw midi event handed to the engine for a cycle, abstracted over the
+/// backend that captured it. `time` is the frame offset inside the cycle;
+/// alsa events are timestamped with the wall clock instant they were
+/// received (`when`) and the engine converts them to frame offsets against
+/// the start of the cycle it is processing.
 #[derive(Copy, Clone)]
-pub struct MidiCopy {
-    len: usize,
-    data: [u8; MAX_MIDI_BYTES],
-    time: Frames,
+pub struct MidiInEvent {
+    pub time: u32,
+    pub len: usize,
+    pub bytes: [u8; MIDI_IN_MAX_BYTES],
+    pub when: Option<std::time::Instant>,
 }
 
-impl From<RawMidi<'_>> for MidiCopy {
-    fn from(midi: RawMidi<'_>) -> Self {
-        let len = std::cmp::min(MAX_MIDI_BYTES, midi.bytes.len());
-        let mut data = [0; MAX_MIDI_BYTES];
-        data[..len].copy_from_slice(&midi.bytes[..len]);
-        MidiCopy {
-            len,
-            data,
-            time: midi.time,
+pub const MIDI_IN_EVENT_EMPTY: MidiInEvent = MidiInEvent { time: 0, len: 0, bytes: [0; MIDI_IN_MAX_BYTES], when: None };
+
+impl MidiInEvent {
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    /// Build from a jack raw midi event (precise in-cycle frame time).
+    pub fn from_jack(event: &RawMidi<'_>) -> Self {
+        let len = std::cmp::min(MIDI_IN_MAX_BYTES, event.bytes.len());
+        let mut bytes = [0u8; MIDI_IN_MAX_BYTES];
+        bytes[..len].copy_from_slice(&event.bytes[..len]);
+        MidiInEvent { time: event.time as u32, len, bytes, when: None }
+    }
+
+    /// Build from raw bytes captured by another backend (the engine converts
+    /// `when` into a frame offset at the start of the cycle).
+    pub fn from_bytes(event: &AlsaMidiInEvent) -> Self {
+        let len = std::cmp::min(MIDI_IN_MAX_BYTES, event.len);
+        let mut bytes = [0u8; MIDI_IN_MAX_BYTES];
+        bytes[..len].copy_from_slice(&event.bytes[..len]);
+        MidiInEvent { time: 0, len, bytes, when: Some(event.when) }
+    }
+}
+
+/// The planar master output buffers the engine mixes into each cycle. The
+/// backend owns them and moves the frames to the sound hardware (jack port
+/// buffers or an alsa pcm write) after the cycle.
+pub struct MasterBuffers {
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
+}
+
+impl MasterBuffers {
+    pub fn new(frames: usize) -> Self {
+        Self {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        }
+    }
+
+    pub fn ensure_frames(&mut self, frames: usize) {
+        if self.left.len() != frames {
+            self.left.resize(frames, 0.0);
+            self.right.resize(frames, 0.0);
         }
     }
 }
 
-impl std::fmt::Debug for MidiCopy {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "Midi {{ time: {}, len: {}, data: {:?} }}",
-            self.time,
-            self.len,
-            &self.data[..self.len]
-        )
-    }
+/// Where the engine writes the midi events drained from the tracks' rings
+/// this cycle. The sink matches the active midi backend; a track consumer's
+/// port variant that does not match the sink is skipped (its events are
+/// dropped for the cycle).
+pub enum MidiOutSink<'a> {
+    Jack(&'a ProcessScope),
+    Alsa(&'a mut AlsaMidiOut),
+    None,
 }
 
 pub struct JackNotificationHandler {
@@ -86,7 +128,7 @@ impl NotificationHandler for JackNotificationHandler {
         // callback wrote. Any shutdown status means the same thing for playback: ask
         // the app to rebuild the client so the audio layer self-heals
         warn!("JACK: client shut down with status {:?} because \"{}\" - requesting client restart.", status, reason);
-        let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::JackRestartRequired);
+        let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::AudioLayerRestartRequired);
     }
 
     fn freewheel(&mut self, _: &Client, is_enabled: bool) {
@@ -197,15 +239,16 @@ impl NotificationHandler for JackNotificationHandler {
     }
 }
 
-pub struct Audio {
-    audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the jack callback method when reading from the track consumers
+/// The master audio engine: mixes every track's blocks into the master bus,
+/// moves the tracks' midi to the backend, captures live midi, advances the
+/// transport and applies the volume/pan/tempo/configuration inward events.
+/// It knows nothing about jack or alsa - a cycle runs against plain planar
+/// output buffers, pre-gathered midi input events and a midi output sink
+/// supplied by whichever backend is driving the cycle.
+pub struct AudioEngine {
+    audio_blocks: Vec<AudioBlock>, // being careful not to do heap allocation in the audio cycle when reading from the track consumers
     audio_block_pool: Vec<AudioBlock>,
-    jack_midi_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
-    out_l: Port<AudioOut>,
-    out_r: Port<AudioOut>,
-    midi_out: Port<MidiOut>,
-    midi_in: Port<MidiIn>,
-    midi_control_in: Port<MidiIn>,
+    midi_buffer: [(u32, u8, u8, u8, bool); EVENT_BUFFER_SIZE],
     audio_consumers: Vec<AudioConsumerDetails<AudioBlock>>,
     midi_consumers: Vec<MidiConsumerDetails<(u32, u8, u8, u8, bool)>>,
     play: bool,
@@ -224,13 +267,12 @@ pub struct Audio {
     jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
     jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
     coast: Arc<Mutex<TrackBackgroundProcessorMode>>,
-    custom_midi_out_ports: Vec<Port<MidiOut>>,
     keep_alive: bool,
     preview_sample: Option<SampleData>,
     preview_sample_current_frame: i32,
     vst_host_time_info: Arc<RwLock<TimeInfo>>,
     // audio health telemetry: wall-clock cycle timing, slow cycle / xrun counters and
-    // a shared counter that the notification handler bumps on every jack overrun
+    // a shared counter that the backends bump on every overrun
     cycle_count: u64,
     slow_cycles: u64,
     last_cycle_start: Option<std::time::Instant>,
@@ -239,9 +281,8 @@ pub struct Audio {
     limiter_cycles_window: u32,
 }
 
-impl Audio {
-    pub fn new(client: &Client,
-               rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
+impl AudioEngine {
+    pub fn new(rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
@@ -254,15 +295,10 @@ impl Audio {
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
 
-        Audio {
+        AudioEngine {
             audio_blocks: vec![],
             audio_block_pool,
-            jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
-            out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
-            out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
-            midi_out: client.register_port("midi_out", MidiOut::default()).unwrap(),
-            midi_in: client.register_port("midi_in", MidiIn::default()).unwrap(),
-            midi_control_in: client.register_port("midi_control_in", MidiIn::default()).unwrap(),
+            midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             audio_consumers: vec![],
             midi_consumers: vec![],
             play: false,
@@ -272,7 +308,7 @@ impl Audio {
             sample_rate_in_frames: sample_rate_in_frames as f64,
             tempo,
             block_size: block_size as f64,
-            frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
+            frames_per_beat: AudioEngine::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
             process_producers: true,
             master_volume: 1.0,
             master_pan: 0.0,
@@ -281,7 +317,6 @@ impl Audio {
             jack_midi_sender_ui,
             jack_time_critical_midi_sender,
             coast,
-            custom_midi_out_ports: vec![],
             keep_alive: true,
             preview_sample: None,
             preview_sample_current_frame: 0,
@@ -295,8 +330,7 @@ impl Audio {
         }
     }
 
-    pub fn new_with_consumers(client: &Client,
-                              rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
+    pub fn new_with_consumers(rx_to_audio: crossbeam_channel::Receiver<AudioLayerInwardEvent>,
                               jack_midi_sender: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               jack_midi_sender_ui: crossbeam_channel::Sender<AudioLayerOutwardEvent>,
                               jack_time_critical_midi_sender: crossbeam_channel::Sender<AudioLayerTimeCriticalOutwardEvent>,
@@ -311,15 +345,10 @@ impl Audio {
     ) -> Self {
         let audio_block_pool: Vec<AudioBlock> = (0..2500).map(|_| AudioBlock::default()).collect();
 
-        Audio {
+        AudioEngine {
             audio_blocks: vec![],
             audio_block_pool,
-            jack_midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
-            out_l: client.register_port("out_l", AudioOut::default()).unwrap(),
-            out_r: client.register_port("out_r", AudioOut::default()).unwrap(),
-            midi_out: client.register_port("midi_out", MidiOut::default()).unwrap(),
-            midi_in: client.register_port("midi_in", MidiIn::default()).unwrap(),
-            midi_control_in: client.register_port("midi_control_in", MidiIn::default()).unwrap(),
+            midi_buffer: [(0, 0, 0, 0, false); EVENT_BUFFER_SIZE],
             audio_consumers,
             midi_consumers,
             play: false,
@@ -329,7 +358,7 @@ impl Audio {
             sample_rate_in_frames: sample_rate_in_frames as f64,
             tempo,
             block_size: block_size as f64,
-            frames_per_beat: Audio::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
+            frames_per_beat: AudioEngine::frames_per_beat_calc(sample_rate_in_frames as f64, tempo),
             process_producers: true,
             master_volume: 1.0,
             master_pan: 0.5,
@@ -338,7 +367,6 @@ impl Audio {
             jack_midi_sender_ui,
             jack_time_critical_midi_sender,
             coast,
-            custom_midi_out_ports: vec![],
             keep_alive: true,
             preview_sample: None,
             preview_sample_current_frame: 0,
@@ -386,7 +414,7 @@ impl Audio {
         // only ever build/log on the realtime thread when something is wrong:
         // the old periodic 'all nominal' line allocated a String and pushed it
         // into the logger every 512 cycles (~23ms) while playing - log
-        // formatting and allocation have no business in the jack cycle.
+        // formatting and allocation have no business in the audio cycle.
         // silence from this reporter means healthy.
         if anomalies > 0 || self.slow_cycles > 10 || self.limiter_cycles_window > 128 {
             warn!("Audio health: cycles={} slow_cycles={} xruns={} limiter_cycles={}/512 consumers={} anomalous=[{}]",
@@ -403,10 +431,10 @@ impl Audio {
         (sample_rate_in_frames / tempo * 60.0) as u32
     }
 
-    fn handle_inward_events(&mut self, _client: &Client) {
+    fn handle_inward_events(&mut self) {
         // drain every pending event in one pass - the old single try_recv meant a burst
         // of transport events (rapid play/stop/seek cycles) could sit queued behind the
-        // others for many jack cycles, leaving the jack transport position and the track
+        // others for many cycles, leaving the audio transport position and the track
         // background processors playing from different positions.
         let mut events_processed = 0;
         while events_processed < 128 {
@@ -435,14 +463,14 @@ impl Audio {
                     // by update_position_and_notify, so a skipped publish here only
                     // delays it by one cycle - a blocked write here delays (or with
                     // parking_lot's writer-priority handoff, deadlocks into) the whole
-                    // graph and jack times the client out
+                    // graph and the backend overruns
                     if let Some(mut transport) = TRANSPORT.get().try_write() {
                         transport.position_in_frames = self.play_position_in_frames;
                     }
                     self.reset_audio_watchdogs();
                 }
                 AudioLayerInwardEvent::Seek(start_block) => {
-                    // rewind/scrub from the UI - move the jack transport to the same
+                    // rewind/scrub from the UI - move the transport to the same
                     // block the track background processors have been seeked to, the
                     // transport position must never run on from a seek while the UI
                     // thinks it has been rewound.
@@ -476,15 +504,15 @@ impl Audio {
                 AudioLayerInwardEvent::Tempo(new_tempo) => {
                     // debug!(root_logger, "*************Jack tempo received: tempo={}", tempo);
                     self.tempo = new_tempo;
-                    self.frames_per_beat = Audio::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
+                    self.frames_per_beat = AudioEngine::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
                 }
                 AudioLayerInwardEvent::SampleRate(new_sample_rate) => {
                     self.sample_rate_in_frames = new_sample_rate;
-                    self.frames_per_beat = Audio::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
+                    self.frames_per_beat = AudioEngine::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
                 }
                 AudioLayerInwardEvent::BlockSize(new_block_size) => {
                     self.block_size = new_block_size;
-                    self.frames_per_beat = Audio::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
+                    self.frames_per_beat = AudioEngine::frames_per_beat_calc(self.sample_rate_in_frames, self.tempo);
                 }
                 AudioLayerInwardEvent::Volume(volume) => {
                     self.master_volume = volume;
@@ -509,7 +537,7 @@ impl Audio {
                     }
                 }
                 AudioLayerInwardEvent::NewMidiOutPortForTrack(track_uuid, midi_out_port) => {
-                    debug!("Jack layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
+                    debug!("Audio layer received: AudioLayerInwardEvent::NewMidiOutPortForTrack");
                     if let Some(midi_consumer_details) = self.midi_consumers.iter_mut().find(|midi_consumer_details| midi_consumer_details.track_uuid().clone() == track_uuid.clone()) {
                         midi_consumer_details.set_midi_out_port(Some(midi_out_port));
                     }
@@ -592,30 +620,28 @@ impl Audio {
         // queued blocks live outside the pool for the delay span - make sure the
         // pool can still hand one scratch block to every consumer each cycle.
         // (this Vec growth runs on control events, which is where the rest of the
-        // control-path allocation in the jack layer already happens)
+        // control-path allocation in the audio layer already happens)
         let pool_needed = self.audio_consumers.len() * (presentation + 2);
         while self.audio_block_pool.len() < pool_needed {
             self.audio_block_pool.push(AudioBlock::default());
         }
     }
 
-    fn zero_jack_buffers(&mut self, process_scope: &ProcessScope) {
-        let out_left = self.out_l.as_mut_slice(process_scope);
-        let out_right = self.out_r.as_mut_slice(process_scope);
-        // zero the jack buffers
-        for index in 0..out_right.len() {
-            match out_left.get_mut(index) {
+    fn zero_buffers(&mut self, buffers: &mut MasterBuffers) {
+        // zero the master buffers
+        for index in 0..buffers.right.len() {
+            match buffers.left.get_mut(index) {
                 Some(left) => *left = 0.0,
                 None => (),
             }
-            match out_right.get_mut(index) {
+            match buffers.right.get_mut(index) {
                 Some(right) => *right = 0.0,
                 None => (),
             }
         }
     }
 
-    fn process_audio(&mut self, process_scope: &ProcessScope) {
+    fn process_audio(&mut self, buffers: &mut MasterBuffers) {
         let frames_written = self.block_size() as usize;
         let mut number_of_consumers = self.audio_consumers.len() as f32;
         let (left_pan, right_pan) = DAWUtils::constant_power_stereo_pan(self.master_pan);
@@ -628,9 +654,9 @@ impl Audio {
 
         {
             // Mix every track directly into the master bus, consuming at most one audio
-            // block per track per jack cycle. The track background producers are paced by
+            // block per track per cycle. The track background producers are paced by
             // this consumption (they write_blocking into two slot ring buffers), so one
-            // block per track per cycle keeps every track locked to the jack cycle rate.
+            // block per track per cycle keeps every track locked to the cycle rate.
             //
             // The previous design only mixed a block once *every* track had delivered a
             // block for the same block number. A single slow or dead producer then either
@@ -638,9 +664,6 @@ impl Audio {
             // fallback - mixed time skewed blocks in separate cycles, which came out as
             // crackling, robotic audio and a wrong tempo on dense projects. A track that
             // cannot keep up now only misses its own block instead of wrecking the mix.
-            let out_left = self.out_l.as_mut_slice(process_scope);
-            let out_right = self.out_r.as_mut_slice(process_scope);
-
             for audio_consumer_details in self.audio_consumers.iter_mut() {
                 let consumer = audio_consumer_details.consumer();
                 if let Some(audio_block) = self.audio_block_pool.pop() {
@@ -657,10 +680,10 @@ impl Audio {
                         if read_audio_block {
                             // repetition watchdog: a producer whose plugin has died may
                             // keep shipping bit-identical non-silent blocks - the same
-                            // audio block machine-gunned at the jack cycle rate sounds
+                            // audio block machine-gunned at the cycle rate sounds
                             // exactly like harsh noise. Drop a consumer's blocks once
                             // its deliveries repeat unchanged, until the content changes.
-                            let (signature, block_peak) = Audio::audio_block_signature(&audio_block);
+                            let (signature, block_peak) = AudioEngine::audio_block_signature(&audio_block);
                             if !audio_consumer_details.observe_repetition(signature, block_peak > 1e-6) {
                                 audio_consumer_details.pending_blocks.push_back((audio_block, block_peak));
                                 queued = true;
@@ -691,7 +714,7 @@ impl Audio {
                     audio_consumer_details.observe_cycle(mix_this_block || audio_consumer_details.in_presentation_fill(), peak);
                     if let Some(audio_block) = presented {
                         if mix_this_block {
-                            for (index, (left, right)) in out_left.iter_mut().zip(out_right.iter_mut()).enumerate() {
+                            for (index, (left, right)) in buffers.left.iter_mut().zip(buffers.right.iter_mut()).enumerate() {
                                 if index < audio_block.audio_data_left.len() && index < audio_block.audio_data_right.len() {
                                     // a track whose plugin has gone bad fills its blocks with
                                     // NaN/Inf (or runaway oscillation far beyond any musical
@@ -728,7 +751,7 @@ impl Audio {
 
         let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MasterChannelLevels(master_channel_left_level, master_channel_right_level));
 
-        self.process_preview_sample(process_scope, frames_written, &mut number_of_consumers, left_pan, right_pan);
+        self.process_preview_sample(buffers, frames_written, &mut number_of_consumers, left_pan, right_pan);
 
         // master safety limiter: the master bus is a raw sum of every track with no
         // ceiling. A dense arrangement (this song builds from 1 to ~17 simultaneous
@@ -738,12 +761,10 @@ impl Audio {
         // where the arrangement gets dense. Soft-saturate anything over 0.8 so the
         // bus can never ship clipped garbage; material under the threshold is
         // untouched, so normal levels are unchanged.
-        let out_left = self.out_l.as_mut_slice(process_scope);
-        let out_right = self.out_r.as_mut_slice(process_scope);
         const THRESHOLD: f32 = 0.8;
         const HEADROOM: f32 = 1.0 - THRESHOLD;
         let mut limited_this_cycle = false;
-        for (left, right) in out_left.iter_mut().zip(out_right.iter_mut()) {
+        for (left, right) in buffers.left.iter_mut().zip(buffers.right.iter_mut()) {
             let l = *left;
             if l >= THRESHOLD || l <= -THRESHOLD {
                 limited_this_cycle = true;
@@ -775,8 +796,8 @@ impl Audio {
         }
     }
 
-    fn process_preview_sample(&mut self, process_scope: &ProcessScope, frames_written: usize, number_of_consumers: &mut f32, left_pan: f32, right_pan: f32) {
-        // mix straight into the jack buffers: the old version pushed every preview
+    fn process_preview_sample(&mut self, buffers: &mut MasterBuffers, frames_written: usize, number_of_consumers: &mut f32, left_pan: f32, right_pan: f32) {
+        // mix straight into the master buffers: the old version pushed every preview
         // frame through two scratch Vecs (a heap allocation per cycle on the
         // realtime thread) before writing them out
         let preview_sample_current_frame = self.preview_sample_current_frame() as usize;
@@ -793,9 +814,9 @@ impl Audio {
             for frame in 0..frames_written {
                 let left_channel_sample_index = (frame + preview_sample_current_frame) * sample_channels;
                 let right_channel_sample_index = left_channel_sample_index + 1;
-                // copy the two values out (a reborrow of the port buffers per frame
+                // copy the two values out (a reborrow of the buffer per frame
                 // is just a pointer read) instead of holding the sample borrow and
-                // the buffer borrow of *self at the same time
+                // the buffer borrow at the same time
                 let frames = if left_channel_sample_index < sample_length {
                     self.preview_sample().as_ref().map(|sample| {
                         if sample_channels == 1 {
@@ -812,11 +833,9 @@ impl Audio {
                     None
                 };
                 if let Some((left_channel, right_channel)) = frames {
-                    let out_left = self.out_l.as_mut_slice(process_scope);
-                    let out_right = self.out_r.as_mut_slice(process_scope);
-                    if frame < out_left.len() && frame < out_right.len() {
-                        out_left[frame] += left_channel * scale * left_pan;
-                        out_right[frame] += right_channel * scale * right_pan;
+                    if frame < buffers.left.len() && frame < buffers.right.len() {
+                        buffers.left[frame] += left_channel * scale * left_pan;
+                        buffers.right[frame] += right_channel * scale * right_pan;
                     }
                 }
             }
@@ -825,25 +844,43 @@ impl Audio {
         self.set_preview_sample_current_frame(self.preview_sample_current_frame() + frames_written as i32);
     }
 
-    fn process_midi_out(&mut self, process_scope: &ProcessScope) {
+    fn process_midi_out(&mut self, sink: &mut MidiOutSink) {
         for midi_consumer_detail in self.midi_consumers.iter_mut() {
             let consumer_midi = midi_consumer_detail.consumer_mut();
-            match consumer_midi.read(&mut self.jack_midi_buffer) {
+            match consumer_midi.read(&mut self.midi_buffer) {
                 Ok(read) => if read > 0 {
-                    // debug!("Jack audio received some midi events: {}", read);
+                    // debug!("Audio layer received some midi events: {}", read);
                     if let Some(midi_output_port) = midi_consumer_detail.midi_out_port_mut() {
-                        let mut midi_out_writer = midi_output_port.writer(process_scope);
-                        for count in 0..read {
-                            let (frames, byte1, byte2, byte3, active) = self.jack_midi_buffer[count];
-                            if active {
-                                // debug!("Jack audio sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
-                                let bytes = [byte1, byte2, byte3];
-                                let event = RawMidi { time: frames, bytes:  &bytes};
-                                let _ = midi_out_writer.write(&event);
+                        match (midi_output_port, &mut *sink) {
+                            (MidiOutPort::Jack(port), MidiOutSink::Jack(process_scope)) => {
+                                let mut midi_out_writer = port.writer(process_scope);
+                                for count in 0..read {
+                                    let (frames, byte1, byte2, byte3, active) = self.midi_buffer[count];
+                                    if active {
+                                        // debug!("Audio layer sending a midi event: {}, {}, {}, {}", frames, byte1, byte2, byte3);
+                                        let bytes = [byte1, byte2, byte3];
+                                        let event = RawMidi { time: frames, bytes:  &bytes};
+                                        let _ = midi_out_writer.write(&event);
+                                    }
+                                    else {
+                                        break;
+                                    }
+                                }
                             }
-                            else {
-                                break;
+                            (MidiOutPort::Alsa(dest), MidiOutSink::Alsa(alsa_out)) => {
+                                let sample_rate = self.sample_rate_in_frames;
+                                for count in 0..read {
+                                    let (frames, byte1, byte2, byte3, active) = self.midi_buffer[count];
+                                    if active {
+                                        alsa_out.schedule_midi(dest, frames, byte1, byte2, byte3, sample_rate);
+                                    }
+                                    else {
+                                        break;
+                                    }
+                                }
+                                let _ = alsa_out.seq.drain_output();
                             }
+                            _ => (),
                         }
                     }
                 },
@@ -852,18 +889,43 @@ impl Audio {
         }
     }
 
-    fn process_midi_in(&mut self, process_scope: &ProcessScope) {
-        let midi_in_data = self.midi_in.iter(process_scope);
-        for event in midi_in_data {
+    /// Convert an event timestamped with a wall clock instant (alsa events -
+    /// the sequencer does not hand the engine cycle-aligned frame offsets)
+    /// into a frame offset inside the cycle being processed. The captured
+    /// events were received during the window between the previous cycle
+    /// start and this one, so they are mapped onto the frames just elapsed:
+    /// an event received right before this cycle began lands near the end of
+    /// the previous cycle's window.
+    fn event_frame(&self, event: &MidiInEvent) -> u32 {
+        if let Some(when) = event.when {
+            if let Some(cycle_start) = self.last_cycle_start {
+                if let Some(back) = cycle_start.checked_duration_since(when) {
+                    let block_frames = self.block_size.max(0.0) as u32;
+                    let back_frames = (back.as_micros() as f64 * self.sample_rate_in_frames / 1_000_000.0) as u32;
+                    return block_frames.saturating_sub(back_frames);
+                }
+                return 0;
+            }
+            0
+        }
+        else {
+            event.time
+        }
+    }
+
+    fn process_midi_in(&mut self, events: &[MidiInEvent]) {
+        for event in events.iter() {
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
                 delta_frames = self.block * self.block_size as i32 /* + event.time as i32 */;
             }
 
-            if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 && event.bytes[2] > 0 { // note on
+            let bytes = event.bytes();
+
+            if bytes.len() >= 3 && 144 <= bytes[0] && bytes[0] <= 159 && bytes[2] > 0 { // note on
                 let note_on = MidiEvent {
-                    data: [event.bytes[0], event.bytes[1], event.bytes[2]],
+                    data: [bytes[0], bytes[1], bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -874,10 +936,10 @@ impl Audio {
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(note_on));
             }
-            else if (event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143)
-                || (event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 && event.bytes[2] == 0) { // note off (a zero velocity note on is a note off)
+            else if (bytes.len() >= 3 && 128 <= bytes[0] && bytes[0] <= 143)
+                || (bytes.len() >= 3 && 144 <= bytes[0] && bytes[0] <= 159 && bytes[2] == 0) { // note off (a zero velocity note on is a note off)
                 let note_off = MidiEvent {
-                    data: [128 + (event.bytes[0] & 0x0F), event.bytes[1], event.bytes[2]],
+                    data: [128 + (bytes[0] & 0x0F), bytes[1], bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -888,24 +950,24 @@ impl Audio {
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(note_off));
             }
-            else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
-                let controller = Self::create_midi_event(event, &mut delta_frames);
+            else if bytes.len() >= 3 && 176 <= bytes[0] && bytes[0]  <= 191  { // controllers
+                let controller = Self::create_midi_event(bytes, &mut delta_frames);
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(controller));
             }
-            else if event.bytes.len() >= 3 && 224 <= event.bytes[0] && event.bytes[0]  <= 239  { // pitch bend
-                let pitch_bend = Self::create_midi_event(event, &mut delta_frames);
+            else if bytes.len() >= 3 && 224 <= bytes[0] && bytes[0]  <= 239  { // pitch bend
+                let pitch_bend = Self::create_midi_event(bytes, &mut delta_frames);
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(pitch_bend));
             }
-            else if event.bytes.len() >= 3 && 160 <= event.bytes[0] && event.bytes[0]  <= 175  { // polyphonic key pressure
-                let polyphonic_key_pressure = Self::create_midi_event(event, &mut delta_frames);
+            else if bytes.len() >= 3 && 160 <= bytes[0] && bytes[0]  <= 175  { // polyphonic key pressure
+                let polyphonic_key_pressure = Self::create_midi_event(bytes, &mut delta_frames);
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(polyphonic_key_pressure));
             }
-            else if event.bytes.len() >= 2 && 208 <= event.bytes[0] && event.bytes[0]  <= 223  { // channel pressure (2 byte message)
+            else if bytes.len() >= 2 && 208 <= bytes[0] && bytes[0]  <= 223  { // channel pressure (2 byte message)
                 let channel_pressure = MidiEvent {
-                    data: [event.bytes[0], event.bytes[1], 0],
+                    data: [bytes[0], bytes[1], 0],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -916,9 +978,9 @@ impl Audio {
 
                 let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::MidiEvent(channel_pressure));
             }
-            else if event.bytes.len() >= 2 && 192 <= event.bytes[0] && event.bytes[0]  <= 207  { // program change (2 byte message)
+            else if bytes.len() >= 2 && 192 <= bytes[0] && bytes[0]  <= 207  { // program change (2 byte message)
                 let program_change = MidiEvent {
-                    data: [event.bytes[0], event.bytes[1], 0],
+                    data: [bytes[0], bytes[1], 0],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -932,9 +994,9 @@ impl Audio {
         }
     }
 
-    fn create_midi_event(event: RawMidi, delta_frames: &mut i32) -> MidiEvent {
+    fn create_midi_event(bytes: &[u8], delta_frames: &mut i32) -> MidiEvent {
         MidiEvent {
-            data: [event.bytes[0], event.bytes[1], event.bytes[2]],
+            data: [bytes[0], bytes[1], bytes[2]],
             delta_frames: *delta_frames,
             live: true,
             note_length: None,
@@ -944,18 +1006,20 @@ impl Audio {
         }
     }
 
-    fn process_midi_control_in(&mut self, process_scope: &ProcessScope) {
-        let midi_control_in_data = self.midi_control_in.iter(process_scope);
-        for event in midi_control_in_data {
+    fn process_midi_control_in(&mut self, events: &[MidiInEvent]) {
+        for event in events.iter() {
+            let event_time = self.event_frame(event);
             let mut delta_frames = 0;
 
             if self.play && self.block > -1 {
-                delta_frames = self.block * self.block_size as i32 + event.time as i32;
+                delta_frames = self.block * self.block_size as i32 + event_time as i32;
             }
 
-            if event.bytes.len() >= 3 && 144 <= event.bytes[0] && event.bytes[0] <= 159 { // note on
+            let bytes = event.bytes();
+
+            if bytes.len() >= 3 && 144 <= bytes[0] && bytes[0] <= 159 { // note on
                 let note_on = MidiEvent {
-                    data: [144, event.bytes[1], event.bytes[2]],
+                    data: [144, bytes[1], bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -967,9 +1031,9 @@ impl Audio {
 
                 let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_on));
             }
-            else if event.bytes.len() >= 3 && 128 <= event.bytes[0] && event.bytes[0] <= 143 { // note off
+            else if bytes.len() >= 3 && 128 <= bytes[0] && bytes[0] <= 143 { // note off
                 let note_off = MidiEvent {
-                    data: [128, event.bytes[1], event.bytes[2]],
+                    data: [128, bytes[1], bytes[2]],
                     delta_frames,
                     live: true,
                     note_length: None,
@@ -980,8 +1044,8 @@ impl Audio {
 
                 let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::MidiControlEvent(note_off));
             }
-            else if event.bytes.len() >= 3 && 176 <= event.bytes[0] && event.bytes[0]  <= 191  { // controllers
-                let controller = Self::create_midi_event(event, &mut delta_frames);
+            else if bytes.len() >= 3 && 176 <= bytes[0] && bytes[0]  <= 191  { // controllers
+                let controller = Self::create_midi_event(bytes, &mut delta_frames);
                 if controller.data[0] as i32 >= 176 && (controller.data[0] as i32 <= (176 + 15)) {
                     let _ = self.jack_time_critical_midi_sender.try_send(AudioLayerTimeCriticalOutwardEvent::TrackVolumePanLevel(controller));
                 }
@@ -989,19 +1053,19 @@ impl Audio {
                     let _ = self.jack_midi_sender.try_send(AudioLayerOutwardEvent::MidiControlEvent(controller));
                 }
             }
-            else if event.bytes.len() >= 3 && event.bytes.len() == 6 && event.bytes[0] == 240 && event.bytes[1] == 127 && event.bytes[3] == 6 {
-                let mmc_sysex_bytes: [u8; 6] = [240, 127, event.bytes[2], 6, event.bytes[4], 247];
+            else if bytes.len() == 6 && bytes[0] == 240 && bytes[1] == 127 && bytes[3] == 6 {
+                let mmc_sysex_bytes: [u8; 6] = [240, 127, bytes[2], 6, bytes[4], 247];
                 // try_send, never send: a blocking channel send on the realtime
-                // thread parks the jack cycle whenever the consumer pauses
+                // thread parks the audio cycle whenever the consumer pauses
                 match self.jack_midi_sender.try_send(AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes)) {
                     Ok(_) => {}
                     Err(err) => {
-                        debug!("jack problem sending General MMC event: {:?}", err);
+                        debug!("audio layer problem sending General MMC event: {:?}", err);
                     }
                 }
             }
-            else if event.bytes.len() == 3 {
-                debug!("jack - received a unknown message: {} {} {}", event.bytes[0], event.bytes[1], event.bytes[2]);
+            else if bytes.len() == 3 {
+                debug!("audio layer - received a unknown message: {} {} {}", bytes[0], bytes[1], bytes[2]);
             }
         }
     }
@@ -1019,10 +1083,10 @@ impl Audio {
             // the realtime thread must never park on a lock: the ui thread takes the
             // transport write lock while playing back edits, and plugins read the host
             // time info on their (real-time-priority) track threads for the length of a
-            // plugin block. A blocking write here stalls the jack cycle until the
-            // deadline is missed, jackd overruns the client and - after sustained
-            // misses - takes it out of the graph with no cycles at all. Skipping a
-            // publish costs one cycle of position latency, blocking costs the session.
+            // plugin block. A blocking write here stalls the cycle until the deadline
+            // is missed, the backend overruns and - after sustained misses - takes the
+            // whole audio layer out. Skipping a publish costs one cycle of position
+            // latency, blocking costs the session.
             if let Some(mut transport) = TRANSPORT.get().try_write() {
                 transport.position_in_frames = self.play_position_in_frames;
             }
@@ -1050,14 +1114,14 @@ impl Audio {
             // try_lock (was: blocking write) - the time info read lock is held by
             // track threads inside plugin blocks, and the transport stopped flag must
             // never be gated on lock contention in the realtime cycle: a blocked write
-            // here is a missed deadline and eventually a timed-out jack client
+            // here is a missed deadline and eventually a timed out audio layer
             if let Some(mut time_info) = self.vst_host_time_info.try_write() {
                 if time_info.flags & (1 << 1) == 2 { // transport playing need to stop
                     let mut flags = TimeInfoFlags::TRANSPORT_CHANGED.bits(); // transport changed
 
                     flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
                     flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
-                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
+                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq pos valid
                     time_info.flags = flags;
                 }
                 else if time_info.flags & 1 == 1 { // transport changed but not playing
@@ -1065,7 +1129,7 @@ impl Audio {
 
                     flags |= TimeInfoFlags::TEMPO_VALID.bits(); // tempo valid
                     flags |= TimeInfoFlags::TIME_SIG_VALID.bits(); // time signature valid
-                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq position valid
+                    flags |= TimeInfoFlags::PPQ_POS_VALID.bits(); // ppq pos valid
                     time_info.flags = flags;
                 }
             }
@@ -1083,10 +1147,6 @@ impl Audio {
                 TrackBackgroundProcessorMode::Render => false,
             };
         }
-    }
-
-    pub fn custom_midi_out_ports(&mut self) -> &mut Vec<Port<MidiOut>> {
-        &mut self.custom_midi_out_ports
     }
 
     pub fn get_all_audio_consumers(&mut self) -> Vec<AudioConsumerDetails<AudioBlock>> {
@@ -1132,11 +1192,24 @@ impl Audio {
     pub fn block_size(&self) -> f64 {
         self.block_size
     }
-}
 
-impl ProcessHandler for Audio {
-    fn process(&mut self, client: &Client, process_scope: &ProcessScope) -> Control {
-        // publish the cycle heartbeat for the UI pump's stalled-client watchdog
+    /// Count an overrun observed by the backend (alsa underrun recovery),
+    /// sharing the counter the health report reads.
+    pub fn count_xrun(&mut self) {
+        self.xruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// One audio layer cycle: the backend calls this once per cycle with its
+    /// master buffers (the backend moves the frames to the hardware afterwards),
+    /// the raw midi events it captured for this cycle and a sink for the tracks'
+    /// outgoing midi. Returns false when the layer has been asked to shut down.
+    pub fn process_cycle(&mut self,
+                         buffers: &mut MasterBuffers,
+                         midi_in_events: &[MidiInEvent],
+                         midi_control_in_events: &[MidiInEvent],
+                         sink: &mut MidiOutSink,
+                         frames: usize) -> bool {
+        // publish the cycle heartbeat for the UI pump's stalled-layer watchdog
         // (see domain::JACK_LAST_CYCLE_MILLIS) - a relaxed store of a vDSO
         // clock read, no allocation, no syscall that can block
         let heartbeat_millis = std::time::SystemTime::now()
@@ -1145,24 +1218,23 @@ impl ProcessHandler for Audio {
             .unwrap_or(0);
         crate::domain::JACK_LAST_CYCLE_MILLIS.store(heartbeat_millis, std::sync::atomic::Ordering::Relaxed);
 
-        // publish this thread's scheduling priority (this runs on the jack callback
-        // thread) once, so the track threads can keep themselves below it
+        // publish this thread's scheduling priority (this runs on the backend's
+        // realtime thread) once, so the track threads can keep themselves below it
         if crate::domain::JACK_THREAD_PRIORITY.load(std::sync::atomic::Ordering::Relaxed) == 0 {
             match thread_priority::get_current_thread_priority() {
                 Ok(thread_priority::ThreadPriority::Crossplatform(value)) => {
                     let value: u8 = value.into();
                     if value == 0 {
-                        // SCHED_OTHER jack worker (server running without realtime)
-                        debug!("JACK: callback thread is not running realtime - track threads will drop to normal scheduling.");
+                        debug!("Audio: callback thread is not running realtime - track threads will drop to normal scheduling.");
                         crate::domain::JACK_THREAD_PRIORITY.store(-1, std::sync::atomic::Ordering::Relaxed);
                     }
                     else {
-                        debug!("JACK: callback thread running with realtime priority {} - track threads will keep below it.", value);
+                        debug!("Audio: callback thread running with realtime priority {} - track threads will keep below it.", value);
                         crate::domain::JACK_THREAD_PRIORITY.store(value as i32, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 Ok(other) => {
-                    debug!("JACK: callback thread scheduling is {:?} - track threads will drop to normal scheduling.", other);
+                    debug!("Audio: callback thread scheduling is {:?} - track threads will drop to normal scheduling.", other);
                     crate::domain::JACK_THREAD_PRIORITY.store(-1, std::sync::atomic::Ordering::Relaxed);
                 }
                 Err(_) => {
@@ -1172,9 +1244,9 @@ impl ProcessHandler for Audio {
         }
 
         // cycle wall-clock timing: if a cycle starts later than the nominal period the
-        // engine is not keeping up and jack is overrunning (overruns are the classic
-        // mechanism for the audio layer starting to play noise part way through a
-        // long, heavy arrangement)
+        // engine is not keeping up and the backend is overrunning (overruns are the
+        // classic mechanism for the audio layer starting to play noise part way through
+        // a long, heavy arrangement)
         let cycle_start = std::time::Instant::now();
         if let Some(prev_cycle_start) = self.last_cycle_start {
             let expected_micros = self.block_size / self.sample_rate_in_frames * 1_000_000.0;
@@ -1185,35 +1257,167 @@ impl ProcessHandler for Audio {
         self.last_cycle_start = Some(cycle_start);
 
         // handle inward events on every cycle - transport events must take effect
-        // immediately so the jack position and the track processors never diverge
-        self.handle_inward_events(client);
+        // immediately so the audio layer position and the track processors never diverge
+        self.handle_inward_events();
 
-        self.zero_jack_buffers(process_scope);
+        buffers.ensure_frames(frames);
+        self.zero_buffers(buffers);
 
         if self.process_producers {
-            self.process_audio(process_scope);
-            self.process_midi_out(process_scope);
-            self.process_midi_in(process_scope);
-            self.process_midi_control_in(process_scope);
+            self.process_audio(buffers);
+            self.process_midi_out(sink);
+            self.process_midi_in(midi_in_events);
+            self.process_midi_control_in(midi_control_in_events);
             self.update_position_and_notify()
         }
 
         self.check_for_coast();
         self.report_audio_health();
 
-        if self.keep_alive {
+        self.keep_alive
+    }
+}
+
+/// The jack backend: owns the engine plus the jack ports, gathers the raw midi
+/// arriving on the jack ports (and from the alsa midi frontend when the midi
+/// backend is alsa), runs one engine cycle per jack callback and copies the
+/// mixed master buffers into the jack output port buffers.
+pub struct JackProcessHandler {
+    pub engine: AudioEngine,
+    out_l: Port<AudioOut>,
+    out_r: Port<AudioOut>,
+    /// DAW:midi_out monitor port - never written by the engine, it exists so the
+    /// port is present in the jack graph (the Port handle must stay alive)
+    #[allow(dead_code)]
+    midi_out: Port<MidiOut>,
+    midi_in: Port<MidiIn>,
+    midi_control_in: Port<MidiIn>,
+    buffers: MasterBuffers,
+    midi_in_scratch: [MidiInEvent; EVENT_BUFFER_SIZE],
+    midi_control_in_scratch: [MidiInEvent; EVENT_BUFFER_SIZE],
+    // when the midi backend is alsa but the audio still runs on the jack cycle,
+    // this handler also drives the alsa sequencer output and drains the alsa
+    // sequencer input frontend
+    alsa_midi_out: Option<AlsaMidiOut>,
+    alsa_midi_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+    alsa_midi_control_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+}
+
+impl JackProcessHandler {
+    pub fn new(client: &Client, engine: AudioEngine) -> Result<Self, jack::Error> {
+        let frames = client.buffer_size() as usize;
+        Ok(JackProcessHandler {
+            engine,
+            out_l: client.register_port("out_l", AudioOut::default())?,
+            out_r: client.register_port("out_r", AudioOut::default())?,
+            midi_out: client.register_port("midi_out", MidiOut::default())?,
+            midi_in: client.register_port("midi_in", MidiIn::default())?,
+            midi_control_in: client.register_port("midi_control_in", MidiIn::default())?,
+            buffers: MasterBuffers::new(frames),
+            midi_in_scratch: [MIDI_IN_EVENT_EMPTY; EVENT_BUFFER_SIZE],
+            midi_control_in_scratch: [MIDI_IN_EVENT_EMPTY; EVENT_BUFFER_SIZE],
+            alsa_midi_out: None,
+            alsa_midi_in_rx: None,
+            alsa_midi_control_in_rx: None,
+        })
+    }
+
+    /// Attach the alsa sequencer output frontend (midi backend = alsa while
+    /// the audio layer runs on jack).
+    pub fn set_alsa_midi(&mut self,
+                         alsa_midi_out: Option<AlsaMidiOut>,
+                         alsa_midi_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+                         alsa_midi_control_in_rx: Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>) {
+        self.alsa_midi_out = alsa_midi_out;
+        self.alsa_midi_in_rx = alsa_midi_in_rx;
+        self.alsa_midi_control_in_rx = alsa_midi_control_in_rx;
+    }
+
+    /// Fill a scratch array with the alsa sequencer events queued since the
+    /// last cycle (the input frontend thread timestamps them, the engine
+    /// converts them to in-cycle frame offsets).
+    fn drain_alsa_midi(rx: &Option<crossbeam_channel::Receiver<AlsaMidiInEvent>>,
+                       scratch: &mut [MidiInEvent; EVENT_BUFFER_SIZE]) -> usize {
+        if let Some(rx) = rx {
+            let mut count = 0;
+            while count < scratch.len() {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        scratch[count] = MidiInEvent::from_bytes(&event);
+                        count += 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+            count
+        }
+        else {
+            0
+        }
+    }
+}
+
+impl ProcessHandler for JackProcessHandler {
+    fn process(&mut self, _client: &Client, process_scope: &ProcessScope) -> Control {
+        let frames = process_scope.n_frames() as usize;
+
+        // gather this cycle's raw midi: the jack ports when the midi backend is
+        // jack, the alsa sequencer frontend when it is alsa
+        let mut midi_in_count = 0;
+        let mut midi_control_in_count = 0;
+        if self.alsa_midi_out.is_some() || self.alsa_midi_in_rx.is_some() || self.alsa_midi_control_in_rx.is_some() {
+            midi_in_count = Self::drain_alsa_midi(&self.alsa_midi_in_rx, &mut self.midi_in_scratch);
+            midi_control_in_count = Self::drain_alsa_midi(&self.alsa_midi_control_in_rx, &mut self.midi_control_in_scratch);
+        }
+        else {
+            for event in self.midi_in.iter(process_scope) {
+                if midi_in_count < EVENT_BUFFER_SIZE {
+                    self.midi_in_scratch[midi_in_count] = MidiInEvent::from_jack(&event);
+                    midi_in_count += 1;
+                }
+            }
+            for event in self.midi_control_in.iter(process_scope) {
+                if midi_control_in_count < EVENT_BUFFER_SIZE {
+                    self.midi_control_in_scratch[midi_control_in_count] = MidiInEvent::from_jack(&event);
+                    midi_control_in_count += 1;
+                }
+            }
+        }
+
+        // service the alsa midi control commands (per-track port create/destroy,
+        // device subscriptions) and choose the sink the tracks' midi drains into
+        {
+            if let Some(alsa_out) = self.alsa_midi_out.as_mut() {
+                alsa_out.service_commands();
+            }
+        }
+        let alsa_out_present = self.alsa_midi_out.is_some();
+        let keep_alive = {
+            let mut sink = if alsa_out_present {
+                MidiOutSink::Alsa(self.alsa_midi_out.as_mut().unwrap())
+            }
+            else {
+                MidiOutSink::Jack(process_scope)
+            };
+            self.engine.process_cycle(&mut self.buffers,
+                                      &self.midi_in_scratch[..midi_in_count],
+                                      &self.midi_control_in_scratch[..midi_control_in_count],
+                                      &mut sink,
+                                      frames)
+        };
+
+        // hand the mixed master buffers to the jack ports
+        let out_left = self.out_l.as_mut_slice(process_scope);
+        let out_right = self.out_r.as_mut_slice(process_scope);
+        let copy_frames = frames.min(self.buffers.left.len());
+        out_left[..copy_frames].copy_from_slice(&self.buffers.left[..copy_frames]);
+        out_right[..copy_frames].copy_from_slice(&self.buffers.right[..copy_frames]);
+
+        if keep_alive {
             Control::Continue
         }
         else {
             Control::Quit
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn list_audio_devices() {
     }
 }

@@ -1,0 +1,66 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface>
+  <requires lib="gtk" version="4.0" />
+  <object class="GtkWindow" id="riff_list_dialogue">
+    <property name="width-request">300</property>
+    <property name="height-request">400</property>
+    <property name="title" translatable="yes">Track Riffs</property>
+    <property name="resizable">True</property>
+    <child>
+      <object class="GtkBox">
+        <property name="visible">True</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="xalign">0</property>
+            <property name="label" translatable="yes">Riffs (use ctrl/shift and click to select multiple riffs)</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow" id="riff_list_scroll_window">
+            <property name="visible">True</property>
+            <property name="vexpand">True</property>
+            <property name="min-content-height">200</property>
+            <child>
+              <object class="GtkViewport">
+                <property name="visible">True</property>
+                <child>
+                  <object class="GtkListView" id="riff_list_view">
+                    <property name="visible">True</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="visible">True</property>
+            <property name="spacing">2</property>
+            <child>
+              <object class="GtkButton" id="riff_list_select_all_btn">
+                <property name="label" translatable="yes">Select All</property>
+                <property name="visible">True</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_list_delete_selected_btn">
+                <property name="label" translatable="yes">Delete Selected</property>
+                <property name="visible">True</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="riff_list_close_btn">
+                <property name="label" translatable="yes">_Close</property>
+                <property name="visible">True</property>
+                <property name="use-underline">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

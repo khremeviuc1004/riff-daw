@@ -2263,6 +2263,15 @@ pub fn apply_effects_change(state: &mut Arc<Mutex<DAWState>>,
                         }
                     }
                 }
+                // the effect set is unchanged but the chain order may have moved an
+                // effect up or down the list - tell the track thread to reorder the
+                // live plugin instances so the audio is processed in the new order.
+                let same_effect_set = previous.len() == desired.len()
+                    && previous.iter().all(|effect| desired.iter().any(|desired_effect| desired_effect.uuid() == effect.uuid()));
+                if same_effect_set
+                    && previous.iter().map(|effect| effect.uuid()).ne(desired.iter().map(|desired_effect| desired_effect.uuid())) {
+                    state.send_to_track_background_processor(track_uuid.to_string(), crate::event::TrackBackgroundProcessorInwardEvent::ReorderEffects(desired.iter().map(|effect| effect.uuid().to_string()).collect()));
+                }
                 set_track_effects(&mut state, track_uuid, desired);
                 Ok(vec![DAWEvents::TrackChange(crate::event::TrackChangeType::UpdateTrackDetails, Some(track_uuid.to_string()))])
             },

@@ -5455,6 +5455,20 @@ impl TrackBackgroundProcessorHelper {
                         effect.uuid().to_string() != uuid
                     });
                 }
+                TrackBackgroundProcessorInwardEvent::ReorderEffects(uuids) => {
+                    // rebuild the effect chain in the requested order so the track audio
+                    // is processed through the plugins in the new position in the chain -
+                    // any live instances whose uuids are not in the list keep their place
+                    // at the end of the chain
+                    let mut reordered: Vec<BackgroundProcessorAudioPluginType> = Vec::with_capacity(self.effect_plugin_instances.len());
+                    for uuid in uuids.iter() {
+                        if let Some(position) = self.effect_plugin_instances.iter().position(|effect| effect.uuid().to_string() == *uuid) {
+                            reordered.push(self.effect_plugin_instances.remove(position));
+                        }
+                    }
+                    reordered.append(&mut self.effect_plugin_instances);
+                    self.effect_plugin_instances = reordered;
+                }
                 TrackBackgroundProcessorInwardEvent::ChangeInstrument(vst24_plugin_loaders, clap_plugin_loaders, uuid, scanned_plugin) => {
                     if let Some(mut plugin_instance_to_delete) = self.instrument_plugin_instances.pop() {
                         // The GUI/editor has to be destroyed before the plugin instance is

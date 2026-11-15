@@ -365,6 +365,24 @@
                                       <object class="GtkBox">
                                         <property name="visible">True</property>
                                         <child>
+                                          <object class="GtkButton" id="track_effect_move_up_btn">
+                                            <property name="icon-name">go-up</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Move the selected effect up the effects chain</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="track_effect_move_down_btn">
+                                            <property name="icon-name">go-down</property>
+                                            <property name="visible">True</property>
+                                            <property name="tooltip-text" translatable="yes">Move the selected effect down the effects chain</property>
+                                            <property name="halign">start</property>
+                                            <property name="valign">center</property>
+                                          </object>
+                                        </child>
+                                        <child>
                                           <object class="GtkButton" id="track_effect_window_visibility_toggle_btn">
                                             <property name="icon-name">document-open</property>
                                             <property name="visible">True</property>

@@ -563,6 +563,8 @@ pub struct TrackDetailsDialogue {
     pub track_effects_btns_label: Label,
     pub track_add_effect_button: Button,
     pub track_effect_list: ListView,
+    pub track_effect_move_up_btn: Button,
+    pub track_effect_move_down_btn: Button,
     pub track_effect_window_visibility_toggle_btn: Button,
     pub track_effect_delete_btn: Button,
     pub track_effects_scroll_window: ScrolledWindow,
@@ -1181,6 +1183,8 @@ gtk4_builder_from!(TrackDetailsDialogue {
     track_effects_btns_label: Label,
     track_add_effect_button: Button,
     track_effect_list: ListView,
+    track_effect_move_up_btn: Button,
+    track_effect_move_down_btn: Button,
     track_effect_window_visibility_toggle_btn: Button,
     track_effect_delete_btn: Button,
     track_effects_scroll_window: ScrolledWindow,
@@ -3815,6 +3819,51 @@ impl MainWindow {
         }
     }
 
+    /// Move the selected effect up/down the effects chain list in a track details
+    /// dialogue - swaps the two rows in the dialogue's list store so the selection
+    /// follows the moved effect and sends the reorder event so the track's effect
+    /// list and the audio layer's effect chain follow the same order.
+    fn move_selected_effect(track_effects_list: &ListView, tx_from_ui: &Sender<DAWEvents>, track_uuid: &Uuid, up: bool) {
+        if let (Some(row), Some(store)) = (
+            crate::gtk4_compat::list_view_selected_row(track_effects_list),
+            crate::gtk4_compat::list_view_store(track_effects_list),
+        ) {
+            if let Some(effect_uuid) = row.id() {
+                let position = store
+                    .iter::<glib::Object>()
+                    .flatten()
+                    .position(|item| {
+                        item.downcast_ref::<ComboItemObject>()
+                            .and_then(ComboItemObject::id)
+                            .as_deref()
+                            == Some(effect_uuid.as_str())
+                    });
+                if let Some(index) = position {
+                    let number_of_items = store.n_items() as usize;
+                    let target = if up { index.checked_sub(1) } else if index + 1 < number_of_items { Some(index + 1) } else { None };
+                    if let Some(target) = target {
+                        if let (Some(current), Some(neighbour)) = (store.item(index as u32), store.item(target as u32)) {
+                            // swap the two rows in place so the list view keeps its state
+                            if up {
+                                store.splice(target as u32, 2, &[neighbour, current]);
+                            }
+                            else {
+                                store.splice(index as u32, 2, &[current, neighbour]);
+                            }
+                            if let Some(selection) = crate::gtk4_compat::list_view_selection(track_effects_list) {
+                                selection.set_selected(target as u32);
+                            }
+                        }
+                        match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::EffectMoved(effect_uuid, up), Some(track_uuid.to_string()))) {
+                            Err(_) => debug!("Problem sending message with tx from ui lock when a track effect is being moved in the effects chain"),
+                            _ => (),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn add_track_details_dialogue(
         &mut self,
         track_name: &str,
@@ -3898,6 +3947,8 @@ impl MainWindow {
                 track_details_dialogue.track_effects_choice.set_child_visible(false);
                 track_details_dialogue.track_add_effect_button.set_child_visible(false);
                 track_details_dialogue.track_effects_btns_label.set_child_visible(false);
+                track_details_dialogue.track_effect_move_up_btn.set_child_visible(false);
+                track_details_dialogue.track_effect_move_down_btn.set_child_visible(false);
                 track_details_dialogue.track_effect_window_visibility_toggle_btn.set_child_visible(false);
                 track_details_dialogue.track_effect_delete_btn.set_child_visible(false);
                 track_details_dialogue.track_effects_scroll_window.set_child_visible(false);
@@ -4552,6 +4603,22 @@ impl MainWindow {
                         }
                     }
                 }
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_effects_list = track_details_dialogue.track_effect_list.clone();
+            track_details_dialogue.track_effect_move_up_btn.connect_clicked(move |_| {
+                MainWindow::move_selected_effect(&track_effects_list, &tx_from_ui, &track_uuid, true);
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let track_effects_list = track_details_dialogue.track_effect_list.clone();
+            track_details_dialogue.track_effect_move_down_btn.connect_clicked(move |_| {
+                MainWindow::move_selected_effect(&track_effects_list, &tx_from_ui, &track_uuid, false);
             });
         }
 
@@ -12566,9 +12633,28 @@ impl MainWindow {
         // clear and add the effects
         let track_effects_list = track_details_dialogue.track_effect_list.clone();
         if let Some(store) = crate::gtk4_compat::list_view_store(&track_effects_list) {
+            // remember the selected effect so the chain order can be rebuilt
+            // (and moved around with the up/down buttons) without losing the selection
+            let selected_effect_uuid = crate::gtk4_compat::list_view_selected_row(&track_effects_list).and_then(|row| row.id());
             store.remove_all();
             for effect in track.effects().iter() {
                 store.append(&ComboItemObject::new(Some(effect.uuid().to_string().as_str()), effect.name().to_string().as_str()));
+            }
+            if let Some(selected_effect_uuid) = selected_effect_uuid {
+                if let Some(selection) = crate::gtk4_compat::list_view_selection(&track_effects_list) {
+                    let position = store
+                        .iter::<glib::Object>()
+                        .flatten()
+                        .position(|item| {
+                            item.downcast_ref::<ComboItemObject>()
+                                .and_then(ComboItemObject::id)
+                                .as_deref()
+                                == Some(selected_effect_uuid.as_str())
+                        });
+                    if let Some(position) = position {
+                        selection.set_selected(position as u32);
+                    }
+                }
             }
         }
     }
@@ -12707,6 +12793,8 @@ impl MainWindow {
         track_details_dialogue.track_effects_choice.set_sensitive(!enabled);
         track_details_dialogue.track_add_effect_button.set_sensitive(!enabled);
         track_details_dialogue.track_effects_btns_label.set_sensitive(!enabled);
+        track_details_dialogue.track_effect_move_up_btn.set_sensitive(!enabled);
+        track_details_dialogue.track_effect_move_down_btn.set_sensitive(!enabled);
         track_details_dialogue.track_effect_window_visibility_toggle_btn.set_sensitive(!enabled);
         track_details_dialogue.track_effect_delete_btn.set_sensitive(!enabled);
 

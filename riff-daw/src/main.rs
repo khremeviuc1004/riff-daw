@@ -2583,6 +2583,45 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         Ok(state) => history::get_track_effects(&state, &scoped_track_uuid),
                         Err(_) => vec![],
                     };
+                     if !history::json_equal(&before_effects, &after_effects) {
+                        apply_history_command(history_manager, &tx_from_ui, state, history::effects_change_command(scoped_track_uuid, before_effects, after_effects, loaders_for_command.0, loaders_for_command.1));
+                    }
+                }
+                TrackChangeType::EffectMoved(effect_uuid, up) => {
+                    let scoped_track_uuid = track_uuid.clone().unwrap_or_default();
+                    let before_effects = match state.lock() {
+                        Ok(state) => history::get_track_effects(&state, &scoped_track_uuid),
+                        Err(_) => vec![],
+                    };
+                    let loaders_for_command = (vst24_plugin_loaders.clone(), clap_plugin_loaders.clone());
+                    match state.lock() {
+                        Ok(mut state) => {
+                            if let Some(track_uuid) = track_uuid.clone() {
+                                if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                    match track_type {
+                                        TrackType::InstrumentTrack(track) => {
+                                            let effects = track.effects_mut();
+                                            if let Some(index) = effects.iter().position(|effect| effect.uuid().to_string() == effect_uuid) {
+                                                let target = if up { index.checked_sub(1) } else { index.checked_add(1) };
+                                                if let Some(target) = target {
+                                                    if target < effects.len() {
+                                                        effects.swap(index, target);
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        TrackType::AudioTrack(_) => (),
+                                        TrackType::MidiTrack(_) => (),
+                                    }
+                                }
+                            }
+                        },
+                        Err(_) => debug!("Main - rx_ui processing loop - track effect move - could not get lock on state"),
+                    };
+                    let after_effects = match state.lock() {
+                        Ok(state) => history::get_track_effects(&state, &scoped_track_uuid),
+                        Err(_) => vec![],
+                    };
                     if !history::json_equal(&before_effects, &after_effects) {
                         apply_history_command(history_manager, &tx_from_ui, state, history::effects_change_command(scoped_track_uuid, before_effects, after_effects, loaders_for_command.0, loaders_for_command.1));
                     }

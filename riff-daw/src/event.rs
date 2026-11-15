@@ -184,6 +184,7 @@ pub enum TrackChangeType {
     EffectDeleted(String),                // vst effect plugin uuid
     EffectSelected(String),               // vst effect plugin uuid
     EffectToggleWindowVisibility(String), // effect uuid
+    EffectMoved(String, bool),            // effect uuid, move up (true) or down (false) the effects chain
 
     TrackColourChanged(f64, f64, f64, f64), // red, green, blue, alpha
     RiffColourChanged(String, f64, f64, f64, f64), // uuid, red, green, blue, alpha
@@ -500,6 +501,7 @@ pub enum TrackBackgroundProcessorInwardEvent {
         ScannedPlugin,
     ), // vst24 plugin loaders map, clap plugin loaders map, window id, effect uuid, absolute path to shared library (details - includes shell plugin id if exists)
     DeleteEffect(String),           // effect uuid,
+    ReorderEffects(Vec<String>),    // effect uuids in the new effects chain order
     SetEffectWindowId(String, u32), // effect uuid, window id
 
     ChangeInstrument(

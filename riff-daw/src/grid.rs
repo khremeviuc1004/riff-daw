@@ -2177,6 +2177,12 @@ pub struct BeatGridRuler {
     beats_per_bar: i32,
     tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
     custom_painter: Option<Box<dyn CustomPainter>>,
+    //track cursor
+    track_cursor_time_in_beats: f64,
+    // edit cursor
+    edit_cursor_time_in_beats: f64,
+    snap_position_in_beats: f64,
+    drawing_area_type: Option<DrawingAreaType>,
 }
 
 impl BeatGridRuler {
@@ -2189,6 +2195,10 @@ impl BeatGridRuler {
             beats_per_bar,
             tx_from_ui,
             custom_painter: None,
+            track_cursor_time_in_beats: 0.0,
+            edit_cursor_time_in_beats: 0.0,
+            snap_position_in_beats: 1.0,
+            drawing_area_type: None,
         }
     }
 
@@ -2201,11 +2211,70 @@ impl BeatGridRuler {
             beats_per_bar,
             tx_from_ui,
             custom_painter: None,
+            track_cursor_time_in_beats: 0.0,
+            edit_cursor_time_in_beats: 0.0,
+            snap_position_in_beats: 1.0,
+            drawing_area_type: None,
         }
     }
 
     pub fn set_beats_per_bar(&mut self, beats_per_bar: i32) {
         self.beats_per_bar = beats_per_bar;
+    }
+
+    pub fn set_drawing_area_type(&mut self, drawing_area_type: DrawingAreaType) {
+        self.drawing_area_type = Some(drawing_area_type);
+    }
+
+    /// Get the ruler's track cursor time in beats.
+    pub fn track_cursor_time_in_beats(&self) -> f64 {
+        self.track_cursor_time_in_beats
+    }
+
+    /// Set the ruler's track cursor time in beats.
+    pub fn set_track_cursor_time_in_beats(&mut self, track_cursor_time_in_beats: f64) {
+        self.track_cursor_time_in_beats = track_cursor_time_in_beats;
+    }
+
+    /// Get the ruler's edit cursor time in beats.
+    pub fn edit_cursor_time_in_beats(&self) -> f64 {
+        self.edit_cursor_time_in_beats
+    }
+
+    /// Set the ruler's edit cursor time in beats.
+    pub fn set_edit_cursor_time_in_beats(&mut self, edit_cursor_time_in_beats: f64) {
+        self.edit_cursor_time_in_beats = edit_cursor_time_in_beats;
+    }
+
+    fn get_time(&self, x: f64) -> f64 {
+        x / (self.beat_width_in_pixels * self.zoom_horizontal)
+    }
+
+    fn get_snapped_to_time(&self, time: f64) -> f64 {
+        let calculated_snap = DAWUtils::quantise(time, self.snap_position_in_beats, 1.0, false);
+        if calculated_snap.snapped {
+            calculated_snap.snapped_value
+        }
+        else {
+            time
+        }
+    }
+
+    fn repaint_paired_view(&self) {
+        if let Some(drawing_area_type) = &self.drawing_area_type {
+            match drawing_area_type {
+                DrawingAreaType::PianoRoll => {
+                    let _ = self.tx_from_ui.send(DAWEvents::RepaintPianoRollView);
+                }
+                DrawingAreaType::TrackGrid => {
+                    let _ = self.tx_from_ui.send(DAWEvents::RepaintTrackGridView);
+                }
+                DrawingAreaType::Automation => {
+                    let _ = self.tx_from_ui.send(DAWEvents::RepaintAutomationView);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -2216,7 +2285,26 @@ impl MouseHandler for BeatGridRuler {
     fn handle_mouse_press(&mut self, _x: f64, _y: f64, _drawing_area: &DrawingArea, _mouse_button: MouseButton, _control_key: bool, _shift_key: bool, _alt_key: bool) {
     }
 
-    fn handle_mouse_release(&mut self, _x: f64, _y: f64, _drawing_area: &DrawingArea, _mouse_button: MouseButton, _control_key: bool, _shift_key: bool, _alt_key: bool, _data: String) {
+    fn handle_mouse_release(&mut self, x: f64, _y: f64, _drawing_area: &DrawingArea, mouse_button: MouseButton, control_key: bool, shift_key: bool, _alt_key: bool, _data: String) {
+        // the ruler mirrors the beat grid's cursor positioning mouse clicks -
+        // shift + right click sets the play cursor, control + right click
+        // sets the edit cursor (the paired grid is updated by the caller)
+        match mouse_button {
+            MouseButton::Button3 => {
+                if shift_key {
+                    let snap_position = self.get_snapped_to_time(self.get_time(x));
+                    self.track_cursor_time_in_beats = snap_position;
+                    let _ = self.tx_from_ui.send(DAWEvents::PlayPositionInBeats(snap_position));
+                    self.repaint_paired_view();
+                }
+                else if control_key {
+                    let snap_position = self.get_snapped_to_time(self.get_time(x));
+                    self.edit_cursor_time_in_beats = snap_position;
+                    self.repaint_paired_view();
+                }
+            },
+            _ => (),
+        }
     }
 }
 
@@ -2232,6 +2320,8 @@ impl Grid for BeatGridRuler {
         let width = drawing_area.width_request() as f64;
 
         self.paint_horizontal_scale(context, height, width, drawing_area);
+        self.paint_play_cursor(context, height, width);
+        self.paint_edit_cursor(context, height, width);
         if viewport_clipped {
             let _ = context.restore();
         }
@@ -2299,10 +2389,24 @@ impl Grid for BeatGridRuler {
     fn paint_loop_markers(&mut self, _context: &Context, _height: f64, _width: f64) {
     }
 
-    fn paint_play_cursor(&mut self, _context: &Context, _height: f64, _width: f64) {
+    fn paint_play_cursor(&mut self, context: &Context, height: f64, _width: f64) {
+        let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
+        let x = self.track_cursor_time_in_beats * adjusted_beat_width_in_pixels;
+
+        context.set_source_rgba(0.0, 0.0, 1.0, 1.0);
+        context.move_to(x, 0.0);
+        context.line_to(x, height);
+        let _ = context.stroke();
     }
 
-    fn paint_edit_cursor(&mut self, _context: &Context, _height: f64, _width: f64) {
+    fn paint_edit_cursor(&mut self, context: &Context, height: f64, _width: f64) {
+        let adjusted_beat_width_in_pixels = self.beat_width_in_pixels * self.zoom_horizontal;
+        let x = self.edit_cursor_time_in_beats * adjusted_beat_width_in_pixels;
+
+        context.set_source_rgba(1.0, 0.0, 1.0, 1.0);
+        context.move_to(x, 0.0);
+        context.line_to(x, height);
+        let _ = context.stroke();
     }
 
     fn handle_cut(&mut self, _drawing_area: &DrawingArea) {
@@ -2361,8 +2465,8 @@ impl Grid for BeatGridRuler {
 
     }
 
-    fn set_snap_position_in_beats(&mut self, _snap_position_in_beats: f64) {
-
+    fn set_snap_position_in_beats(&mut self, snap_position_in_beats: f64) {
+        self.snap_position_in_beats = snap_position_in_beats;
     }
 
     fn set_new_entity_length_in_beats(&mut self, _new_entity_length_in_beats: f64) {
@@ -2374,7 +2478,7 @@ impl Grid for BeatGridRuler {
     }
 
     fn snap_position_in_beats(&self) -> f64 {
-        0.0
+        self.snap_position_in_beats
     }
 
     fn entity_length_in_beats(&self) -> f64 {

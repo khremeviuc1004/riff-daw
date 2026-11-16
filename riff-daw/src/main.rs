@@ -1510,9 +1510,15 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
 
                 gui.ui.track_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
                 gui.ui.piano_roll_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
+                gui.ui.riff_grid_drawing_area.queue_draw();
+                gui.ui.riff_grid_ruler_drawing_area.queue_draw();
             }
             DAWEvents::UpdateUIPlugins => {
                 match state.lock() {
@@ -1822,10 +1828,12 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
             DAWEvents::SampleRollSetTrackName(name) => {
                 gui.set_sample_roll_selected_track_name_label(name.as_str());
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
             }
             DAWEvents::SampleRollSetRiffName(name) => {
                 gui.set_sample_roll_selected_riff_name_label(name.as_str());
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
             }
             DAWEvents::TrackChange(track_change_type, track_uuid) => match track_change_type {
                 TrackChangeType::Added(track_change_track_type) => {
@@ -3293,6 +3301,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     ));
                     let _ = sample_reference_uuid_for_send;
                     gui.ui.sample_roll_drawing_area.queue_draw();
+                    gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
                 }
                 TrackChangeType::RiffDeleteSample(sample_reference_uuid, position) => {
@@ -3375,6 +3384,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                     ));
                     let _ = removed_samples;
                     gui.ui.sample_roll_drawing_area.queue_draw();
+                    gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
                 }
                 TrackChangeType::RiffSelect(riff_id) => {
@@ -6175,6 +6185,7 @@ win.connect_close_request(|window| {
                         gui.ui.track_drawing_area.queue_draw();
                         gui.ui.piano_roll_drawing_area.queue_draw();
                         gui.ui.sample_roll_drawing_area.queue_draw();
+                        gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                         gui.ui.automation_drawing_area.queue_draw();
                     }
                 }
@@ -6228,6 +6239,7 @@ win.connect_close_request(|window| {
                         gui.ui.track_drawing_area.queue_draw();
                         gui.ui.piano_roll_drawing_area.queue_draw();
                         gui.ui.sample_roll_drawing_area.queue_draw();
+                        gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                         gui.ui.automation_drawing_area.queue_draw();
                     }
                 }
@@ -7208,8 +7220,12 @@ win.connect_close_request(|window| {
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
             }
             DAWEvents::TransportMoveBack => {
                 debug!("Main - rx_ui processing loop - transport move back - received");
@@ -7285,8 +7301,12 @@ win.connect_close_request(|window| {
 
                 gui.ui.piano_roll_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
             }
             DAWEvents::TransportStop => {
                 // keep the transport play button in step with the toggle from the space bar
@@ -7584,8 +7604,12 @@ win.connect_close_request(|window| {
 
                 gui.ui.piano_roll_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.track_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
             }
             DAWEvents::TransportGotoEnd => {
                 match state.lock() {
@@ -9495,9 +9519,13 @@ win.connect_close_request(|window| {
                     }
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
                 gui.ui.track_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
                 gui.ui.riff_arrangement_box.queue_draw();
                 gui.ui.riff_sets_box.queue_draw();
                 gui.ui.riff_sequences_box.queue_draw();
@@ -9519,9 +9547,13 @@ win.connect_close_request(|window| {
                     }
                 }
                 gui.ui.piano_roll_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
                 gui.ui.track_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
                 gui.ui.riff_arrangement_box.queue_draw();
                 gui.ui.riff_sets_box.queue_draw();
                 gui.ui.riff_sequences_box.queue_draw();
@@ -9824,15 +9856,19 @@ win.connect_close_request(|window| {
             }
             DAWEvents::RepaintAutomationView => {
                 gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
             }
             DAWEvents::RepaintTrackGridView => {
                 gui.ui.track_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
             }
             DAWEvents::RepaintPianoRollView => {
                 gui.ui.piano_roll_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
             }
             DAWEvents::RepaintSampleRollDrawingArea => {
                 gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
             }
             DAWEvents::RepaintRiffArrangementBox => {
                 gui.ui.riff_arrangement_box.queue_draw();
@@ -17965,8 +18001,12 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                     // should only repaint what is actively being viewed
                     gui.ui.piano_roll_drawing_area.queue_draw();
                     gui.ui.sample_roll_drawing_area.queue_draw();
+                    gui.ui.sample_roll_ruler_drawing_area.queue_draw();
                     gui.ui.track_drawing_area.queue_draw();
                     gui.ui.automation_drawing_area.queue_draw();
+                    gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+                    gui.ui.track_ruler_drawing_area.queue_draw();
+                    gui.ui.automation_ruler_drawing_area.queue_draw();
                     gui.ui.riff_arrangement_overview_drawing_area.queue_draw();
                 }
                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {

@@ -5681,6 +5681,16 @@ impl MainWindow {
         self.set_track_grid_ruler(Some(track_grid_ruler_arc.clone()));
 
         {
+            match track_grid_ruler_arc.lock() {
+                Ok(mut grid_ruler) => {
+                    grid_ruler.set_drawing_area_type(DrawingAreaType::TrackGrid);
+                    grid_ruler.set_snap_position_in_beats(4.0);
+                },
+                Err(_) => (),
+            }
+        }
+
+        {
             let grid = track_grid_arc.clone();
             self.ui.track_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
@@ -5749,6 +5759,7 @@ impl MainWindow {
 
         {
             let track_grid = track_grid_arc.clone();
+            let track_ruler_drawing_area = self.ui.track_ruler_drawing_area.clone();
             self.ui.track_drawing_area.connect_button_release_event(move |track_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords(track_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
@@ -5771,6 +5782,8 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, track_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
+                // keep the paired ruler in step with any cursor moves made on the grid
+                track_ruler_drawing_area.queue_draw();
                 false
             });
         }
@@ -5910,11 +5923,60 @@ impl MainWindow {
 
         {
             let grid = track_grid_ruler_arc.clone();
+            let track_grid = track_grid_arc.clone();
             self.ui.track_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
+                // the grid is the source of truth for the cursor positions -
+                // copy them across each time the ruler is repainted
+                let cursor_positions = track_grid.lock().map(|track_grid| (track_grid.track_cursor_time_in_beats(), track_grid.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut grid_ruler) = grid.lock() {
+                        grid_ruler.set_track_cursor_time_in_beats(cursor_positions.0);
+                        grid_ruler.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let track_grid_ruler = track_grid_ruler_arc.clone();
+            let track_grid = track_grid_arc.clone();
+            let track_ruler_drawing_area = self.ui.track_ruler_drawing_area.clone();
+            let track_drawing_area = self.ui.track_drawing_area.clone();
+            self.ui.track_ruler_drawing_area.connect_button_release_event(move |ruler_drawing_area, event_btn| {
+                let coords = event_btn.coords(ruler_drawing_area).unwrap();
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button1
+                }
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button3
+                };
+                debug!("Track ruler mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                match track_grid_ruler.lock() {
+                    Ok(mut grid_ruler) => grid_ruler.handle_mouse_release(coords.0, coords.1, ruler_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                    Err(_) => (),
+                }
+                // keep the paired grid in step with any cursor moves made on the ruler
+                let cursor_positions = track_grid_ruler.lock().map(|grid_ruler| (grid_ruler.track_cursor_time_in_beats(), grid_ruler.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut track_grid) = track_grid.lock() {
+                        track_grid.set_track_cursor_time_in_beats(cursor_positions.0);
+                        track_grid.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
+                track_drawing_area.queue_draw();
+                track_ruler_drawing_area.queue_draw();
+                false
             });
         }
 
@@ -6150,6 +6212,7 @@ impl MainWindow {
 
         {
             let track_grid = track_grid_arc.clone();
+            let track_grid_ruler = track_grid_ruler_arc.clone();
             let track_grid_quantise_start_choice = self.ui.track_grid_quantise_start_choice.clone();
             self.ui.track_grid_quantise_start_choice.connect_changed(move |_| {
                 match track_grid_quantise_start_choice.active_text() {
@@ -6158,6 +6221,10 @@ impl MainWindow {
                         match track_grid.try_lock() {
                             Ok(mut track_grid) => track_grid.set_snap_position_in_beats(snap_position_in_beats),
                             Err(_) => debug!("Unable to lock the track grid in order to set the snap in beats."),
+                        };
+                        match track_grid_ruler.try_lock() {
+                            Ok(mut track_grid_ruler) => track_grid_ruler.set_snap_position_in_beats(snap_position_in_beats),
+                            Err(_) => debug!("Unable to lock the track grid ruler in order to set the snap in beats."),
                         };
                     },
                     None => debug!("Track grid: Unable to extract a quantise start value from the ComboBox - is there an active item?"),
@@ -6281,6 +6348,15 @@ impl MainWindow {
         self.set_riff_grid_ruler(Some(riff_grid_ruler_arc.clone()));
 
         {
+            match riff_grid_ruler_arc.lock() {
+                Ok(mut grid_ruler) => {
+                    grid_ruler.set_drawing_area_type(DrawingAreaType::RiffGrid);
+                },
+                Err(_) => (),
+            }
+        }
+
+        {
             let grid = riff_grid_arc.clone();
             self.ui.riff_grid_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
                 match grid.lock() {
@@ -6349,6 +6425,7 @@ impl MainWindow {
 
         {
             let track_grid = riff_grid_arc.clone();
+            let riff_grid_ruler_drawing_area = self.ui.riff_grid_ruler_drawing_area.clone();
             self.ui.riff_grid_drawing_area.connect_button_release_event(move |riff_grid_drawing_area, event_btn| {
                 let coords = event_btn.coords(riff_grid_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
@@ -6371,6 +6448,8 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, riff_grid_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
+                // keep the paired ruler in step with any cursor moves made on the grid
+                riff_grid_ruler_drawing_area.queue_draw();
                 false
             });
         }
@@ -6510,11 +6589,60 @@ impl MainWindow {
 
         {
             let grid = riff_grid_ruler_arc.clone();
+            let riff_grid = riff_grid_arc.clone();
             self.ui.riff_grid_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
+                // the grid is the source of truth for the cursor positions -
+                // copy them across each time the ruler is repainted
+                let cursor_positions = riff_grid.lock().map(|riff_grid| (riff_grid.track_cursor_time_in_beats(), riff_grid.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut grid_ruler) = grid.lock() {
+                        grid_ruler.set_track_cursor_time_in_beats(cursor_positions.0);
+                        grid_ruler.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
                 match grid.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let riff_grid_ruler = riff_grid_ruler_arc.clone();
+            let riff_grid = riff_grid_arc.clone();
+            let riff_grid_ruler_drawing_area = self.ui.riff_grid_ruler_drawing_area.clone();
+            let riff_grid_area = self.ui.riff_grid_drawing_area.clone();
+            self.ui.riff_grid_ruler_drawing_area.connect_button_release_event(move |ruler_drawing_area, event_btn| {
+                let coords = event_btn.coords(ruler_drawing_area).unwrap();
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button1
+                }
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button3
+                };
+                debug!("Riff grid ruler mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                match riff_grid_ruler.lock() {
+                    Ok(mut grid_ruler) => grid_ruler.handle_mouse_release(coords.0, coords.1, ruler_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                    Err(_) => (),
+                }
+                // keep the paired grid in step with any cursor moves made on the ruler
+                let cursor_positions = riff_grid_ruler.lock().map(|grid_ruler| (grid_ruler.track_cursor_time_in_beats(), grid_ruler.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut riff_grid) = riff_grid.lock() {
+                        riff_grid.set_track_cursor_time_in_beats(cursor_positions.0);
+                        riff_grid.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
+                riff_grid_area.queue_draw();
+                riff_grid_ruler_drawing_area.queue_draw();
+                false
             });
         }
 
@@ -6750,6 +6878,7 @@ impl MainWindow {
 
         {
             let riff_grid = riff_grid_arc.clone();
+            let riff_grid_ruler = riff_grid_ruler_arc.clone();
             let riff_grid_quantise_start_choice = self.ui.riff_grid_quantise_start_choice.clone();
             self.ui.riff_grid_quantise_start_choice.connect_changed(move |_| {
                 match riff_grid_quantise_start_choice.active_text() {
@@ -6758,6 +6887,10 @@ impl MainWindow {
                         match riff_grid.try_lock() {
                             Ok(mut riff_grid) => riff_grid.set_snap_position_in_beats(snap_position_in_beats),
                             Err(_) => debug!("Unable to lock the riff grid in order to set the snap in beats."),
+                        };
+                        match riff_grid_ruler.try_lock() {
+                            Ok(mut riff_grid_ruler) => riff_grid_ruler.set_snap_position_in_beats(snap_position_in_beats),
+                            Err(_) => debug!("Unable to lock the riff grid ruler in order to set the snap in beats."),
                         };
                     },
                     None => debug!("Riff grid: Unable to extract a quantise start value from the ComboBox - is there an active item?"),
@@ -6994,12 +7127,71 @@ impl MainWindow {
         self.set_automation_grid_ruler(Some(automation_grid_ruler_arc.clone()));
 
         {
+            match automation_grid_ruler_arc.lock() {
+                Ok(mut grid_ruler) => {
+                    grid_ruler.set_drawing_area_type(DrawingAreaType::Automation);
+                    grid_ruler.set_snap_position_in_beats(4.0);
+                },
+                Err(_) => (),
+            }
+        }
+
+        {
             let automation_grid_ruler = automation_grid_ruler_arc.clone();
+            let automation_grid = automation_grid_arc.clone();
             self.ui.automation_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height|{
+                // the grid is the source of truth for the cursor positions -
+                // copy them across each time the ruler is repainted
+                let cursor_positions = automation_grid.lock().map(|automation_grid| (automation_grid.track_cursor_time_in_beats(), automation_grid.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut grid_ruler) = automation_grid_ruler.lock() {
+                        grid_ruler.set_track_cursor_time_in_beats(cursor_positions.0);
+                        grid_ruler.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
                 match automation_grid_ruler.lock() {
                     Ok(mut grid) => grid.paint(context, drawing_area),
                     Err(_) => (),
                 }
+            });
+        }
+
+        {
+            let automation_grid_ruler = automation_grid_ruler_arc.clone();
+            let automation_grid = automation_grid_arc.clone();
+            let automation_ruler_drawing_area = self.ui.automation_ruler_drawing_area.clone();
+            let automation_area = self.ui.automation_drawing_area.clone();
+            self.ui.automation_ruler_drawing_area.connect_button_release_event(move |ruler_drawing_area, event_btn| {
+                let coords = event_btn.coords(ruler_drawing_area).unwrap();
+                let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
+                    MouseButton::Button1
+                }
+                else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
+                    MouseButton::Button2
+                }
+                else {
+                    MouseButton::Button3
+                };
+                debug!("Automation ruler mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                match automation_grid_ruler.lock() {
+                    Ok(mut grid_ruler) => grid_ruler.handle_mouse_release(coords.0, coords.1, ruler_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                    Err(_) => (),
+                }
+                // keep the paired grid in step with any cursor moves made on the ruler
+                let cursor_positions = automation_grid_ruler.lock().map(|grid_ruler| (grid_ruler.track_cursor_time_in_beats(), grid_ruler.edit_cursor_time_in_beats())).ok();
+                if let Some(cursor_positions) = cursor_positions {
+                    if let Ok(mut automation_grid) = automation_grid.lock() {
+                        automation_grid.set_track_cursor_time_in_beats(cursor_positions.0);
+                        automation_grid.set_edit_cursor_time_in_beats(cursor_positions.1);
+                    }
+                }
+                automation_area.queue_draw();
+                automation_ruler_drawing_area.queue_draw();
+                false
             });
         }
 
@@ -7103,7 +7295,7 @@ impl MainWindow {
         {
             let automation_grid = automation_grid_arc.clone();
             let automation_drawing_area = self.ui.automation_drawing_area.clone();
-            let automation_grid_ruler = automation_grid_ruler_arc;
+            let automation_grid_ruler = automation_grid_ruler_arc.clone();
             let automation_ruler_drawing_area = self.ui.automation_ruler_drawing_area.clone();
             self.ui.automation_zoom_scale.connect_value_changed(move |automation_zoom_scale| {
                 match automation_grid.lock() {
@@ -7196,6 +7388,7 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
+            let automation_ruler_drawing_area = self.ui.automation_ruler_drawing_area.clone();
             self.ui.automation_drawing_area.connect_button_release_event(move |automation_drawing_area, event_btn| {
                 let coords = event_btn.coords(automation_drawing_area).unwrap();
                 let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
@@ -7218,6 +7411,8 @@ impl MainWindow {
                     Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, automation_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                     Err(_) => (),
                 }
+                // keep the paired ruler in step with any cursor moves made on the grid
+                automation_ruler_drawing_area.queue_draw();
                 false
             });
         }
@@ -7349,6 +7544,7 @@ impl MainWindow {
 
         {
             let automation_grid = automation_grid_arc.clone();
+            let automation_grid_ruler = automation_grid_ruler_arc.clone();
             self.ui.automation_quantise_start_choice.connect_changed(move |automation_quantise_start_choice| {
                 match automation_quantise_start_choice.active_text() {
                     Some(quantise_start_to_text) => {
@@ -7356,6 +7552,10 @@ impl MainWindow {
                         match automation_grid.try_lock() {
                             Ok(mut grid) => grid.set_snap_position_in_beats(snap_position_in_beats),
                             Err(_) => debug!("Unable to lock the controller grid in order to set the snap in beats."),
+                        };
+                        match automation_grid_ruler.try_lock() {
+                            Ok(mut grid_ruler) => grid_ruler.set_snap_position_in_beats(snap_position_in_beats),
+                            Err(_) => debug!("Unable to lock the automation grid ruler in order to set the snap in beats."),
                         };
                     },
                     None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
@@ -7954,6 +8154,15 @@ impl MainWindow {
             self.set_piano_roll_grid_ruler(Some(piano_roll_grid_ruler_arc.clone()));
 
             {
+                match piano_roll_grid_ruler_arc.lock() {
+                    Ok(mut grid_ruler) => {
+                        grid_ruler.set_drawing_area_type(DrawingAreaType::PianoRoll);
+                    },
+                    Err(_) => (),
+                }
+            }
+
+            {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
                     match piano_roll_grid.lock() {
@@ -8024,6 +8233,7 @@ impl MainWindow {
 
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
+                let piano_roll_ruler_drawing_area = self.ui.piano_roll_ruler_drawing_area.clone();
                 self.ui.piano_roll_drawing_area.connect_button_release_event(move |piano_roll_drawing_area, event_btn| {
                     let coords = event_btn.coords(piano_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
@@ -8046,6 +8256,8 @@ impl MainWindow {
                         Ok(mut grid) => grid.handle_mouse_release(coords.0, coords.1, piano_roll_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
                         Err(_) => (),
                     }
+                    // keep the paired ruler in step with any cursor moves made on the grid
+                    piano_roll_ruler_drawing_area.queue_draw();
                     false
                 });
             }
@@ -8252,12 +8464,61 @@ impl MainWindow {
             }
 
             {
-                let piano_roll_grid_ruler = piano_roll_grid_ruler_arc;
+                let piano_roll_grid_ruler = piano_roll_grid_ruler_arc.clone();
+                let piano_roll_grid = piano_roll_grid_arc.clone();
                 self.ui.piano_roll_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
+                    // the grid is the source of truth for the cursor positions -
+                    // copy them across each time the ruler is repainted
+                    let cursor_positions = piano_roll_grid.lock().map(|piano_roll_grid| (piano_roll_grid.track_cursor_time_in_beats(), piano_roll_grid.edit_cursor_time_in_beats())).ok();
+                    if let Some(cursor_positions) = cursor_positions {
+                        if let Ok(mut grid_ruler) = piano_roll_grid_ruler.lock() {
+                            grid_ruler.set_track_cursor_time_in_beats(cursor_positions.0);
+                            grid_ruler.set_edit_cursor_time_in_beats(cursor_positions.1);
+                        }
+                    }
                     match piano_roll_grid_ruler.lock() {
                         Ok(mut grid_ruler) => grid_ruler.paint(context, drawing_area),
                         Err(_) => (),
                     }
+                });
+            }
+
+            {
+                let piano_roll_grid_ruler = piano_roll_grid_ruler_arc.clone();
+                let piano_roll_grid = piano_roll_grid_arc.clone();
+                let piano_roll_ruler_drawing_area = self.ui.piano_roll_ruler_drawing_area.clone();
+                let piano_roll_area = self.ui.piano_roll_drawing_area.clone();
+                self.ui.piano_roll_ruler_drawing_area.connect_button_release_event(move |ruler_drawing_area, event_btn| {
+                    let coords = event_btn.coords(ruler_drawing_area).unwrap();
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
+                        MouseButton::Button1
+                    }
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
+                        MouseButton::Button2
+                    }
+                    else {
+                        MouseButton::Button3
+                    };
+                    debug!("Piano roll ruler mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                    match piano_roll_grid_ruler.lock() {
+                        Ok(mut grid_ruler) => grid_ruler.handle_mouse_release(coords.0, coords.1, ruler_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                        Err(_) => (),
+                    }
+                    // keep the paired grid in step with any cursor moves made on the ruler
+                    let cursor_positions = piano_roll_grid_ruler.lock().map(|grid_ruler| (grid_ruler.track_cursor_time_in_beats(), grid_ruler.edit_cursor_time_in_beats())).ok();
+                    if let Some(cursor_positions) = cursor_positions {
+                        if let Ok(mut piano_roll_grid) = piano_roll_grid.lock() {
+                            piano_roll_grid.set_track_cursor_time_in_beats(cursor_positions.0);
+                            piano_roll_grid.set_edit_cursor_time_in_beats(cursor_positions.1);
+                        }
+                    }
+                    piano_roll_area.queue_draw();
+                    piano_roll_ruler_drawing_area.queue_draw();
+                    false
                 });
             }
 
@@ -8451,6 +8712,7 @@ impl MainWindow {
 
             {
                 let piano_roll_grid = piano_roll_grid_arc.clone();
+                let piano_roll_grid_ruler = piano_roll_grid_ruler_arc.clone();
                 let piano_roll_quantise_start_choice = self.ui.piano_roll_quantise_start_choice.clone();
                 self.ui.piano_roll_quantise_start_choice.connect_changed(move |_| {
                     match piano_roll_quantise_start_choice.active_text() {
@@ -8459,6 +8721,10 @@ impl MainWindow {
                             match piano_roll_grid.try_lock() {
                                 Ok(mut piano_roll_grid) => piano_roll_grid.set_snap_position_in_beats(snap_position_in_beats),
                                 Err(_) => debug!("Unable to lock the piano grid in order to set the snap in beats."),
+                            };
+                            match piano_roll_grid_ruler.try_lock() {
+                                Ok(mut piano_roll_grid_ruler) => piano_roll_grid_ruler.set_snap_position_in_beats(snap_position_in_beats),
+                                Err(_) => debug!("Unable to lock the piano roll ruler in order to set the snap in beats."),
                             };
                         },
                         None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
@@ -9017,6 +9283,7 @@ impl MainWindow {
                 let sample_roll_grid = sample_roll_grid_arc.clone();
                 let sample_roll_drawing_area = self.ui.sample_roll_drawing_area.clone();
                 let sample_roll_available_samples = self.ui.sample_roll_available_samples.clone();
+                let sample_roll_ruler_area = self.ui.sample_roll_ruler_drawing_area.clone();
                 self.ui.sample_roll_drawing_area.connect_button_release_event(move |_, event_btn| {
                     let coords = event_btn.coords(&sample_roll_drawing_area).unwrap();
                     let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
@@ -9064,6 +9331,8 @@ impl MainWindow {
                             Err(_) => (),
                         }
                     }
+                    // keep the paired ruler in step with any cursor moves made on the grid
+                    sample_roll_ruler_area.queue_draw();
                     false
                 });
             }
@@ -9104,12 +9373,61 @@ impl MainWindow {
             }
 
             {
-                let sample_roll_grid_ruler = sample_roll_grid_ruler_arc;
+                let sample_roll_grid_ruler = sample_roll_grid_ruler_arc.clone();
+                let sample_roll_grid = sample_roll_grid_arc.clone();
                 self.ui.sample_roll_ruler_drawing_area.set_draw_func(move |drawing_area, context, _width, _height| {
+                    // the grid is the source of truth for the cursor positions -
+                    // copy them across each time the ruler is repainted
+                    let cursor_positions = sample_roll_grid.lock().map(|sample_roll_grid| (sample_roll_grid.track_cursor_time_in_beats(), sample_roll_grid.edit_cursor_time_in_beats())).ok();
+                    if let Some(cursor_positions) = cursor_positions {
+                        if let Ok(mut grid_ruler) = sample_roll_grid_ruler.lock() {
+                            grid_ruler.set_track_cursor_time_in_beats(cursor_positions.0);
+                            grid_ruler.set_edit_cursor_time_in_beats(cursor_positions.1);
+                        }
+                    }
                     match sample_roll_grid_ruler.lock() {
                         Ok(mut grid_ruler) => grid_ruler.paint(context, drawing_area),
                         Err(_) => (),
                     }
+                });
+            }
+
+            {
+                let sample_roll_grid_ruler = sample_roll_grid_ruler_arc.clone();
+                let sample_roll_grid = sample_roll_grid_arc.clone();
+                let sample_roll_ruler_drawing_area = self.ui.sample_roll_ruler_drawing_area.clone();
+                let sample_roll_area = self.ui.sample_roll_drawing_area.clone();
+                self.ui.sample_roll_ruler_drawing_area.connect_button_release_event(move |ruler_drawing_area, event_btn| {
+                    let coords = event_btn.coords(ruler_drawing_area).unwrap();
+                    let control_key_pressed = event_btn.state().intersects(gdk4::ModifierType::CONTROL_MASK);
+                    let shift_key_pressed = event_btn.state().intersects(gdk4::ModifierType::SHIFT_MASK);
+                    let alt_key_pressed = event_btn.state().intersects(gdk4::ModifierType::ALT_MASK);
+                    let mouse_button = if event_btn.state().intersects(gdk4::ModifierType::BUTTON1_MASK) {
+                        MouseButton::Button1
+                    }
+                    else if event_btn.state().intersects(gdk4::ModifierType::BUTTON2_MASK) {
+                        MouseButton::Button2
+                    }
+                    else {
+                        MouseButton::Button3
+                    };
+                    debug!("Sample roll ruler mouse released: x={}, y={}, Shift key: {}, Control key: {}", coords.0, coords.1, shift_key_pressed, control_key_pressed);
+
+                    match sample_roll_grid_ruler.lock() {
+                        Ok(mut grid_ruler) => grid_ruler.handle_mouse_release(coords.0, coords.1, ruler_drawing_area, mouse_button, control_key_pressed, shift_key_pressed, alt_key_pressed, String::from("")),
+                        Err(_) => (),
+                    }
+                    // keep the paired grid in step with any cursor moves made on the ruler
+                    let cursor_positions = sample_roll_grid_ruler.lock().map(|grid_ruler| (grid_ruler.track_cursor_time_in_beats(), grid_ruler.edit_cursor_time_in_beats())).ok();
+                    if let Some(cursor_positions) = cursor_positions {
+                        if let Ok(mut sample_roll_grid) = sample_roll_grid.lock() {
+                            sample_roll_grid.set_track_cursor_time_in_beats(cursor_positions.0);
+                            sample_roll_grid.set_edit_cursor_time_in_beats(cursor_positions.1);
+                        }
+                    }
+                    sample_roll_area.queue_draw();
+                    sample_roll_ruler_drawing_area.queue_draw();
+                    false
                 });
             }
 
@@ -9240,6 +9558,7 @@ impl MainWindow {
 
             {
                 let sample_roll_grid = sample_roll_grid_arc.clone();
+                let sample_roll_grid_ruler = sample_roll_grid_ruler_arc.clone();
                 let sample_roll_quantise_start_choice = self.ui.sample_roll_quantise_start_choice.clone();
                 self.ui.sample_roll_quantise_start_choice.connect_changed(move |_| {
                     match sample_roll_quantise_start_choice.active_text() {
@@ -9248,6 +9567,10 @@ impl MainWindow {
                             match sample_roll_grid.try_lock() {
                                 Ok(mut sample_roll_grid) => sample_roll_grid.set_snap_position_in_beats(snap_position_in_beats),
                                 Err(_) => debug!("Unable to lock the piano grid in order to set the snap in beats."),
+                            };
+                            match sample_roll_grid_ruler.try_lock() {
+                                Ok(mut sample_roll_grid_ruler) => sample_roll_grid_ruler.set_snap_position_in_beats(snap_position_in_beats),
+                                Err(_) => debug!("Unable to lock the sample roll ruler in order to set the snap in beats."),
                             };
                         },
                         None => debug!("Unable to extract a quantise start value from the ComboBox - is there an active item?"),
@@ -13480,6 +13803,8 @@ impl MainWindow {
 
         // queue a redraw of the DrawingArea
         self.ui.riff_grid_drawing_area.queue_draw();
+        // keep the paired ruler in step with the grid
+        self.ui.riff_grid_ruler_drawing_area.queue_draw();
     }
 
     pub fn set_riff_sequence_riff_set_track_beat_grid_cursor_time_in_beats(&self, riff_sequence_uuid: String, playing_riff_set_reference_uuid: String, play_position_in_beats: f64) {

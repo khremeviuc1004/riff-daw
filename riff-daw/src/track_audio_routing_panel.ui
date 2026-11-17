@@ -30,6 +30,7 @@
         </child>
         <child>
           <object class="GtkButton" id="track_audio_routing_delete_button">
+            <property name="tooltip-text" translatable="yes">Remove this audio routing</property>
             <property name="visible">True</property>
             <child>
               <object class="GtkImage">

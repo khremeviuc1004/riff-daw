@@ -41,18 +41,21 @@
             <property name="spacing">2</property>
             <child>
               <object class="GtkButton" id="riff_list_select_all_btn">
+                <property name="tooltip-text" translatable="yes">Select all riffs in the list</property>
                 <property name="label" translatable="yes">Select All</property>
                 <property name="visible">True</property>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_list_delete_selected_btn">
+                <property name="tooltip-text" translatable="yes">Delete the selected riffs</property>
                 <property name="label" translatable="yes">Delete Selected</property>
                 <property name="visible">True</property>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="riff_list_close_btn">
+                <property name="tooltip-text" translatable="yes">Close the riff list dialogue</property>
                 <property name="label" translatable="yes">_Close</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>

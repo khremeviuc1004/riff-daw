@@ -61,6 +61,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_play">
+                <property name="tooltip-text" translatable="yes">Play this riff grid</property>
                 <property name="icon-name">media-playback-start</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -73,6 +74,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_copy">
+                <property name="tooltip-text" translatable="yes">Copy this riff grid</property>
                 <property name="icon-name">edit-copy</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -85,6 +87,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_blade_delete">
+                <property name="tooltip-text" translatable="yes">Delete this riff grid</property>
                 <property name="icon-name">edit-delete</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -97,6 +100,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_copy_to_track_view_btn">
+                <property name="tooltip-text" translatable="yes">Copy this riff grid into the track grid view</property>
                 <property name="icon-name">format-justify-left</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -109,6 +113,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_drag_btn">
+                <property name="tooltip-text" translatable="yes">Drag this riff grid with the mouse</property>
                 <property name="icon-name">go-jump</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -121,6 +126,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_grid_select_btn">
+                <property name="tooltip-text" translatable="yes">Select this riff grid</property>
                 <property name="icon-name">edit-select-all</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>

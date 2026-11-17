@@ -44,6 +44,7 @@
             </child>
             <child>
               <object class="GtkButton" id="track_detail_close_button">
+                <property name="tooltip-text" translatable="yes">Close the track details dialogue</property>
                 <property name="label" translatable="yes">_Close</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -337,6 +338,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="track_send_midi_to_track_open_dialogue_button">
+                                        <property name="tooltip-text" translatable="yes">Open the MIDI routing dialogue for this track</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
                                         <child>
@@ -463,6 +465,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="track_send_audio_to_track_open_dialogue_button">
+                                        <property name="tooltip-text" translatable="yes">Open the audio routing dialogue for this track</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
                                         <child>

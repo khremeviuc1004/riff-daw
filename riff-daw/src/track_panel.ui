@@ -45,6 +45,7 @@ Click and drag to drag the track to a diferent position.</property>
         <child>
           <object class="GtkToggleButton" id="solo_toggle_btn">
             <property name="visible">True</property>
+            <property name="tooltip-text" translatable="yes">Solo this track</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">

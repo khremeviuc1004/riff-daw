@@ -108,6 +108,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_set_copy_to_track_view_btn">
+                <property name="tooltip-text" translatable="yes">Copy this riff set into the track grid view</property>
                 <property name="icon-name">format-justify-left</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -120,6 +121,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_set_drag_btn">
+                <property name="tooltip-text" translatable="yes">Drag this riff set with the mouse</property>
                 <property name="icon-name">go-jump</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -132,6 +134,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_set_select_btn">
+                <property name="tooltip-text" translatable="yes">Select this riff set</property>
                 <property name="icon-name">edit-select-all</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>

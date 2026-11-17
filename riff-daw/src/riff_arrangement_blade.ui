@@ -67,6 +67,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_play">
+                        <property name="tooltip-text" translatable="yes">Play this riff arrangement</property>
                         <property name="icon-name">media-playback-start</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -79,6 +80,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_copy">
+                        <property name="tooltip-text" translatable="yes">Copy this riff arrangement</property>
                         <property name="icon-name">edit-copy</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -91,6 +93,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_blade_delete">
+                        <property name="tooltip-text" translatable="yes">Delete this riff arrangement</property>
                         <property name="icon-name">edit-delete</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -115,6 +118,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_set_btn">
+                        <property name="tooltip-text" translatable="yes">Add a new riff set</property>
                         <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -152,6 +156,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_sequence_btn">
+                        <property name="tooltip-text" translatable="yes">Add a new riff sequence</property>
                         <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -164,6 +169,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="riff_arrangement_copy_to_track_view_btn">
+                        <property name="tooltip-text" translatable="yes">Copy this arrangement into the track grid view</property>
                         <property name="icon-name">format-justify-left</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -201,6 +207,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_riff_grid_btn">
+                        <property name="tooltip-text" translatable="yes">Add a new riff grid</property>
                         <property name="icon-name">list-add</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>

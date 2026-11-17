@@ -12,6 +12,7 @@
           <object class="GtkBox">
             <child>
               <object class="GtkButton" id="track_midi_routing_close_button">
+                <property name="tooltip-text" translatable="yes">Close the MIDI routing dialogue</property>
                 <property name="label" translatable="yes">_Close</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -35,6 +36,7 @@
             </child>
             <child>
               <object class="GtkButton" id="track_midi_routing_add_track_button">
+                <property name="tooltip-text" translatable="yes">Add a MIDI routing to another track</property>
                 <property name="visible">True</property>
                 <child>
                   <object class="GtkImage">

@@ -89,6 +89,7 @@
         </child>
         <child>
           <object class="GtkButton" id="track_midi_routing_delete_button">
+            <property name="tooltip-text" translatable="yes">Remove this MIDI routing</property>
             <property name="visible">True</property>
             <child>
               <object class="GtkImage">

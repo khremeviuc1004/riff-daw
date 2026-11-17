@@ -58,6 +58,7 @@
           <object class="GtkBox">
             <child>
               <object class="GtkButton" id="configuration_dialogue_cancel_button">
+                <property name="tooltip-text" translatable="yes">Close the configuration dialogue without saving</property>
                 <property name="label" translatable="yes">_Cancel</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -65,6 +66,7 @@
             </child>
             <child>
               <object class="GtkButton" id="configuration_dialogue_ok_button">
+                <property name="tooltip-text" translatable="yes">Apply the configuration changes and close</property>
                 <property name="label" translatable="yes">_OK</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -326,6 +328,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_vst24_path_button">
+                        <property name="tooltip-text" translatable="yes">Add a VST2.4 plugin scan path</property>
                         <property name="label" translatable="yes">Add path</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -376,6 +379,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_clap_path_button">
+                        <property name="tooltip-text" translatable="yes">Add a CLAP plugin scan path</property>
                         <property name="label" translatable="yes">Add path</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -450,6 +454,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="add_vst3_path_button">
+                        <property name="tooltip-text" translatable="yes">Add a VST3 plugin scan path</property>
                         <property name="label" translatable="yes">Add path</property>
                         <property name="visible">True</property>
                         <property name="halign">start</property>
@@ -857,6 +862,7 @@
             </child>
             <child>
               <object class="GtkButton" id="riff_name_dialogue_ok_button">
+                <property name="tooltip-text" translatable="yes">Accept the riff name</property>
                 <property name="label" translatable="yes">_OK</property>
                 <property name="visible">True</property>
                 <property name="use-underline">True</property>
@@ -1008,6 +1014,7 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="toolbar_add_track">
+                    <property name="tooltip-text" translatable="yes">Add a new track</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1042,6 +1049,7 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="delete_loop_btn">
+                    <property name="tooltip-text" translatable="yes">Delete the selected loop region</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1052,6 +1060,7 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="save_loop_name_change_btn">
+                    <property name="tooltip-text" translatable="yes">Save the loop name change</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1071,6 +1080,7 @@
                 <property name="valign">center</property>
                 <child>
                   <object class="GtkButton" id="toolbar_undo">
+                    <property name="tooltip-text" translatable="yes">Undo the last change</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1081,6 +1091,7 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="toolbar_redo">
+                    <property name="tooltip-text" translatable="yes">Redo the last undone change</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1100,6 +1111,7 @@
                 <property name="valign">center</property>
                 <child>
                   <object class="GtkButton" id="panic_btn">
+                    <property name="tooltip-text" translatable="yes">Panic - immediately silence all sounding notes</property>
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="valign">center</property>
@@ -1120,6 +1132,7 @@
                     <property name="visible">True</property>
                     <child>
                       <object class="GtkToggleButton" id="track_grid_view_toggle_button">
+                        <property name="tooltip-text" translatable="yes">Switch to the track grid view</property>
                         <property name="label" translatable="yes">Track Grid</property>
                         <property name="visible">True</property>
                         <property name="active">True</property>
@@ -1127,6 +1140,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="riffs_view_toggle_button">
+                        <property name="tooltip-text" translatable="yes">Switch to the riffs view</property>
                         <property name="label" translatable="yes">Riffs</property>
                         <property name="visible">True</property>
                       </object>
@@ -1242,6 +1256,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="track_grid_windowed_zoom_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Windowed zoom mode - drag a rectangle over the grid to zoom into that area</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">z</property>
                                     <property name="use-underline">True</property>
@@ -1280,6 +1295,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="track_grid_select_all_btn">
+                                    <property name="tooltip-text" translatable="yes">Select all riffs</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_293</property>
                                     <property name="use-underline">True</property>
@@ -1288,6 +1304,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="track_grid_unselect_all_btn">
+                                    <property name="tooltip-text" translatable="yes">Deselect all riffs</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_293</property>
                                     <property name="use-underline">True</property>
@@ -1390,6 +1407,7 @@
                           </child>
                                 <child>
                                   <object class="GtkToggleButton" id="track_grid_cursor_follow">
+                                    <property name="tooltip-text" translatable="yes">Toggle cursor follow - scroll the view along with the play cursor</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Track grid cursor follow</property>
                                     <property name="use-underline">True</property>
@@ -3021,6 +3039,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="track_grid_horizontal_zoom_out">
+                                                <property name="tooltip-text" translatable="yes">Zoom the view out horizontally</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
                                                 <property name="valign">center</property>
@@ -3043,6 +3062,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="track_grid_horizontal_zoom_in">
+                                                <property name="tooltip-text" translatable="yes">Zoom the view in horizontally</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
                                                 <property name="valign">center</property>
@@ -3083,6 +3103,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="track_grid_vertical_zoom_in">
+                                        <property name="tooltip-text" translatable="yes">Zoom the view in vertically</property>
                                         <property name="visible">True</property>
                                         <property name="halign">center</property>
                                         <property name="valign">start</property>
@@ -3107,6 +3128,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="track_grid_vertical_zoom_out">
+                                        <property name="tooltip-text" translatable="yes">Zoom the view out vertically</property>
                                         <property name="visible">True</property>
                                         <property name="halign">center</property>
                                         <property name="valign">start</property>
@@ -3236,6 +3258,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="add_riff_set_btn">
+                                                    <property name="tooltip-text" translatable="yes">Add a new riff set</property>
                                                     <property name="icon-name">list-add</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
@@ -7943,6 +7966,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="add_sequence_btn">
+                                                <property name="tooltip-text" translatable="yes">Add a new riff sequence</property>
                                                 <property name="icon-name">list-add</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
@@ -11115,6 +11139,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="add_grid_btn">
+                                                <property name="tooltip-text" translatable="yes">Add a riff grid reference to this riff sequence</property>
                                                 <property name="icon-name">list-add</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
@@ -12801,6 +12826,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkToggleButton" id="riff_grid_windowed_zoom_mode_btn">
+                                                    <property name="tooltip-text" translatable="yes">Windowed zoom mode - drag a rectangle over the grid to zoom into that area</property>
                                                     <property name="visible">True</property>
                                                     <property name="label" translatable="yes">z</property>
                                                     <property name="use-underline">True</property>
@@ -12839,6 +12865,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_select_all_btn">
+                                                    <property name="tooltip-text" translatable="yes">Select all riffs</property>
                                                     <property name="visible">True</property>
                                                     <property name="label" translatable="yes">__glade_unnamed_293</property>
                                                     <property name="use-underline">True</property>
@@ -12847,6 +12874,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_unselect_all_btn">
+                                                    <property name="tooltip-text" translatable="yes">Deselect all riffs</property>
                                                     <property name="visible">True</property>
                                                     <property name="label" translatable="yes">__glade_unnamed_294</property>
                                                     <property name="use-underline">True</property>
@@ -12972,6 +13000,7 @@
                                       </child>
                                                 <child>
                                                   <object class="GtkToggleButton" id="riff_grid_cursor_follow">
+                                                    <property name="tooltip-text" translatable="yes">Toggle cursor follow - scroll the view along with the play cursor</property>
                                                     <property name="visible">True</property>
                                                     <property name="label" translatable="yes">Track grid cursor follow</property>
                                                     <property name="use-underline">True</property>
@@ -13010,6 +13039,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_play">
+                                                    <property name="tooltip-text" translatable="yes">Play this riff grid</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
                                                     <property name="valign">center</property>
@@ -13023,6 +13053,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_copy">
+                                                    <property name="tooltip-text" translatable="yes">Copy this riff grid</property>
                                                     <property name="icon-name">edit-copy</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
@@ -13031,6 +13062,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_delete">
+                                                    <property name="tooltip-text" translatable="yes">Delete this riff grid</property>
                                                     <property name="icon-name">edit-delete</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
@@ -13039,6 +13071,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_copy_to_track_view_btn">
+                                                    <property name="tooltip-text" translatable="yes">Copy this riff grid into the track grid view</property>
                                                     <property name="icon-name">format-justify-left</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
@@ -13060,6 +13093,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="add_riff_grid_riff_set_btn">
+                                                    <property name="tooltip-text" translatable="yes">Add a riff set reference to this riff grid</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
                                                     <property name="valign">center</property>
@@ -13086,6 +13120,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="add_riff_grid_riff_seq_btn">
+                                                    <property name="tooltip-text" translatable="yes">Add a riff sequence reference to this riff grid</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">start</property>
                                                     <property name="valign">center</property>
@@ -13176,6 +13211,7 @@
                                                         </child>
                                                         <child>
                                                           <object class="GtkButton" id="riff_grid_horizontal_zoom_out">
+                                                            <property name="tooltip-text" translatable="yes">Zoom the view out horizontally</property>
                                                             <property name="visible">True</property>
                                                             <property name="halign">start</property>
                                                             <property name="valign">center</property>
@@ -13198,6 +13234,7 @@
                                                         </child>
                                                         <child>
                                                           <object class="GtkButton" id="riff_grid_horizontal_zoom_in">
+                                                            <property name="tooltip-text" translatable="yes">Zoom the view in horizontally</property>
                                                             <property name="visible">True</property>
                                                             <property name="halign">start</property>
                                                             <property name="valign">center</property>
@@ -13238,6 +13275,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_vertical_zoom_in">
+                                                    <property name="tooltip-text" translatable="yes">Zoom the view in vertically</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">center</property>
                                                     <property name="valign">start</property>
@@ -13262,6 +13300,7 @@
                                                 </child>
                                                 <child>
                                                   <object class="GtkButton" id="riff_grid_vertical_zoom_out">
+                                                    <property name="tooltip-text" translatable="yes">Zoom the view out vertically</property>
                                                     <property name="visible">True</property>
                                                     <property name="halign">center</property>
                                                     <property name="valign">start</property>
@@ -13334,6 +13373,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="add_arrangement_btn">
+                                                <property name="tooltip-text" translatable="yes">Add a new riff arrangement</property>
                                                 <property name="icon-name">list-add</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
@@ -13372,6 +13412,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkToggleButton" id="riff_arrangement_overview_toggle_button">
+                                                <property name="tooltip-text" translatable="yes">Show or hide the arrangement overview</property>
                                                 <property name="icon-name">video-display</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
@@ -16528,6 +16569,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_windowed_zoom_mode_btn">
+                                        <property name="tooltip-text" translatable="yes">Windowed zoom mode - drag a rectangle over the grid to zoom into that area</property>
                                         <property name="visible">True</property>
                                         <property name="label" translatable="yes">z</property>
                                         <property name="use-underline">True</property>
@@ -16566,6 +16608,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="piano_roll_select_all_btn">
+                                        <property name="tooltip-text" translatable="yes">Select all notes</property>
                                         <property name="visible">True</property>
                                         <property name="label" translatable="yes">__glade_unnamed_293</property>
                                         <property name="use-underline">True</property>
@@ -16574,6 +16617,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="piano_roll_unselect_all_btn">
+                                        <property name="tooltip-text" translatable="yes">Deselect all notes</property>
                                         <property name="visible">True</property>
                                         <property name="label" translatable="yes">__glade_unnamed_293</property>
                                         <property name="use-underline">True</property>
@@ -16763,6 +16807,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_all_voices_btn">
+                                        <property name="tooltip-text" translatable="yes">Apply note expression edits to all MPE voices</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16773,6 +16818,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_0_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 0</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16784,6 +16830,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_1_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 1</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16795,6 +16842,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_2_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 2</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16806,6 +16854,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_3_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 3</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16817,6 +16866,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_4_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 4</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16828,6 +16878,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_5_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 5</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16839,6 +16890,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_6_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 6</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16850,6 +16902,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_7_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 7</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16861,6 +16914,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_8_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 8</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16872,6 +16926,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_9_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 9</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -16883,6 +16938,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkToggleButton" id="piano_roll_mpe_voice_10_btn">
+                                        <property name="tooltip-text" translatable="yes">Edit note expression on MPE voice 10</property>
                                         <property name="width-request">50</property>
                                         <property name="visible">True</property>
                                         <property name="halign">start</property>
@@ -17064,6 +17120,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="piano_roll_horizontal_zoom_out">
+                                                <property name="tooltip-text" translatable="yes">Zoom the view out horizontally</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
                                                 <property name="valign">center</property>
@@ -17087,6 +17144,7 @@
                                             </child>
                                             <child>
                                               <object class="GtkButton" id="piano_roll_horizontal_zoom_in">
+                                                <property name="tooltip-text" translatable="yes">Zoom the view in horizontally</property>
                                                 <property name="visible">True</property>
                                                 <property name="halign">start</property>
                                                 <property name="valign">center</property>
@@ -17131,6 +17189,7 @@
                             </child>
                             <child>
                               <object class="GtkButton" id="piano_roll_vertical_zoom_in">
+                                <property name="tooltip-text" translatable="yes">Zoom the view in vertically</property>
                                 <property name="visible">True</property>
                                 <property name="halign">center</property>
                                 <property name="valign">start</property>
@@ -17155,6 +17214,7 @@
                             </child>
                             <child>
                               <object class="GtkButton" id="piano_roll_vertical_zoom_out">
+                                <property name="tooltip-text" translatable="yes">Zoom the view out vertically</property>
                                 <property name="visible">True</property>
                                 <property name="halign">center</property>
                                 <property name="valign">start</property>
@@ -17193,6 +17253,7 @@
                                 <property name="visible">True</property>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_select_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Select mode - click and drag to select automation points</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">s</property>
                                     <property name="use-underline">True</property>
@@ -17203,7 +17264,7 @@
                                 <child>
                                   <object class="GtkToggleButton" id="automation_add_mode_btn">
                                     <property name="visible">True</property>
-                                    <property name="tooltip-text" translatable="yes">Add</property>
+                                    <property name="tooltip-text" translatable="yes">Add mode - click the grid to add new automation points</property>
                                     <property name="label" translatable="yes">+</property>
                                     <property name="use-underline">True</property>
                                     <property name="icon-name">list-add</property>
@@ -17212,6 +17273,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_delete_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Delete mode - click automation points to delete them</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">-</property>
                                     <property name="use-underline">True</property>
@@ -17221,6 +17283,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_edit_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Edit mode - click and drag automation points to edit them</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">e</property>
                                     <property name="use-underline">True</property>
@@ -17230,11 +17293,11 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_zoom_window_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Windowed zoom mode - drag a rectangle over the grid to zoom into that area</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">z</property>
                                     <property name="use-underline">True</property>
                                     <property name="icon-name">edit-find-symbolic</property>
-                                    <property name="active">True</property>
                                     <property name="group">automation_select_mode_btn</property>
                                   </object>
                                 </child>
@@ -17245,6 +17308,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_cut_btn">
+                                    <property name="tooltip-text" translatable="yes">Cut the selected automation points to the clipboard</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation cut</property>
                                     <property name="use-underline">True</property>
@@ -17253,6 +17317,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_copy_btn">
+                                    <property name="tooltip-text" translatable="yes">Copy the selected automation points to the clipboard</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation copy</property>
                                     <property name="use-underline">True</property>
@@ -17261,6 +17326,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_paste_btn">
+                                    <property name="tooltip-text" translatable="yes">Paste the clipboard automation points at the pointer position</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation paste</property>
                                     <property name="use-underline">True</property>
@@ -17269,6 +17335,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_select_all_btn">
+                                    <property name="tooltip-text" translatable="yes">Select all automation points</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_293</property>
                                     <property name="use-underline">True</property>
@@ -17277,6 +17344,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_unselect_all_btn">
+                                    <property name="tooltip-text" translatable="yes">Deselect all automation points</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_293</property>
                                     <property name="use-underline">True</property>
@@ -17290,6 +17358,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_translate_left_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected automation points one step to the left (earlier in time)</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation translate_left</property>
                                     <property name="use-underline">True</property>
@@ -17298,6 +17367,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_translate_right_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected automation points one step to the right (later in time)</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation translate_right</property>
                                     <property name="use-underline">True</property>
@@ -17306,6 +17376,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_translate_up_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected automation points one step up</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation translate up</property>
                                     <property name="use-underline">True</property>
@@ -17314,6 +17385,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_translate_down_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected automation points one step down</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">automation translate_down</property>
                                     <property name="use-underline">True</property>
@@ -17338,6 +17410,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_quantise_btn">
+                                    <property name="tooltip-text" translatable="yes">Quantise the selected automation points to the grid</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Q</property>
                                     <property name="use-underline">True</property>
@@ -17345,6 +17418,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_dock_toggle_btn">
+                                    <property name="tooltip-text" translatable="yes">Dock or undock this panel into its own window</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_157</property>
                                     <property name="use-underline">True</property>
@@ -17365,6 +17439,7 @@
                                 <property name="visible">True</property>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_note_velocity">
+                                    <property name="tooltip-text" translatable="yes">Edit note velocity automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Note Velocities</property>
                                     <property name="use-underline">True</property>
@@ -17373,6 +17448,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_note_expression">
+                                    <property name="tooltip-text" translatable="yes">Edit note expression automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Note Expression</property>
                                     <property name="use-underline">True</property>
@@ -17381,6 +17457,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_controllers">
+                                    <property name="tooltip-text" translatable="yes">Edit MIDI controller automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Controllers</property>
                                     <property name="use-underline">True</property>
@@ -17389,6 +17466,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_pitch_bend">
+                                    <property name="tooltip-text" translatable="yes">Edit pitch bend automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Pitch Bend</property>
                                     <property name="use-underline">True</property>
@@ -17397,6 +17475,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_after_touch">
+                                    <property name="tooltip-text" translatable="yes">Edit after touch automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">After Touch</property>
                                     <property name="use-underline">True</property>
@@ -17405,6 +17484,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_key_pressure">
+                                    <property name="tooltip-text" translatable="yes">Edit key pressure automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Key Pressure</property>
                                     <property name="use-underline">True</property>
@@ -17413,6 +17493,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_program_change">
+                                    <property name="tooltip-text" translatable="yes">Edit program change automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Program Change</property>
                                     <property name="use-underline">True</property>
@@ -17421,6 +17502,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_active_sense">
+                                    <property name="tooltip-text" translatable="yes">Edit active sense automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Active Sense</property>
                                     <property name="use-underline">True</property>
@@ -17429,6 +17511,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_tempo">
+                                    <property name="tooltip-text" translatable="yes">Edit the project tempo automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Tempo</property>
                                     <property name="use-underline">True</property>
@@ -17437,6 +17520,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_instrument_parameters">
+                                    <property name="tooltip-text" translatable="yes">Edit instrument plugin parameter automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Instrument</property>
                                     <property name="use-underline">True</property>
@@ -17445,6 +17529,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_effect_parameters">
+                                    <property name="tooltip-text" translatable="yes">Edit effect plugin parameter automation</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Effects</property>
                                     <property name="use-underline">True</property>
@@ -17458,6 +17543,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_track">
+                                    <property name="tooltip-text" translatable="yes">Apply the automation edit to the whole track</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Track</property>
                                     <property name="use-underline">True</property>
@@ -17466,6 +17552,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_edit_riff">
+                                    <property name="tooltip-text" translatable="yes">Apply the automation edit to the selected riff</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Riff</property>
                                     <property name="use-underline">True</property>
@@ -17479,6 +17566,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_mode_point">
+                                    <property name="tooltip-text" translatable="yes">Draw mode - add discrete automation points</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Point</property>
                                     <property name="use-underline">True</property>
@@ -17487,6 +17575,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_mode_line">
+                                    <property name="tooltip-text" translatable="yes">Draw mode - draw straight automation lines</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Line</property>
                                     <property name="use-underline">True</property>
@@ -17495,6 +17584,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_mode_curve">
+                                    <property name="tooltip-text" translatable="yes">Draw mode - draw curved automation segments</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Curve</property>
                                     <property name="use-underline">True</property>
@@ -17508,6 +17598,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_discrete_events_btn">
+                                    <property name="tooltip-text" translatable="yes">Show and play automation as discrete events</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Discrete</property>
                                     <property name="use-underline">True</property>
@@ -17516,6 +17607,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="automation_grid_continuous_events_btn">
+                                    <property name="tooltip-text" translatable="yes">Show and play automation as continuous envelopes</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Continuous</property>
                                     <property name="use-underline">True</property>
@@ -17915,6 +18007,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_zoom_out">
+                                    <property name="tooltip-text" translatable="yes">Zoom the automation view out</property>
                                     <property name="visible">True</property>
                                     <property name="halign">start</property>
                                     <property name="valign">center</property>
@@ -17937,6 +18030,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="automation_zoom_in">
+                                    <property name="tooltip-text" translatable="yes">Zoom the automation view in</property>
                                     <property name="visible">True</property>
                                     <property name="halign">start</property>
                                     <property name="valign">center</property>
@@ -17969,6 +18063,7 @@
                             <property name="visible">True</property>
                             <child>
                               <object class="GtkToggleButton" id="sample_library_dock_toggle_btn">
+                                <property name="tooltip-text" translatable="yes">Dock or undock the sample library panel into its own window</property>
                                 <property name="visible">True</property>
                                 <property name="label" translatable="yes">__glade_unnamed_250</property>
                                 <property name="use-underline">True</property>
@@ -17989,6 +18084,7 @@
                             <property name="visible">True</property>
                             <child>
                               <object class="GtkButton" id="sample_library_add_sample_to_song_btn">
+                                <property name="tooltip-text" translatable="yes">Add the selected sample to the song</property>
                                 <property name="label" translatable="yes">Add</property>
                                 <property name="visible">True</property>
                                 <property name="halign">center</property>
@@ -18025,6 +18121,7 @@
                                 <property name="visible">True</property>
                                 <child>
                                   <object class="GtkToggleButton" id="sample_roll_select_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Select mode - click and drag to select samples</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano_roll_select_mode</property>
                                     <property name="use-underline">True</property>
@@ -18044,6 +18141,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="sample_roll_delete_mode_btn">
+                                    <property name="tooltip-text" translatable="yes">Delete mode - click samples to delete them</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano_roll_delete_mode</property>
                                     <property name="use-underline">True</property>
@@ -18065,6 +18163,7 @@
                           </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_cut_btn">
+                                    <property name="tooltip-text" translatable="yes">Cut the selected samples to the clipboard</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll cut</property>
                                     <property name="use-underline">True</property>
@@ -18073,6 +18172,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_copy_btn">
+                                    <property name="tooltip-text" translatable="yes">Copy the selected samples to the clipboard</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll copy</property>
                                     <property name="use-underline">True</property>
@@ -18081,6 +18181,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_paste_btn">
+                                    <property name="tooltip-text" translatable="yes">Paste the clipboard samples at the pointer position</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll paste</property>
                                     <property name="use-underline">True</property>
@@ -18099,6 +18200,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_zoom_out">
+                                    <property name="tooltip-text" translatable="yes">Zoom the sample roll view out</property>
                                     <property name="visible">True</property>
                                     <property name="halign">start</property>
                                     <property name="label" translatable="yes">__glade_unnamed_255</property>
@@ -18117,6 +18219,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_zoom_in">
+                                    <property name="tooltip-text" translatable="yes">Zoom the sample roll view in</property>
                                     <property name="visible">True</property>
                                     <property name="halign">start</property>
                                     <property name="label" translatable="yes">__glade_unnamed_256</property>
@@ -18128,6 +18231,7 @@
                           </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_translate_left_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected samples one step to the left (earlier in time)</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll translate_left</property>
                                     <property name="use-underline">True</property>
@@ -18136,6 +18240,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_translate_right_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected samples one step to the right (later in time)</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll translate_right</property>
                                     <property name="use-underline">True</property>
@@ -18144,6 +18249,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_translate_up_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected samples one step up</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll translate up</property>
                                     <property name="use-underline">True</property>
@@ -18152,6 +18258,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_translate_down_btn">
+                                    <property name="tooltip-text" translatable="yes">Move the selected samples one step down</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano roll translate_down</property>
                                     <property name="use-underline">True</property>
@@ -18190,6 +18297,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="sample_roll_quantise_start_checkbox">
+                                    <property name="tooltip-text" translatable="yes">Quantise the start position of the selected samples to the grid</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Start</property>
                                     <property name="use-underline">True</property>
@@ -18198,6 +18306,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="sample_roll_quantise_end_checkbox">
+                                    <property name="tooltip-text" translatable="yes">Quantise the end position of the selected samples to the grid</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">End</property>
                                     <property name="use-underline">True</property>
@@ -18206,6 +18315,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_quantise_btn">
+                                    <property name="tooltip-text" translatable="yes">Quantise the selected samples to the grid</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">Q</property>
                                     <property name="use-underline">True</property>
@@ -18221,6 +18331,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_decrease_sample_length_btn">
+                                    <property name="tooltip-text" translatable="yes">Shorten the selected sample by one step</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano_roll_increase_note_length_btn</property>
                                     <property name="use-underline">True</property>
@@ -18229,6 +18340,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="sample_roll_increase_sample_length_btn">
+                                    <property name="tooltip-text" translatable="yes">Lengthen the selected sample by one step</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">piano_roll_decrease_note_length_btn</property>
                                     <property name="use-underline">True</property>
@@ -18237,6 +18349,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkToggleButton" id="sample_roll_dock_toggle_btn">
+                                    <property name="tooltip-text" translatable="yes">Dock or undock this panel into its own window</property>
                                     <property name="visible">True</property>
                                     <property name="label" translatable="yes">__glade_unnamed_250</property>
                                     <property name="use-underline">True</property>
@@ -18323,6 +18436,7 @@
                                     <property name="orientation">vertical</property>
                                     <child>
                                       <object class="GtkButton" id="sample_roll_sample_browser_delete_btn">
+                                        <property name="tooltip-text" translatable="yes">Delete the selected sample from the browser</property>
                                         <property name="label" translatable="yes">Delete</property>
                                         <property name="visible">True</property>
                                         <property name="halign">center</property>
@@ -18431,6 +18545,7 @@
                             <property name="visible">True</property>
                             <child>
                               <object class="GtkToggleButton" id="mixer_dock_toggle_btn">
+                                <property name="tooltip-text" translatable="yes">Dock or undock the mixer panel into its own window</property>
                                 <property name="visible">True</property>
                                 <property name="label" translatable="yes">__glade_unnamed_194</property>
                                 <property name="use-underline">True</property>
@@ -19973,6 +20088,7 @@
                             <property name="visible">True</property>
                             <child>
                               <object class="GtkToggleButton" id="scripting_dock_toggle_btn">
+                                <property name="tooltip-text" translatable="yes">Dock or undock the scripting console into its own window</property>
                                 <property name="visible">True</property>
                                 <property name="label" translatable="yes">__glade_unnamed_251</property>
                                 <property name="use-underline">True</property>
@@ -20109,6 +20225,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="scripting_console_run_btn">
+                                        <property name="tooltip-text" translatable="yes">Run the code in the scripting console</property>
                                         <property name="label" translatable="yes">Run</property>
                                         <property name="visible">True</property>
                                         <property name="halign">center</property>
@@ -20133,6 +20250,7 @@
                                 <property name="visible">True</property>
                                 <child>
                                   <object class="GtkButton" id="scripting_run_script_btn">
+                                    <property name="tooltip-text" translatable="yes">Run the selected script file</property>
                                     <property name="label" translatable="yes">Run</property>
                                     <property name="visible">True</property>
                                     <property name="halign">center</property>
@@ -20149,6 +20267,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="scripting_save_script_as_btn">
+                                    <property name="tooltip-text" translatable="yes">Save the current script to a new file</property>
                                     <property name="label" translatable="yes">Save as</property>
                                     <property name="visible">True</property>
                                     <property name="halign">center</property>
@@ -20162,6 +20281,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="scripting_save_script_btn">
+                                    <property name="tooltip-text" translatable="yes">Save the current script</property>
                                     <property name="label" translatable="yes">Save</property>
                                     <property name="visible">True</property>
                                     <property name="halign">center</property>
@@ -20175,6 +20295,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="scripting_new_script_btn">
+                                    <property name="tooltip-text" translatable="yes">Create a new script</property>
                                     <property name="label" translatable="yes">New</property>
                                     <property name="visible">True</property>
                                     <property name="halign">center</property>
@@ -20275,6 +20396,7 @@
                 </child>
                 <child>
                   <object class="GtkToggleButton" id="show_sub_panel_toggle_btn">
+                    <property name="tooltip-text" translatable="yes">Show or hide the sub panels</property>
                     <property name="label" translatable="yes">^</property>
                     <property name="width-request">30</property>
                     <property name="visible">True</property>
@@ -20313,6 +20435,7 @@
                     <property name="margin-end">10</property>
                     <child>
                       <object class="GtkToggleButton" id="transport_goto_start_button">
+                        <property name="tooltip-text" translatable="yes">Move the play cursor to the start of the song</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_124</property>
                         <property name="use-underline">True</property>
@@ -20322,6 +20445,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_move_back_button">
+                        <property name="tooltip-text" translatable="yes">Move the play cursor back</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_125</property>
                         <property name="use-underline">True</property>
@@ -20331,6 +20455,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_stop_button">
+                        <property name="tooltip-text" translatable="yes">Stop playback</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_126</property>
                         <property name="use-underline">True</property>
@@ -20340,6 +20465,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_play_button">
+                        <property name="tooltip-text" translatable="yes">Play</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_127</property>
                         <property name="use-underline">True</property>
@@ -20358,6 +20484,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_loop_button">
+                        <property name="tooltip-text" translatable="yes">Toggle playback looping</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_128</property>
                         <property name="use-underline">True</property>
@@ -20366,6 +20493,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_pause_button">
+                        <property name="tooltip-text" translatable="yes">Pause playback</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_129</property>
                         <property name="use-underline">True</property>
@@ -20375,6 +20503,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_move_forward_button">
+                        <property name="tooltip-text" translatable="yes">Move the play cursor forward</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_130</property>
                         <property name="use-underline">True</property>
@@ -20384,6 +20513,7 @@
                     </child>
                     <child>
                       <object class="GtkToggleButton" id="transport_goto_end_button">
+                        <property name="tooltip-text" translatable="yes">Move the play cursor to the end of the song</property>
                         <property name="visible">True</property>
                         <property name="label" translatable="yes">__glade_unnamed_131</property>
                         <property name="use-underline">True</property>

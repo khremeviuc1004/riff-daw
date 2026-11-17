@@ -34,6 +34,7 @@
             </child>
             <child>
               <object class="GtkButton" id="mixer_blade_track_instrument_show_ui_btn">
+                <property name="tooltip-text" translatable="yes">Open the track instrument plugin editor window</property>
                 <property name="label" translatable="yes">O</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -42,6 +43,7 @@
             </child>
             <child>
               <object class="GtkButton" id="track_details_btn">
+                <property name="tooltip-text" translatable="yes">Open the track details dialogue</property>
                 <property name="label" translatable="yes">=&gt;</property>
                 <property name="visible">True</property>
                 <property name="halign">start</property>
@@ -61,18 +63,21 @@
             <property name="homogeneous">True</property>
             <child>
               <object class="GtkToggleButton" id="mixer_blade_track_mute_toggle_btn">
+                <property name="tooltip-text" translatable="yes">Mute this track</property>
                 <property name="label" translatable="yes">M</property>
                 <property name="visible">True</property>
               </object>
             </child>
             <child>
               <object class="GtkToggleButton" id="mixer_blade_track_solo_toggle_btn">
+                <property name="tooltip-text" translatable="yes">Solo this track</property>
                 <property name="label" translatable="yes">S</property>
                 <property name="visible">True</property>
               </object>
             </child>
             <child>
               <object class="GtkToggleButton" id="mixer_blade_track_record_toggle_btn">
+                <property name="tooltip-text" translatable="yes">Arm this track for recording</property>
                 <property name="label" translatable="yes">R</property>
                 <property name="visible">True</property>
               </object>

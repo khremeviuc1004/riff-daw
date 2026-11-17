@@ -354,8 +354,8 @@ impl DAWState {
         let mut instrument_track_receivers2 = HashMap::new();
 
         self.project = project;
-
-        // let mut song_length_in_beats: u64 = 0;
+        // restore the automation view's discrete/continuous setting from the song
+        self.automation_discrete = self.project.song().automation_discrete();
 
         // load all the samples - create the sample data objects
         let sample_rate = self.configuration.audio.sample_rate;
@@ -1106,6 +1106,7 @@ impl DAWState {
     }
 
     pub fn set_project(&mut self, project: Project) {
+        self.automation_discrete = project.song().automation_discrete();
         self.project = project;
     }
 
@@ -1511,9 +1512,8 @@ impl DAWState {
                         }
                         let mut riffs = vec![];
                         riffs.push(riff.clone());
-                        let automation = Automation::new();
                         let track_event_blocks = DAWUtils::convert_to_event_blocks(
-                                                                                            &automation,
+                                                                                             track.automation(),
                                                                                             &riffs,
                                                                                             &riff_refs,
                                                                                             bpm,
@@ -1787,9 +1787,8 @@ impl DAWState {
                             }
                             let mut riffs = vec![];
                             riffs.push(riff.clone());
-                            let automation = Automation::new();
                             let vst_event_blocks = DAWUtils::convert_to_event_blocks(
-                                                                                            &automation,
+                                                                                             track.automation(),
                                                                                             &riffs,
                                                                                             &riff_refs,
                                                                                             bpm,
@@ -1948,9 +1947,8 @@ impl DAWState {
                     debug!("Riff ref: uuid={}, position={}, length={} - ", riff_ref.uuid().to_string(), riff_ref.position(), riff_ref.linked_to());
                 }
                 debug!("");
-                let automation = Automation::new();
                 let vst_event_blocks = DAWUtils::convert_to_event_blocks(
-                                                                                        &automation,
+                                                                                        track.automation(),
                                                                                         track.riffs(),
                                                                                         &riff_refs,
                                                                                         bpm,
@@ -2029,17 +2027,16 @@ impl DAWState {
             } else {
                 0
             };
-            let automation = Automation::new();
             let vst_event_blocks = if let Some(riff_grid) = song.riff_grid(riff_grid_uuid.clone()) {
                 if let Some(track_riff_refs) = riff_grid.track_riff_references(track.uuid().to_string()) {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
+                    DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), track_riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
                 }
                 else {
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
+                    DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
                 }
             }
             else {
-                DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
+                DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), &vec![], bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, None)
             };
 
             if !already_playing {
@@ -2334,8 +2331,9 @@ impl DAWState {
                     DAWUtils::convert_to_event_blocks(track_automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, Some(&tempo_automation))
                 }
                 else {
-                    let automation = Automation::new();
-                    DAWUtils::convert_to_event_blocks(&automation, track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, Some(&tempo_automation))
+                    // the arrangement has no automation for this track - fall back to
+                    // the track's own automation so its envelopes still play
+                    DAWUtils::convert_to_event_blocks(track.automation(), track.riffs(), &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, midi_channel, self.automation_discrete(), time_signature_numerator, time_signature_denominator, Some(&tempo_automation))
                 };
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::SetEvents(vst_event_blocks, false));
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
@@ -4282,6 +4280,8 @@ impl DAWState {
 
     pub fn set_automation_discrete(&mut self, automation_discrete: bool) {
         self.automation_discrete = automation_discrete;
+        // persist the setting with the song (it is saved/restored with the project)
+        self.get_project().song_mut().set_automation_discrete(automation_discrete);
     }
 }
 

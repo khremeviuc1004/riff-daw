@@ -294,7 +294,20 @@ impl DAWUtils {
                     break;
                 }
                 if absolute_position_in_frames >= current_start_frame {
-                    param_event_block.push(plugin_parameter_events[event_index].clone());
+                    // the position is adjusted back from absolute frames to a block
+                    // relative offset - the same convention as the track event blocks.
+                    // the VST3 parameter queue (IParamValueQueue::addPoint) requires
+                    // in-block sample offsets; an absolute position is out of range
+                    // and the plugin silently never applies the automation.
+                    let mut adjusted_event = plugin_parameter_events[event_index].clone();
+                    adjusted_event.set_position((absolute_position_in_frames - current_start_frame) as f64);
+                    // plugin parameter values are a 0..1 contract (VST2 setParameter,
+                    // VST3/CLAP normalised values) - older projects can contain
+                    // envelope points stored above the range by the automation view
+                    // (the hit test used to be unclamped), which plugins ignore, so
+                    // the values are clamped on the way out here
+                    adjusted_event.set_value(adjusted_event.value.clamp(0.0, 1.0));
+                    param_event_block.push(adjusted_event);
                 }
                 event_index += 1;
             }
@@ -929,7 +942,11 @@ impl DAWUtils {
         for event in plugin_param_events.iter() {
             debug!("Plugin parameter value: {}", event.value);
             if let Some(param) = param_info.get(&(event.index as u32)) {
-                let param_value = event.value as f64 * (param.range.end() - param.range.start());
+                // the event value is normalised 0..1 - map it onto the parameter's
+                // native range: start + fraction * (end - start). The start offset
+                // matters for bipolar ranges (-24..+24 dB etc), where omitting it
+                // turns a "0" into the centre of the range rather than its minimum
+                let param_value = param.range.start() + event.value as f64 * (param.range.end() - param.range.start());
                 debug!("Plugin parameter info: original value={}, value={}, start={}, end={}", event.value, param_value, param.range.start(), param.range.end());
                 let clap_event = clap_event_param_value {
                     header: clap_event_header {
@@ -1886,6 +1903,159 @@ mod tests {
 
             previous_value = Some(param_event.value);
         }
+    }
+
+    /// Reproduces the song play chain for a continuous automation envelope, exactly
+    /// as play_song builds it: track automation holding an envelope whose points are
+    /// AudioPluginParameter events (position in beats, value 0..1 - the shape
+    /// handle_automation_instrument_add writes) -> convert_to_event_blocks with
+    /// automation_discrete=false -> param event blocks.
+    fn song_play_envelope_param_blocks() -> (Vec<Vec<TrackEvent>>, Vec<Vec<PluginParameter>>) {
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size = 1024.0;
+        let song_length_in_beats = 10.0;
+
+        let mut automation = Automation::new();
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 0.0,
+            value: 0.0,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        let mut envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let envelope_point_1 = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 0.0,
+            value: 0.0,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        let envelope_point_2 = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 8.0,
+            value: 1.0,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_1));
+        envelope.events_mut().push(TrackEvent::AudioPluginParameter(envelope_point_2));
+        automation.envelopes_mut().push(envelope);
+
+        let riffs: Vec<Riff> = vec![];
+        let riff_refs: Vec<RiffReference> = vec![];
+        DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, song_length_in_beats, 0, false, 4.0, 4.0, None)
+    }
+
+    #[test]
+    fn continuous_envelope_produces_param_event_blocks_for_song_play() {
+        let (_event_blocks, param_event_blocks) = song_play_envelope_param_blocks();
+
+        let total_param_events: usize = param_event_blocks.iter().map(|block| block.len()).sum();
+        let expected_param_events = (10.0 / 140.0 * 60.0 * 44100.0 / 1024.0) as usize;
+        assert_eq!(expected_param_events, total_param_events);
+
+        // the sampled values must ramp up from 0 toward the last point's value, and
+        // every position must be block relative (0..block_size) - the convention the
+        // plugin event queues (VST3 addPoint in particular) require
+        let block_size = 1024.0;
+        let mut previous_value = None;
+        for block in param_event_blocks.iter() {
+            for param_event in block.iter() {
+                assert!(param_event.position() >= 0.0);
+                assert!(param_event.position() < block_size);
+                if let Some(value) = previous_value {
+                    assert!(value <= param_event.value as f64);
+                }
+                previous_value = Some(param_event.value as f64);
+            }
+        }
+        assert!(previous_value.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn block_processor_surfaces_envelope_param_events() {        use crate::domain::{BlockBufferTrackEventProcessor, TrackEventProcessor};
+
+        let (event_blocks, param_event_blocks) = song_play_envelope_param_blocks();
+        let expected_param_events: usize = param_event_blocks.iter().map(|block| block.len()).sum();
+
+        let mut processor = BlockBufferTrackEventProcessor::new();
+        processor.set_track_event_blocks(Some(event_blocks));
+        processor.set_param_event_blocks(Some(param_event_blocks));
+        processor.set_play(true);
+        processor.set_block_index(0);
+
+        let mut surfaced_param_events = 0;
+        for _ in 0..(10.0 / 140.0 * 60.0 * 44100.0 / 1024.0) as usize + 2 {
+            let (_events, param_events) = processor.process_events();
+            surfaced_param_events += param_events.len();
+        }
+        assert_eq!(expected_param_events, surfaced_param_events);
+    }
+
+    #[test]
+    fn out_of_range_envelope_values_are_clamped_to_the_normalised_range() {
+        // older projects (created when the automation hit test was unclamped) can
+        // hold envelope points with values above 1.0 - plugins reject out of range
+        // normalised values, so the param blocks must clamp them
+        let bpm = 140.0;
+        let sample_rate = 44100.0;
+        let block_size = 1024.0;
+
+        let mut automation = Automation::new();
+        let event_details = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 0.0,
+            value: 0.0,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        let mut envelope = AutomationEnvelope::new(TrackEvent::AudioPluginParameter(event_details));
+        let high_point = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 0.0,
+            value: 1.5,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        let low_point = PluginParameter {
+            id: Default::default(),
+            index: 3,
+            position: 8.0,
+            value: -0.5,
+            instrument: true,
+            plugin_uuid: Default::default(),
+        };
+        envelope.events_mut().push(TrackEvent::AudioPluginParameter(high_point));
+        envelope.events_mut().push(TrackEvent::AudioPluginParameter(low_point));
+        automation.envelopes_mut().push(envelope);
+
+        let riffs: Vec<Riff> = vec![];
+        let riff_refs: Vec<RiffReference> = vec![];
+        let (_event_blocks, param_event_blocks) = DAWUtils::convert_to_event_blocks(&automation, &riffs, &riff_refs, bpm, block_size, sample_rate, 10.0, 0, false, 4.0, 4.0, None);
+
+        let mut clamped_high = false;
+        let mut clamped_low = false;
+        for block in param_event_blocks.iter() {
+            for param_event in block.iter() {
+                assert!(param_event.value >= 0.0);
+                assert!(param_event.value <= 1.0);
+                if param_event.value == 1.0 {
+                    clamped_high = true;
+                }
+                if param_event.value == 0.0 {
+                    clamped_low = true;
+                }
+            }
+        }
+        assert!(clamped_high);
+        assert!(clamped_low);
     }
 
     #[test]

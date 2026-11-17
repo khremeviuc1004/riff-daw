@@ -12106,6 +12106,20 @@ impl MainWindow {
             _ => None,
         };
 
+        // the automation view's discrete/continuous mode is saved with the song -
+        // reflect it in the toggle buttons on load (and any full ui refresh). the
+        // buttons are a radio group (continuous is grouped under discrete), so
+        // activating one deactivates the other; activating the already-active
+        // button is a no-op, and set_active emits toggled, not clicked, so this
+        // never re-enters the click handlers.
+        let automation_discrete = state.automation_discrete();
+        if automation_discrete {
+            self.ui.automation_grid_discrete_events_btn.set_active(true);
+        }
+        else {
+            self.ui.automation_grid_continuous_events_btn.set_active(true);
+        }
+
         let project = state.get_project();
         let song = project.song_mut();
         let mut track_number = 0;

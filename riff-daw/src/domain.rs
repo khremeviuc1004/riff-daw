@@ -8994,6 +8994,11 @@ pub struct Song {
     riff_arrangements: Vec<RiffArrangement>,
     #[serde(default)]
     tempo_automation: Automation,
+    // the automation view's Discrete/Continuous display + playback mode - persisted
+    // with the song so a reopened project keeps the last setting used
+    // (default true = Discrete for projects saved before this existed)
+    #[serde(default = "Song::default_automation_discrete")]
+    automation_discrete: bool,
     samples: HashMap<String, Sample>,
 }
 
@@ -9012,6 +9017,7 @@ impl Song {
             riff_grids: vec![],
             riff_arrangements: vec![],
             tempo_automation: Automation::new(),
+            automation_discrete: true,
             samples: HashMap::new(),
 		}
 	}
@@ -9074,6 +9080,23 @@ impl Song {
     /// Get a mutable reference to the song's tempo automation.
     pub fn tempo_automation_mut(&mut self) -> &mut Automation {
         &mut self.tempo_automation
+    }
+
+    /// Serde default for the song's automation discrete flag - projects saved
+    /// before the flag existed load as Discrete (the original UI default).
+    fn default_automation_discrete() -> bool {
+        true
+    }
+
+    /// Get a reference to the song's automation discrete flag (true = discrete
+    /// events, false = continuous envelopes).
+    pub fn automation_discrete(&self) -> bool {
+        self.automation_discrete
+    }
+
+    /// Set the song's automation discrete flag.
+    pub fn set_automation_discrete(&mut self, automation_discrete: bool) {
+        self.automation_discrete = automation_discrete;
     }
 
     pub fn track_mut(&mut self, uuid: &Uuid) -> Option<&mut TrackType> {

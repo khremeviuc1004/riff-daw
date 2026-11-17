@@ -444,6 +444,10 @@ pub enum DAWEvents {
     PianoRollSetRiffName(String),
     PianoRollMPENoteIdChange(MidiPolyphonicExpressionNoteId),
     PianoRollWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
+    TrackGridWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
+    RiffGridWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
+    AutomationWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
+    SampleRollWindowedZoom{x1: f64, y1: f64, x2: f64, y2: f64},
 
     SampleRollSetTrackName(String),
     SampleRollSetRiffName(String),

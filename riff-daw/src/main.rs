@@ -613,6 +613,47 @@ fn selected_riff_arrangement_play_position_in_beats(state: &DAWState, riff_arran
     }
 }
 
+/// Zooms a beat grid view so that the rectangle dragged in windowed zoom mode
+/// (x1..y2, pixels in the view's drawing area - i.e. content coordinates) fills
+/// the visible viewport. The zoom is applied through the view's own zoom
+/// adjustments so that the existing value changed handlers keep the grid, the
+/// ruler and the zoom scale widgets in sync, and the scroll position is scaled
+/// by the same factor so the zoomed window's content stays under the viewport.
+fn windowed_zoom(drawing_area: &gtk4::DrawingArea, horizontal_adjustment: &Adjustment, vertical_adjustment: Option<&Adjustment>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    let window_width = x2 - x1;
+    let window_height = y2 - y1;
+    if window_width < 1.0 || window_height < 1.0 {
+        return;
+    }
+
+    if let Some(scrolled_widget) = drawing_area.ancestor(gtk4::ScrolledWindow::static_type()) {
+        if let Some(scrolled) = scrolled_widget.dynamic_cast_ref::<gtk4::ScrolledWindow>() {
+            if let Some(child) = scrolled.child() {
+                if let Some(viewport) = child.dynamic_cast_ref::<Viewport>() {
+                    let width = viewport.size(gtk4::Orientation::Horizontal) as f64;
+                    let height = viewport.size(gtk4::Orientation::Vertical) as f64;
+                    if width < 1.0 || height < 1.0 {
+                        return;
+                    }
+
+                    let horizontal_scale_up = width / window_width;
+                    let vertical_scale_up = height / window_height;
+
+                    horizontal_adjustment.set_value(horizontal_adjustment.value() * horizontal_scale_up);
+                    if let Some(vertical_adjustment) = vertical_adjustment {
+                        vertical_adjustment.set_value(vertical_adjustment.value() * vertical_scale_up);
+                    }
+
+                    scrolled.hadjustment().set_value(scrolled.hadjustment().value() * horizontal_scale_up);
+                    if vertical_adjustment.is_some() {
+                        scrolled.vadjustment().set_value(scrolled.vadjustment().value() * vertical_scale_up);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                               tx_from_ui: Sender<DAWEvents>,
                               audio_plugin_windows: &mut HashMap<String, Window>,
@@ -1793,37 +1834,29 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                 }
             }
             DAWEvents::PianoRollWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
-                if let Some(widget) = gui.ui.piano_roll_scrolled_window.child() {
-                    if let Some(view_port) = widget.dynamic_cast_ref::<Viewport>() {
-                        let width = view_port.size(gtk4::Orientation::Horizontal);
-                        let height = view_port.size(gtk4::Orientation::Vertical);
-                        let window_width = x2 - x1;
-                        let window_height = y2 - y1;
-                        let horizontal_scale_up = width as f64 / window_width;
-                        let vertical_scale_up = height as f64 / window_height;
-
-                        if let Some(grid_arc) = gui.piano_roll_grid.clone() {
-                            if let Ok(mut grid) = grid_arc.lock() {
-                                let zoom_horizontal = grid.zoom_horizontal();
-                                let zoom_vertical = grid.zoom_vertical();
-
-                                grid.set_horizontal_zoom(zoom_horizontal * horizontal_scale_up);
-                                grid.set_vertical_zoom(zoom_vertical * vertical_scale_up);
-
-
-                                // need to adjust the gtk scale widget adjustments (ranges) - probably should do this rather than setting the zoom directly
-                                // keep the zoom scales (and, via their handlers, the ruler zooms) in sync with the grid
-                                gui.ui.piano_roll_zoom_adjustment.set_value(zoom_horizontal * horizontal_scale_up);
-                                gui.ui.piano_roll_vertical_zoom_adjustment.set_value(zoom_vertical * vertical_scale_up);
-
-
-                                // need to scroll the zoom window into view
-
-
-                            }
-                        }
-                    }
-                }
+                windowed_zoom(&gui.ui.piano_roll_drawing_area, &gui.ui.piano_roll_zoom_adjustment.clone(), Some(&gui.ui.piano_roll_vertical_zoom_adjustment.clone()), x1, y1, x2, y2);
+                gui.ui.piano_roll_drawing_area.queue_draw();
+                gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+            }
+            DAWEvents::TrackGridWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
+                windowed_zoom(&gui.ui.track_drawing_area, &gui.ui.track_grid_zoom_adjustment.clone(), Some(&gui.ui.track_grid_vertical_zoom_adjustment.clone()), x1, y1, x2, y2);
+                gui.ui.track_drawing_area.queue_draw();
+                gui.ui.track_ruler_drawing_area.queue_draw();
+            }
+            DAWEvents::RiffGridWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
+                windowed_zoom(&gui.ui.riff_grid_drawing_area, &gui.ui.riff_grid_zoom_adjustment.clone(), Some(&gui.ui.riff_grid_vertical_zoom_adjustment.clone()), x1, y1, x2, y2);
+                gui.ui.riff_grid_drawing_area.queue_draw();
+                gui.ui.riff_grid_ruler_drawing_area.queue_draw();
+            }
+            DAWEvents::AutomationWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
+                windowed_zoom(&gui.ui.automation_drawing_area, &gui.ui.automation_zoom_scale.adjustment().clone(), None, x1, y1, x2, y2);
+                gui.ui.automation_drawing_area.queue_draw();
+                gui.ui.automation_ruler_drawing_area.queue_draw();
+            }
+            DAWEvents::SampleRollWindowedZoom{x1, y1, x2, y2} => { // values are in pixels
+                windowed_zoom(&gui.ui.sample_roll_drawing_area, &gui.ui.sample_roll_zoom_scale.adjustment().clone(), None, x1, y1, x2, y2);
+                gui.ui.sample_roll_drawing_area.queue_draw();
+                gui.ui.sample_roll_ruler_drawing_area.queue_draw();
             }
             DAWEvents::SampleRollSetTrackName(name) => {
                 gui.set_sample_roll_selected_track_name_label(name.as_str());
@@ -13100,26 +13133,22 @@ fn handle_automation_instrument_translate_selected(state: &mut DAWState, transla
                             TrackEvent::AudioPluginParameter(plugin_param) => {
                                 let position = plugin_param.position();
                                 if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
-                                    match translate_direction {
-                                        TranslateDirection::Up => {
-                                            if plugin_param.value() <= 0.99 {
-                                                plugin_param.set_value(plugin_param.value() + 0.01);
+                                        match translate_direction {
+                                            TranslateDirection::Up => {
+                                                plugin_param.set_value((plugin_param.value() + 0.01).min(1.0));
+                                            }
+                                            TranslateDirection::Down => {
+                                                plugin_param.set_value((plugin_param.value() - 0.01).max(0.0));
+                                            }
+                                            TranslateDirection::Left => {
+                                                if position > 0.0 && (position - snap_in_beats) >= 0.0 {
+                                                    plugin_param.set_position(position - snap_in_beats);
+                                                }
+                                            }
+                                            TranslateDirection::Right => {
+                                                plugin_param.set_position(position + snap_in_beats);
                                             }
                                         }
-                                        TranslateDirection::Down => {
-                                            if plugin_param.value() >= 0.01 {
-                                                plugin_param.set_value(plugin_param.value() - 0.01);
-                                            }
-                                        }
-                                        TranslateDirection::Left => {
-                                            if position > 0.0 && (position - snap_in_beats) >= 0.0 {
-                                                plugin_param.set_position(position - snap_in_beats);
-                                            }
-                                        }
-                                        TranslateDirection::Right => {
-                                            plugin_param.set_position(position + snap_in_beats);
-                                        }
-                                    }
                                 }
                             }
                             _ => (),
@@ -13504,14 +13533,10 @@ fn handle_automation_effect_translate_selected(state: &mut DAWState, translate_d
                                     if plugin_param.index == automation_type_value && selected.contains(&plugin_param.id()) {
                                         match translate_direction {
                                             TranslateDirection::Up => {
-                                                if plugin_param.value() <= 0.99 {
-                                                    plugin_param.set_value(plugin_param.value() + 0.01);
-                                                }
+                                                plugin_param.set_value((plugin_param.value() + 0.01).min(1.0));
                                             }
                                             TranslateDirection::Down => {
-                                                if plugin_param.value() >= 0.01 {
-                                                    plugin_param.set_value(plugin_param.value() - 0.01);
-                                                }
+                                                plugin_param.set_value((plugin_param.value() - 0.01).max(0.0));
                                             }
                                             TranslateDirection::Left => {
                                                 if position > 0.0 && (position - snap_in_beats) >= 0.0 {

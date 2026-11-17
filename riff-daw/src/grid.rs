@@ -331,7 +331,8 @@ impl BeatGridMouseCoordHelper for SampleRollMouseCoordHelper {
     fn set_riff_reference_play_mode(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let _ = tx_from_ui.send(DAWEvents::SampleRollWindowedZoom{x1, y1, x2, y2});
     }
 
     fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
@@ -421,7 +422,8 @@ impl BeatGridMouseCoordHelper for TrackGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
 
-    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let _ = tx_from_ui.send(DAWEvents::TrackGridWindowedZoom{x1, y1, x2, y2});
     }
 
     fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -512,7 +514,8 @@ impl BeatGridMouseCoordHelper for RiffGridMouseCoordHelper {
         let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::RiffReferencePlayMode(y_index, time), None));
     }
 
-    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let _ = tx_from_ui.send(DAWEvents::RiffGridWindowedZoom{x1, y1, x2, y2});
     }
 
     fn cycle_entity_selection(&self, tx_from_ui: Sender<DAWEvents>, y_index: i32, time: f64) {
@@ -3812,6 +3815,14 @@ impl AutomationEditItemHandler {
                                                 if value < 0.0 {
                                                     value = 0.0;
                                                 }
+                                                // without the upper clamp a drag past the top of
+                                                // the grid stored values above 1.0 - the point was
+                                                // then drawn outside the canvas where the hit test
+                                                // could never select it again (and the values broke
+                                                // the 0..1 plugin parameter contract)
+                                                if value > 1.0 {
+                                                    value = 1.0;
+                                                }
 
                                                 debug!("Automation - Setting dragged item value to: {}", value);
                                                 dragged_item.set_value(value);
@@ -3830,9 +3841,12 @@ impl AutomationEditItemHandler {
                                                             if changed_item_value < 0.0 {
                                                                 changed_item_value = 0.0;
                                                             }
+                                                            if changed_item_value > 1.0 {
+                                                                changed_item_value = 1.0;
+                                                            }
 
                                                             changed_item.set_position(changed_item.position() + delta_x);
-                                                            changed_item.set_value(changed_item.value() + delta_y);
+                                                            changed_item.set_value(changed_item_value);
                                                             change.push((item.clone(), changed_item));
                                                         }
                                                     }
@@ -6230,7 +6244,11 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
             0.0
         }
         else {
-            value
+            // the view can be taller than the nominal 128 rows (the hit test anchors
+            // to the actual height) - without the upper clamp, points clicked near
+            // the top stored values above 127, which normalise to > 1.0 and break
+            // the 0..1 parameter contract the plugins expect
+            if value > 127.0 { 127.0 } else { value }
         }
     }
 
@@ -6307,7 +6325,8 @@ impl BeatGridMouseCoordHelper for AutomationMouseCoordHelper {
     fn set_riff_reference_play_mode(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {
     }
 
-    fn handle_windowed_zoom(&self, _tx_from_ui: crossbeam_channel::Sender<DAWEvents>, _x1: f64, _y1: f64, _x2: f64, _y2: f64) {
+    fn handle_windowed_zoom(&self, tx_from_ui: crossbeam_channel::Sender<DAWEvents>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let _ = tx_from_ui.send(DAWEvents::AutomationWindowedZoom{x1, y1, x2, y2});
     }
 
     fn cycle_entity_selection(&self, _tx_from_ui: Sender<DAWEvents>, _y_index: i32, _time: f64) {

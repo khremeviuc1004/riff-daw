@@ -1048,6 +1048,15 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkButton" id="new_loop_btn">
+                    <property name="tooltip-text" translatable="yes">Add a new loop region (use the track grid loop mode to set its extents)</property>
+                    <property name="visible">True</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                    <property name="icon-name">list-add</property>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkButton" id="delete_loop_btn">
                     <property name="tooltip-text" translatable="yes">Delete the selected loop region</property>
                     <property name="visible">True</property>

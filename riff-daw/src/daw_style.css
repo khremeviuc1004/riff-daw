@@ -31,6 +31,15 @@ window.popup {
     background-color: #3f3f3f;
 }
 
+/* record arm toggles: symbolic icons inherit color, armed = bright red, unarmed = muted red */
+.riff-daw-record-armed {
+    color: #ff3b30;
+}
+
+.riff-daw-record-muted {
+    color: alpha(#ff3b30, 0.4);
+}
+
 .automation-view separator {
     margin-left: 8px;
     margin-right: 8px;

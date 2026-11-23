@@ -472,6 +472,7 @@ pub struct Ui {
     pub time_signature_denominator_spinner: SpinButton,
 
     pub loop_combobox_text: DropDown,
+    pub new_loop_btn: Button,
     pub delete_loop_btn: Button,
     pub save_loop_name_change_btn: Button,
     pub loop_combobox_text_entry: Entry,
@@ -1115,6 +1116,7 @@ gtk4_builder_from!(Ui {
     time_signature_numerator_spinner: SpinButton,
     time_signature_denominator_spinner: SpinButton,
     loop_combobox_text: DropDown,
+    new_loop_btn: Button,
     delete_loop_btn: Button,
     save_loop_name_change_btn: Button,
     loop_combobox_text_entry: Entry,
@@ -2220,7 +2222,7 @@ impl MainWindow {
         // the beat grid scroll pane onto the left strip so the track panels start
         // at exactly the same vertical position as the beat grid (ruler bottom).
         MainWindow::sync_riff_grid_strip_heights(&ui.riff_grid_scrolled_window, &ui.riff_grid_tracks_panel_scrolled_window);
-        main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new());
+        main_window.add_mixer_blade("Master", Uuid::nil(), tx_from_ui.clone(), 1.0, 0.0, GeneralTrackType::MasterTrack, ToggleButton::new(), ToggleButton::new(), ToggleButton::new());
         MainWindow::setup_riff_set_drag_and_drop(ui.riff_set_heads_box.clone(), ui.riff_sets_box.clone(), ui.riff_set_horizontal_adjustment.clone(), ui.riff_sets_view_port.clone(), RiffSetType::RiffSet, tx_from_ui.clone());
 
         {
@@ -2864,18 +2866,20 @@ impl MainWindow {
         pan: f32,
         mute: bool,
         solo: bool,
+        record: bool,
     ) {
-        let (entry_buffer, track_mute_toggle_state, track_solo_toggle_state) = {
+        let (entry_buffer, track_mute_toggle_state, track_solo_toggle_state, track_record_toggle_state) = {
             let tx_from_ui = tx_from_ui.clone();
             self.add_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone())
         };
 
         track_mute_toggle_state.set_active(mute);
         track_solo_toggle_state.set_active(solo);
+        track_record_toggle_state.set_active(record);
 
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.add_mixer_blade(track_name, track_uuid, tx_from_ui, volume, pan, general_track_type.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
+            self.add_mixer_blade(track_name, track_uuid, tx_from_ui, volume, pan, general_track_type.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone(), track_record_toggle_state.clone());
         }
         {
             let tx_from_ui = tx_from_ui.clone();
@@ -2883,15 +2887,15 @@ impl MainWindow {
         }
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.add_riff_set_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
+            self.add_riff_set_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone(), track_record_toggle_state.clone());
         }
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.add_riff_sequences_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
+            self.add_riff_sequences_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone(), track_record_toggle_state.clone());
         }
         {
             let tx_from_ui = tx_from_ui.clone();
-            self.add_riff_grids_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
+            self.add_riff_grids_track_panel(track_name, track_uuid, tx_from_ui, general_track_type.clone(), entry_buffer.clone(), track_mute_toggle_state.clone(), track_solo_toggle_state.clone(), track_record_toggle_state.clone());
         }
 
         // activate the drawing area for the new track on every riff set blade
@@ -2907,7 +2911,7 @@ impl MainWindow {
             MainWindow::navigate_to_riff_sets_and_activate(track_uuid, &tx_from_ui, &state_arc, riff_arrangement_box, "GtkBox".to_string());
         }
 
-        self.add_riff_arrangement_track_panel(track_name, track_uuid, tx_from_ui, general_track_type, entry_buffer, track_mute_toggle_state.clone(), track_solo_toggle_state.clone());
+        self.add_riff_arrangement_track_panel(track_name, track_uuid, tx_from_ui, general_track_type, entry_buffer, track_mute_toggle_state.clone(), track_solo_toggle_state.clone(), track_record_toggle_state.clone());
     }
 
     fn navigate_to_riff_sets_and_activate(track_uuid: Uuid, tx_from_ui: &crossbeam_channel::Sender<DAWEvents>, state_arc: &Arc<Mutex<DAWState>>, item_box: Box, inner_box_widget_name: String) {
@@ -3006,7 +3010,7 @@ impl MainWindow {
 
     pub fn add_track_panel(&mut self, track_name: &str, track_uuid: Uuid, tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
                            general_track_type: GeneralTrackType,
-    ) -> (EntryBuffer, ToggleButton, ToggleButton)
+    ) -> (EntryBuffer, ToggleButton, ToggleButton, ToggleButton)
     {
         let track_panel_glade_src = include_str!("track_panel.ui");
 
@@ -3106,6 +3110,8 @@ impl MainWindow {
             });
         }
 
+        MainWindow::wire_record_toggle_appearance(&track_panel.record_toggle_btn);
+
         {
             let tx_from_ui = tx_from_ui.clone();
             let track_panel_vertical_boxes = vec![self.ui.top_level_vbox.clone(), self.ui.riff_sets_track_panel.clone(), self.ui.riff_sequences_track_panel.clone(), self.ui.riff_arrangement_track_panel.clone()];
@@ -3163,16 +3169,40 @@ impl MainWindow {
 
         (track_panel.track_name_text_ctrl.buffer(),
         track_panel.mute_toggle_btn,
-        track_panel.solo_toggle_btn)
+        track_panel.solo_toggle_btn,
+        track_panel.record_toggle_btn)
     }
 
-    // the mute/solo buttons in the riff views and the mixer blades are property-bound
+    // colours the record-arm toggle icon: muted red when disarmed, bright red when armed
+    fn wire_record_toggle_appearance(record_toggle_btn: &ToggleButton) {
+        let btn = record_toggle_btn.clone();
+        record_toggle_btn.connect_active_notify(move |toggle_btn| {
+            if toggle_btn.is_active() {
+                toggle_btn.remove_css_class("riff-daw-record-muted");
+                toggle_btn.add_css_class("riff-daw-record-armed");
+            }
+            else {
+                toggle_btn.remove_css_class("riff-daw-record-armed");
+                toggle_btn.add_css_class("riff-daw-record-muted");
+            }
+        });
+        // apply the initial state (the notify handler only fires on subsequent changes)
+        if btn.is_active() {
+            btn.add_css_class("riff-daw-record-armed");
+        }
+        else {
+            btn.add_css_class("riff-daw-record-muted");
+        }
+    }
+
+    // the mute/solo/record buttons in the riff views and the mixer blades are property-bound
     // to the track panel buttons, but a binding only syncs the visual state - it never
     // emits clicked, so each duplicate button needs its own click handler to send the
-    // events into the daw core, otherwise mute/solo appears to do nothing in those views
+    // events into the daw core, otherwise mute/solo/record appears to do nothing in those views
     fn wire_duplicate_track_mute_solo_events(
         mute_toggle_btn: &ToggleButton,
         solo_toggle_btn: &ToggleButton,
+        record_toggle_btn: &ToggleButton,
         tx_from_ui: crossbeam_channel::Sender<DAWEvents>,
         track_uuid: Uuid,
     ) {
@@ -3199,6 +3229,18 @@ impl MainWindow {
                 }
             });
         }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            record_toggle_btn.connect_clicked(move |record_toggle_btn| {
+                if record_toggle_btn.is_active() {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Record(true), Some(track_uuid.to_string())));
+                }
+                else {
+                    let _ = tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::Record(false), Some(track_uuid.to_string())));
+                }
+            });
+        }
     }
 
     pub fn add_riff_set_track_panel(&mut self,
@@ -3209,6 +3251,7 @@ impl MainWindow {
         entry_buffer: EntryBuffer,
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
+        track_record_toggle_state: ToggleButton,
     ) {
         let track_panel_glade_src = include_str!("track_panel.ui");
 
@@ -3238,11 +3281,14 @@ impl MainWindow {
 
         riff_set_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
         riff_set_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+        riff_set_track_panel.record_toggle_btn.set_active(track_record_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_set_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_set_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+        let _ = track_record_toggle_state.bind_property("active", &riff_set_track_panel.record_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
-        MainWindow::wire_duplicate_track_mute_solo_events(&riff_set_track_panel.mute_toggle_btn, &riff_set_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_set_track_panel.mute_toggle_btn, &riff_set_track_panel.solo_toggle_btn, &riff_set_track_panel.record_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_record_toggle_appearance(&riff_set_track_panel.record_toggle_btn);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3315,6 +3361,7 @@ impl MainWindow {
                                           entry_buffer: EntryBuffer,
                                           track_mute_toggle_state: ToggleButton,
                                           track_solo_toggle_state: ToggleButton,
+        track_record_toggle_state: ToggleButton,
     ) {
         let track_panel_glade_src = include_str!("track_panel.ui");
 
@@ -3345,11 +3392,14 @@ impl MainWindow {
 
         riff_sequence_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
         riff_sequence_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+        riff_sequence_track_panel.record_toggle_btn.set_active(track_record_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_sequence_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_sequence_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+        let _ = track_record_toggle_state.bind_property("active", &riff_sequence_track_panel.record_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
-        MainWindow::wire_duplicate_track_mute_solo_events(&riff_sequence_track_panel.mute_toggle_btn, &riff_sequence_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_sequence_track_panel.mute_toggle_btn, &riff_sequence_track_panel.solo_toggle_btn, &riff_sequence_track_panel.record_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_record_toggle_appearance(&riff_sequence_track_panel.record_toggle_btn);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3422,6 +3472,7 @@ impl MainWindow {
                                           entry_buffer: EntryBuffer,
                                           track_mute_toggle_state: ToggleButton,
                                           track_solo_toggle_state: ToggleButton,
+        track_record_toggle_state: ToggleButton,
     ) {
         let track_panel_glade_src = include_str!("track_panel.ui");
 
@@ -3452,11 +3503,14 @@ impl MainWindow {
 
         riff_grid_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
         riff_grid_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+        riff_grid_track_panel.record_toggle_btn.set_active(track_record_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_grid_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_grid_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+        let _ = track_record_toggle_state.bind_property("active", &riff_grid_track_panel.record_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
-        MainWindow::wire_duplicate_track_mute_solo_events(&riff_grid_track_panel.mute_toggle_btn, &riff_grid_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_grid_track_panel.mute_toggle_btn, &riff_grid_track_panel.solo_toggle_btn, &riff_grid_track_panel.record_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_record_toggle_appearance(&riff_grid_track_panel.record_toggle_btn);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3532,6 +3586,7 @@ impl MainWindow {
         entry_buffer: EntryBuffer,
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
+        track_record_toggle_state: ToggleButton,
     ) {
         let track_panel_glade_src = include_str!("track_panel.ui");
 
@@ -3563,11 +3618,14 @@ impl MainWindow {
 
         riff_arrangement_track_panel.solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
         riff_arrangement_track_panel.mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+        riff_arrangement_track_panel.record_toggle_btn.set_active(track_record_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &riff_arrangement_track_panel.solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &riff_arrangement_track_panel.mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+        let _ = track_record_toggle_state.bind_property("active", &riff_arrangement_track_panel.record_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
-        MainWindow::wire_duplicate_track_mute_solo_events(&riff_arrangement_track_panel.mute_toggle_btn, &riff_arrangement_track_panel.solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_duplicate_track_mute_solo_events(&riff_arrangement_track_panel.mute_toggle_btn, &riff_arrangement_track_panel.solo_toggle_btn, &riff_arrangement_track_panel.record_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_record_toggle_appearance(&riff_arrangement_track_panel.record_toggle_btn);
 
         match general_track_type {
             GeneralTrackType::AudioTrack => {
@@ -3645,6 +3703,7 @@ impl MainWindow {
         general_track_type: GeneralTrackType,
         track_mute_toggle_state: ToggleButton,
         track_solo_toggle_state: ToggleButton,
+        track_record_toggle_state: ToggleButton,
     ) {
         let mixer_blade_glade_src = include_str!("mixer_blade.ui");
 
@@ -3658,11 +3717,14 @@ impl MainWindow {
 
         mixer_blade.mixer_blade_track_solo_toggle_btn.set_active(track_solo_toggle_state.is_active());
         mixer_blade.mixer_blade_track_mute_toggle_btn.set_active(track_mute_toggle_state.is_active());
+        mixer_blade.mixer_blade_track_record_toggle_btn.set_active(track_record_toggle_state.is_active());
 
         let _ = track_solo_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_solo_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
         let _ = track_mute_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_mute_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
+        let _ = track_record_toggle_state.bind_property("active", &mixer_blade.mixer_blade_track_record_toggle_btn, "active").flags(BindingFlags::BIDIRECTIONAL).build();
 
-        MainWindow::wire_duplicate_track_mute_solo_events(&mixer_blade.mixer_blade_track_mute_toggle_btn, &mixer_blade.mixer_blade_track_solo_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_duplicate_track_mute_solo_events(&mixer_blade.mixer_blade_track_mute_toggle_btn, &mixer_blade.mixer_blade_track_solo_toggle_btn, &mixer_blade.mixer_blade_track_record_toggle_btn, tx_from_ui.clone(), track_uuid);
+        MainWindow::wire_record_toggle_appearance(&mixer_blade.mixer_blade_track_record_toggle_btn);
 
         match general_track_type {
             GeneralTrackType::MasterTrack => {
@@ -4067,6 +4129,9 @@ impl MainWindow {
 
         {
             let tx_from_ui = tx_from_ui.clone();
+            // GtkColorDialogButton only pops a chooser once it has a dialog attached
+            // (the .ui file does not create one) - without it clicks do nothing
+            track_details_dialogue.track_detail_track_colour_button.set_dialog(&gtk4::ColorDialog::new());
             track_details_dialogue.track_detail_track_colour_button.connect_rgba_notify(move |track_detail_track_colour_button| {
                 let selected_colour = track_detail_track_colour_button.rgba();
                 match tx_from_ui.send(DAWEvents::TrackChange(TrackChangeType::TrackColourChanged(selected_colour.red() as f64, selected_colour.green() as f64, selected_colour.blue() as f64, selected_colour.alpha() as f64), Some(track_uuid.to_string()))) {
@@ -4079,6 +4144,9 @@ impl MainWindow {
         {
             let tx_from_ui = tx_from_ui.clone();
             let track_riff_choice = track_details_dialogue.track_riff_choice.clone();
+            // GtkColorDialogButton only pops a chooser once it has a dialog attached
+            // (the .ui file does not create one) - without it clicks do nothing
+            track_details_dialogue.track_detail_riff_colour_button.set_dialog(&gtk4::ColorDialog::new());
             track_details_dialogue.track_detail_riff_colour_button.connect_rgba_notify(move |track_detail_riff_colour_button| {
                 match track_riff_choice.active_id() {
                     Some(active_id) => {
@@ -5539,6 +5607,40 @@ impl MainWindow {
                 }
 
                 false
+            });
+        }
+
+        {
+            let tx_from_ui = tx_from_ui.clone();
+            let loop_combobox_text = self.ui.loop_combobox_text.clone();
+            let loop_combobox_text_entry = self.ui.loop_combobox_text_entry.clone();
+            self.ui.new_loop_btn.connect_clicked(move |_button| {
+                debug!("ui.new_loop_btn.connect_clicked: sending loop add msg...");
+                let uuid = Uuid::new_v4();
+                let id = uuid.to_string();
+                // use the name typed into the loop entry when there is one, otherwise
+                // generate a numbered name
+                let typed_name = loop_combobox_text_entry.text().trim().to_string();
+                let loop_name = if typed_name.is_empty() {
+                    let existing_loops = loop_combobox_text.model().map(|model| model.n_items()).unwrap_or(0);
+                    format!("Loop {}", existing_loops + 1)
+                }
+                else {
+                    typed_name
+                };
+                match tx_from_ui.send(DAWEvents::LoopChange(LoopChangeType::Added(loop_name.clone()), uuid)) {
+                    Ok(_) => {
+                        loop_combobox_text.append(Some(id.as_str()), loop_name.as_str());
+                        // selecting it fires the combo changed handler - the new loop
+                        // becomes the active loop
+                        loop_combobox_text.set_active_id(Some(id.as_str()));
+                        loop_combobox_text_entry.set_text("");
+                        unsafe {
+                            loop_combobox_text_entry.set_data("selected_loop_uuid", id);
+                        }
+                    },
+                    Err(_) => debug!("Problem sending message with tx from ui lock when a loop has been added"),
+                }
             });
         }
 
@@ -12148,7 +12250,8 @@ impl MainWindow {
                         track.volume(),
                         track.pan(),
                         track.mute(),
-                        track.solo()
+                        track.solo(),
+                        track.record_armed()
                     );
                 }
                 TrackType::AudioTrack(track) => {
@@ -12163,7 +12266,8 @@ impl MainWindow {
                         track.volume(),
                         track.pan(),
                         track.mute(),
-                        track.solo()
+                        track.solo(),
+                        track.record_armed()
                     );
                 }
                 TrackType::MidiTrack(track) => {
@@ -12178,7 +12282,8 @@ impl MainWindow {
                         track.volume(),
                         track.pan(),
                         track.mute(),
-                        track.solo()
+                        track.solo(),
+                        track.record_armed()
                     );
                 }
             }

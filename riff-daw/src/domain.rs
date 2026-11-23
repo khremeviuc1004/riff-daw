@@ -52,6 +52,16 @@ pub static TRANSPORT: InitCell<RwLock<Transport>> = InitCell::new();
 /// different libraries can still process in parallel with each other.
 pub static VST24_PLUGIN_LIFECYCLE_LOCK: std::sync::LazyLock<RwLock<()>> = std::sync::LazyLock::new(|| RwLock::new(()));
 
+/// The steady state number of blocks the published transport runs ahead of a
+/// healthy track's block extraction (the block being mixed this cycle plus the
+/// single slot ring the producer is parked in). See resync_to_transport.
+const RESYNC_PIPELINE_DEPTH: i32 = 2;
+/// How far behind that baseline a track's extraction must fall before it is
+/// re-anchored to the transport - a few blocks of slack so normal per-cycle
+/// jitter never skips content, while a starved track's lag stops accumulating
+/// into song length drift.
+const RESYNC_TOLERANCE_BLOCKS: i32 = 4;
+
 pub struct Transport {
     pub playing: bool,
     pub bpm: f64,
@@ -301,6 +311,20 @@ impl Track for TrackType {
             TrackType::InstrumentTrack(track) => track.set_solo(solo),
             TrackType::AudioTrack(track) => track.set_solo(solo),
             TrackType::MidiTrack(track) => track.set_solo(solo),
+        }
+    }
+    fn record_armed(&self) -> bool {
+        match self {
+            TrackType::InstrumentTrack(track) => track.record_armed(),
+            TrackType::AudioTrack(track) => track.record_armed(),
+            TrackType::MidiTrack(track) => track.record_armed(),
+        }
+    }
+    fn set_record_armed(&mut self, record_armed: bool) {
+        match self {
+            TrackType::InstrumentTrack(track) => track.set_record_armed(record_armed),
+            TrackType::AudioTrack(track) => track.set_record_armed(record_armed),
+            TrackType::MidiTrack(track) => track.set_record_armed(record_armed),
         }
     }
     fn colour(&self) -> (f64, f64, f64, f64) {
@@ -5215,11 +5239,21 @@ impl TrackBackgroundProcessorHelper {
         // could wait one audio block (~46ms) behind the next - badly delayed presets,
         // routings and transport changes when several arrive in a burst).
         // returns whether any message was consumed so callers can detect activity.
+        //
+        // the lifecycle write lock is taken per inbound message, inside this
+        // function: polling an empty channel is thread-local work and must not
+        // touch the global lock - the old call-site guard made every track thread
+        // seize the write lock once per produced block even while idle, and with
+        // dozens of tracks the convoy (writer priority blocks the other threads'
+        // read-locked plugin dispatch) starves producers past the engine's cycle
+        // deadline. Dropped blocks then land late in the mix and accumulate into
+        // the song-length desync this guards against.
         let mut had_events = false;
         loop {
         match self.rx_vst_thread.try_recv() {
             Ok(message) => {
                 had_events = true;
+                let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
                 match message {
                 TrackBackgroundProcessorInwardEvent::SetEventProcessorType(event_processor_type) => {
                     match event_processor_type {
@@ -6566,6 +6600,73 @@ impl TrackBackgroundProcessorHelper {
         }
     }
 
+    /// Producer side transport lock: this thread produces one audio block per
+    /// engine cycle and is paced by its single slot output ring. Whenever the
+    /// thread is starved for a cycle (ui load, page faults, lock contention)
+    /// the mix drops one of its blocks, and because the engine simply mixes
+    /// whatever arrives next the track's audio lands permanently one block
+    /// late - every miss accumulates, and a few seconds of playback turns into
+    /// the whole song drifting out of sync.
+    ///
+    /// Live audio out only (a render must keep every block and a coast is
+    /// silent): when the block extraction falls more than a few blocks behind
+    /// the published transport, skip the missed blocks (their events are lost
+    /// - an audible glitch, but bounded and in tempo) and re-anchor the plugin
+    /// transports and the sample read cursor at the new position.
+    pub fn resync_to_transport(&mut self) {
+        if !*self.event_processor.play() || self.block_size <= 0.0 {
+            return;
+        }
+        // a track parked at the end of its event stream (block index -1) is
+        // deliberately silent - the transport wrapping must not revive it
+        if *self.event_processor.block_index() < 0 {
+            return;
+        }
+        // looped playback re-anchors the extraction and the transport together
+        // at the wrap on every pass (and the wrap points of the two sides can
+        // differ by a block - a comparison right after a wrap would read the
+        // lag backwards) - only unlooped play needs this guard
+        if *self.event_processor.play_loop_on() {
+            return;
+        }
+
+        let live = match self.track_thread_coast.try_lock() {
+            Ok(mode) => matches!(*mode, TrackBackgroundProcessorMode::AudioOut),
+            Err(_) => false,
+        };
+        if !live {
+            return;
+        }
+
+        // the engine publishes the position every cycle (it can skip a publish
+        // under lock contention - a cycle of staleness is well inside the
+        // tolerance)
+        let transport_block = match TRANSPORT.get().try_read() {
+            Some(transport) => (transport.position_in_frames as f64 / self.block_size) as i32,
+            None => return,
+        };
+
+        // in the healthy steady state the transport runs RESYNC_PIPELINE_DEPTH
+        // blocks ahead of this track's block extraction (the block being mixed
+        // this cycle plus the single slot ring's); a track is only late once
+        // it falls behind that baseline by more than the tolerance
+        let behind = transport_block - *self.event_processor.block_index() - RESYNC_PIPELINE_DEPTH;
+        if behind > RESYNC_TOLERANCE_BLOCKS {
+            let new_block_index = (transport_block - RESYNC_PIPELINE_DEPTH).max(0);
+            let skipped = new_block_index - *self.event_processor.block_index();
+            self.event_processor.set_block_index(new_block_index);
+            self.seek_plugin_transports(new_block_index);
+            // a sample mid playback keeps playing through the skip: move its
+            // read cursor by the same span so it resumes in time with the
+            // transport instead of an audio track's length behind it
+            if self.sample_is_playing {
+                self.sample_current_frame += skipped * (self.block_size as i32);
+            }
+            debug!("Track {} fell {} blocks behind the transport - skipped {} blocks of content to stay in time",
+                   self.track_uuid.as_str(), behind, skipped);
+        }
+    }
+
     /// Total reported group delay of the active plugin chain (instrument plus
     /// effects, honouring the riff-arrangement override selection) in frames.
     pub fn track_plugin_latency_frames(&self) -> i64 {
@@ -6626,6 +6727,10 @@ impl TrackBackgroundProcessorHelper {
 
         // get the events for this block
         let (mut events, param_events) = self.event_processor.process_events();
+
+        // keep the block extraction locked to the transport - see resync_to_transport
+        self.resync_to_transport();
+
         // if !events.is_empty() {
         //     debug!("{} - process_plugin_events: event count={}", std::thread::current().name().unwrap_or_else(|| "unknown track"), events.len());
         // }
@@ -6874,6 +6979,10 @@ impl TrackBackgroundProcessorHelper {
 
         let (events, param_events) = self.event_processor.process_events();
 
+        // keep the block extraction (and with it the sample read cursor) locked
+        // to the transport - see resync_to_transport
+        self.resync_to_transport();
+
         if !events.is_empty() && !self.mute {
             // look at the events and determine when to start playing or stop a sample.
             // FIXME this only has block resolution at the moment - will need a start delay and end delay field members to get frame accuracy
@@ -6900,6 +7009,9 @@ impl TrackBackgroundProcessorHelper {
     pub fn process_jack_midi_out_events(&mut self, producer: &mut Producer<(u32, u8, u8, u8, bool)>) {
         // get the events for this block
         let (track_events, _) = self.event_processor.process_events();
+
+        // keep the block extraction locked to the transport - see resync_to_transport
+        self.resync_to_transport();
 
         // route outgoing events to their destination tracks/instruments - the same as
         // the instrument track path does in process_plugin_events, so live notes and
@@ -7297,13 +7409,11 @@ impl TrackBackgroundProcessor for InstrumentTrackBackgroundProcessor {
                         break;
                     }
 
-                    // lifecycle events (plugin instantiate/teardown/preset/configure) hold
-                    // the write lock so no other track thread can be dispatching to a VST2
-                    // plugin while process-wide plugin state is being (re)initialised.
-                    let had_inbound_events = {
-                        let _vst24_lifecycle_guard = crate::domain::VST24_PLUGIN_LIFECYCLE_LOCK.write();
-                        track_background_processor_helper.handle_incoming_events()
-                    };
+                    // lifecycle events (plugin instantiate/teardown/preset/configure)
+                    // take the write lock inside handle_incoming_events, per message,
+                    // so idle producer passes never touch the global lock (see the
+                    // function docs for the convoy this used to cause)
+                    let had_inbound_events = track_background_processor_helper.handle_incoming_events();
 
                     // the Kill may have arrived in THIS pass: its handler just
                     // stopped/suspended/closed the plugins - falling through
@@ -8113,6 +8223,8 @@ pub trait Track {
     fn set_mute(&mut self, mute: bool);
     fn solo(&self) -> bool;
     fn set_solo(&mut self, solo: bool);
+    fn record_armed(&self) -> bool;
+    fn set_record_armed(&mut self, record_armed: bool);
     fn colour(&self) -> (f64, f64, f64, f64);
     fn colour_mut(&mut self) -> (f64, f64, f64, f64);
     fn set_colour(&mut self, red: f64, green: f64, blue: f64, alpha: f64);
@@ -8168,6 +8280,8 @@ pub struct InstrumentTrack {
 	name: String,
 	mute: bool,
 	solo: bool,
+	#[serde(default)]
+	record_armed: bool,
 	red: f64,
 	green: f64,
 	blue: f64,
@@ -8192,6 +8306,7 @@ impl InstrumentTrack {
 			name: String::from("Unknown"),
 			mute: false,
 			solo: false,
+			record_armed: false,
 			red: 1.0,
 			green: 0.0,
 			blue: 0.0,
@@ -8273,6 +8388,14 @@ impl Track for InstrumentTrack {
 
     fn set_solo(&mut self, solo: bool) {
         self.solo = solo;
+    }
+
+    fn record_armed(&self) -> bool {
+        self.record_armed
+    }
+
+    fn set_record_armed(&mut self, record_armed: bool) {
+        self.record_armed = record_armed;
     }
 
     fn colour(&self) -> (f64, f64, f64, f64) {
@@ -8460,6 +8583,8 @@ pub struct MidiTrack {
 	name: String,
 	mute: bool,
 	solo: bool,
+	#[serde(default)]
+	record_armed: bool,
 	red: f64,
 	green: f64,
 	blue: f64,
@@ -8483,6 +8608,7 @@ impl MidiTrack {
 			name: String::from("Unknown"),
 			mute: false,
 			solo: false,
+			record_armed: false,
 			red: 1.0,
 			green: 0.0,
 			blue: 0.0,
@@ -8546,6 +8672,14 @@ impl Track for MidiTrack {
 
     fn set_solo(&mut self, solo: bool) {
         self.solo = solo;
+    }
+
+    fn record_armed(&self) -> bool {
+        self.record_armed
+    }
+
+    fn set_record_armed(&mut self, record_armed: bool) {
+        self.record_armed = record_armed;
     }
 
     fn colour(&self) -> (f64, f64, f64, f64) {
@@ -8677,6 +8811,8 @@ pub struct AudioTrack {
 	name: String,
 	mute: bool,
 	solo: bool,
+	#[serde(default)]
+	record_armed: bool,
 	red: f64,
 	green: f64,
 	blue: f64,
@@ -8700,6 +8836,7 @@ impl AudioTrack {
 			name: String::from("Unknown"),
 			mute: false,
 			solo: false,
+			record_armed: false,
 			red: 1.0,
 			green: 0.0,
 			blue: 0.0,
@@ -8755,6 +8892,14 @@ impl Track for AudioTrack {
 
     fn set_solo(&mut self, solo: bool) {
         self.solo = solo;
+    }
+
+    fn record_armed(&self) -> bool {
+        self.record_armed
+    }
+
+    fn set_record_armed(&mut self, record_armed: bool) {
+        self.record_armed = record_armed;
     }
 
     fn colour(&self) -> (f64, f64, f64, f64) {
@@ -10426,6 +10571,29 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
         let mut param_events_to_play = vec![];
         let transition = if let Some(_riffs) = &self.track_event_blocks_transition_to {
             self.track_event_blocks = self.track_event_blocks_transition_to.take();
+            // A riff set switch is an instant morph: the new riffs fall into the
+            // groove that is already running - no restart, no bar wait, no cursor
+            // move. The one thing a morph must not inherit is a slipped block
+            // counter: this track's counter (which drives its riff loop phase via
+            // `block * block_size % riff_size`) can fall a few cycles behind the
+            // engine's transport when the switch burst starves this thread (a big
+            // SetEvents delivery, page faults, lock contention) - and since the
+            // counter only ever advances one per production it would stay behind
+            // forever, the track permanently out of time with its neighbours.
+            // The switch is precisely the moment the content is allowed to realign,
+            // so re-anchor the counter to the live transport grid: every track -
+            // whether or not it slipped, and whenever its message arrived - enters
+            // the new set at exactly the position the grid says it should be,
+            // in time with all the others, seamless as if it had been playing.
+            if self.block_index > -1 && self.block_size > 0.0 {
+                if let Some(transport) = TRANSPORT.get().try_read() {
+                    let grid_block = ((transport.position_in_frames as f64 / self.block_size) as i32 - RESYNC_PIPELINE_DEPTH).max(0);
+                    if grid_block != self.block_index {
+                        debug!("Riff transition re-anchored the block grid to the transport: was {} cycles off", self.block_index - grid_block);
+                    }
+                    self.block_index = grid_block;
+                }
+            }
             true
         }
         else {
@@ -10441,10 +10609,18 @@ impl TrackEventProcessor for RiffBufferTrackEventProcessor {
                     else if self.block_index == -1 {
                         // real blocks have just been applied to a processor that was
                         // parked silent (a track that had no reference in the previously
-                        // playing riff set, transitioning to one that does) - start the
-                        // new blocks from the beginning of the loop instead of staying
-                        // parked at -1 forever
-                        self.block_index = if self.play_left_block_index > -1 { self.play_left_block_index } else { 0 };
+                        // playing riff set, transitioning to one that does) - re-anchor
+                        // to the transport grid so the introduced track falls into the
+                        // groove the rest of the set is already playing (entering at
+                        // its riff's top mid-set would put it straight out of time),
+                        // falling back to the loop start without a transport reading
+                        self.block_index = if self.block_size > 0.0 {
+                            match TRANSPORT.get().try_read() {
+                                Some(transport) => ((transport.position_in_frames as f64 / self.block_size) as i32 - RESYNC_PIPELINE_DEPTH).max(0),
+                                None => if self.play_left_block_index > -1 { self.play_left_block_index } else { 0 },
+                            }
+                        }
+                        else if self.play_left_block_index > -1 { self.play_left_block_index } else { 0 };
                     }
 
                     if self.block_index > -1 {

@@ -460,23 +460,33 @@ public:
 	Steinberg::tresult PLUGIN_API beginEdit (Steinberg::Vst::ParamID id) override
 	{
 		std::cout << "beginEdit: id=" << id << std::endl;
-		currentParamId = id;
-		return Steinberg::kNotImplemented;
+		// id == kNoParamId (-1) is the plugin's capability probe - returning
+		// kResultTrue tells the plugin the host supports the edit cycle, which makes
+		// well-behaved plugins report every drag step through performEdit instead of
+		// deferring the value to endEdit (mouse release).
+		if (id != static_cast<Steinberg::Vst::ParamID>(-1))
+		{
+		    currentParamId = id;
+		}
+		return Steinberg::kResultTrue;
 	}
 	Steinberg::tresult PLUGIN_API performEdit (Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue valueNormalized) override
 	{
 		std::cout << "performEdit: id=" << id << ", valueNormalized=" << valueNormalized << std::endl;
-		if (currentParamId == id)
-		{
-		    vst3Host = sendParameterChange(std::move(vst3Host), static_cast<int32_t>(id), static_cast<float>(valueNormalized));
-		}
-		return Steinberg::kNotImplemented;
+		// always forward - plugins may (legally) call performEdit outside a
+		// beginEdit/endEdit session, and live automation recording needs the value
+		// changes while a control is being dragged, not only at mouse release
+		vst3Host = sendParameterChange(std::move(vst3Host), static_cast<int32_t>(id), static_cast<float>(valueNormalized));
+		return Steinberg::kResultTrue;
 	}
 	Steinberg::tresult PLUGIN_API endEdit (Steinberg::Vst::ParamID id) override
 	{
 		std::cout << "endEdit: id=" << id << std::endl;
-		currentParamId = fakeParamId;
-		return Steinberg::kNotImplemented;
+		if (id != static_cast<Steinberg::Vst::ParamID>(-1))
+		{
+		    currentParamId = fakeParamId;
+		}
+		return Steinberg::kResultTrue;
 	}
 	Steinberg::tresult PLUGIN_API restartComponent (Steinberg::int32 flags) override
 	{

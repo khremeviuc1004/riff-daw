@@ -454,6 +454,7 @@ fn set_up_initial_project_in_ui(tx_to_audio: &Sender<AudioLayerInwardEvent>,
                                       1.0,
                                       0.0,
                                       false,
+                                      false,
                                       false);
                     debug!("Added a track to the GUI.");
                 },
@@ -1615,6 +1616,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut end_block = 44;
                                 let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let block_size = state.configuration.audio.block_size as f64;
+                                let bpm = state.project().song().tempo();
                                 let song = state.project().song();
                                 let tracks = song.tracks();
 
@@ -1622,17 +1624,21 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(active_loop_uuid) => {
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
-                                                end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
+                                                start_block = (active_loop.start_position() / bpm * 60.0 * sample_rate / block_size) as i32;
+                                                end_block = (active_loop.end_position() / bpm * 60.0 * sample_rate / block_size) as i32;
                                             },
                                             None => debug!("Could not find the active loop."),
                                         }
                                     },
                                     None => debug!("No active loop found to set left position."),
                                 }
-                                match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(end_block - start_block)) {
+                                match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(start_block, end_block)) {
                                     Ok(_) => (),
                                     Err(error) => debug!("Problem using tx_to_audio to send message to jack layer when turning looping on: {}", error),
+                                }
+                                match tx_to_audio.send(AudioLayerInwardEvent::Loop(true)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem using tx_to_audio to send loop on to jack layer: {}", error),
                                 }
                                 for track in tracks {
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
@@ -1658,6 +1664,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 for track in tracks {
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Loop(false));
                                 }
+                                match tx_to_audio.send(AudioLayerInwardEvent::Loop(false)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem using tx_to_audio to send loop off to jack layer: {}", error),
+                                }
                             },
                             Err(_) => debug!("Main - rx_ui processing loop - set active loop - could not get lock on state"),
                         }
@@ -1670,6 +1680,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 let mut end_block = 44;
                                 let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let block_size = state.configuration.audio.block_size as f64;
+                                let bpm = state.project().song().tempo();
                                 let song = state.project().song();
                                 let tracks = song.tracks();
 
@@ -1677,8 +1688,8 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                     Some(active_loop_uuid) => {
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
-                                                end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
+                                                start_block = (active_loop.start_position() / bpm * 60.0 * sample_rate / block_size) as i32;
+                                                end_block = (active_loop.end_position() / bpm * 60.0 * sample_rate / block_size) as i32;
                                             },
                                             None => debug!("Could not find the active loop."),
                                         }
@@ -1687,6 +1698,10 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                 }
                                 for track in tracks {
                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
+                                }
+                                match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(start_block, end_block)) {
+                                    Ok(_) => (),
+                                    Err(error) => debug!("Problem using tx_to_audio to send loop extents to jack layer when the active loop changed: {}", error),
                                 }
                                 {
                                     let mut state = state;
@@ -1702,6 +1717,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let block_size = state.configuration.audio.block_size as f64;
+                                let bpm = state.project().song().tempo();
 
                                 match state.active_loop() {
                                     Some(active_loop_uuid) => {
@@ -1709,10 +1725,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         let tracks = song.tracks();
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                let start_block = (start_position * sample_rate / block_size) as i32;
-                                                let end_block = (active_loop.end_position() * sample_rate / block_size) as i32;
+                                                let start_block = (start_position / bpm * 60.0 * sample_rate / block_size) as i32;
+                                                let end_block = (active_loop.end_position() / bpm * 60.0 * sample_rate / block_size) as i32;
                                                 for track in tracks {
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
+                                                }
+                                                match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(start_block, end_block)) {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem using tx_to_audio to send loop extents to jack layer when the loop left limit changed: {}", error),
                                                 }
                                             },
                                             None => debug!("Could not find the active loop."),
@@ -1737,6 +1757,7 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                             Ok(state) => {
                                 let sample_rate = state.configuration.audio.sample_rate as f64;
                                 let block_size = state.configuration.audio.block_size as f64;
+                                let bpm = state.project().song().tempo();
 
                                 match state.active_loop() {
                                     Some(active_loop_uuid) => {
@@ -1744,10 +1765,14 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                                         let tracks = song.tracks();
                                         match song.loops().iter().find(|current_loop| current_loop.uuid().to_string() == active_loop_uuid.to_string()) {
                                             Some(active_loop) => {
-                                                let start_block = (active_loop.start_position() * sample_rate / block_size) as i32;
-                                                let end_block = (end_position * sample_rate / block_size) as i32;
+                                                let start_block = (active_loop.start_position() / bpm * 60.0 * sample_rate / block_size) as i32;
+                                                let end_block = (end_position / bpm * 60.0 * sample_rate / block_size) as i32;
                                                 for track in tracks {
                                                     state.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::LoopExtents(start_block, end_block));
+                                                }
+                                                match tx_to_audio.send(AudioLayerInwardEvent::ExtentsChange(start_block, end_block)) {
+                                                    Ok(_) => (),
+                                                    Err(error) => debug!("Problem using tx_to_audio to send loop extents to jack layer when the loop right limit changed: {}", error),
                                                 }
                                             },
                                             None => debug!("Could not find the active loop."),
@@ -3955,14 +3980,20 @@ fn process_application_events(history_manager: &mut Arc<Mutex<HistoryManager>>,
                         }
                     }
                 }
-                TrackChangeType::Record(_record) => {
-                    // TODO implement arming of tracks for recording into???
-                    // match state.lock() {
-                    //     Ok(mut state) => {
-                    //         // state.set_recording(record);
-                    //     },
-                    //     Err(_) => debug!("Main - rx_ui processing loop - transport goto start - could not get lock on state"),
-                    // }
+                TrackChangeType::Record(record) => {
+                    // arm/disarm the track for recording - live recorded events (midi,
+                    // automation, plugin parameters) are only captured for armed tracks
+                    if let Some(track_uuid) = track_uuid {
+                        match state.lock() {
+                            Ok(mut state) => {
+                                if let Some(track) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == track_uuid) {
+                                    track.set_record_armed(record);
+                                    state.set_dirty(true);
+                                }
+                            },
+                            Err(_) => debug!("Main - rx_ui processing loop - track record arm - could not get lock on state"),
+                        }
+                    }
                 }
                 TrackChangeType::RiffQuantiseSelected => {
                     let mut selected_riff_uuid = None;
@@ -6069,6 +6100,7 @@ win.connect_close_request(|window| {
                                 with_state(state, move |state| {
                                     let recording = *state.recording_mut();
                                     let playing = *state.playing_mut();
+                                    let automation_discrete = state.automation_discrete();
                                     let play_position_in_frames = state.play_position_in_frames() as f64;
                                     let sample_rate = state.configuration.audio.sample_rate as f64;
                                     let bpm = state.project().song().tempo();
@@ -6083,13 +6115,11 @@ win.connect_close_request(|window| {
 
                                             if !recording {
                                                 track.set_volume(volume);
-                                            } else if recording && playing {
+                                            } else if recording && playing && track.record_armed() {
                                                 // live recorded automation - undo restores the field value only.
-                                                if let Some(position) = position {
-                                                    track.automation_mut().events_mut().push(TrackEvent::Controller(Controller::new(position, 7, (volume * 127.0) as i32)));
-                                                } else {
-                                                    track.automation_mut().events_mut().push(TrackEvent::Controller(Controller::new(play_position_in_beats, 7, (volume * 127.0) as i32)));
-                                                }
+                                                let position = position.unwrap_or(play_position_in_beats);
+                                                let controller_event = TrackEvent::Controller(Controller::new(position, 7, (volume * 127.0) as i32));
+                                                push_recorded_automation_event(track.automation_mut(), controller_event, automation_discrete);
                                             }
                                             break;
                                         }
@@ -6134,6 +6164,7 @@ win.connect_close_request(|window| {
                                 with_state(state, move |state| {
                                     let recording = *state.recording_mut();
                                     let playing = *state.playing_mut();
+                                    let automation_discrete = state.automation_discrete();
                                     let play_position_in_frames = state.play_position_in_frames() as f64;
                                     let sample_rate = state.configuration.audio.sample_rate as f64;
                                     let bpm = state.project().song().tempo();
@@ -6148,13 +6179,11 @@ win.connect_close_request(|window| {
                                         if track.uuid().to_string() == track_uuid {
                                             if !recording {
                                                 track.set_pan(pan);
-                                            } else if recording && playing {
+                                            } else if recording && playing && track.record_armed() {
                                                 // live recorded automation - undo restores the field value only.
-                                                if let Some(position) = position {
-                                                    track.automation_mut().events_mut().push(TrackEvent::Controller(Controller::new(position, 14, (pan * 63.5 + 63.5) as i32)));
-                                                } else {
-                                                    track.automation_mut().events_mut().push(TrackEvent::Controller(Controller::new(play_position_in_beats, 14, (pan * 63.5 + 63.5) as i32)));
-                                                }
+                                                let position = position.unwrap_or(play_position_in_beats);
+                                                let controller_event = TrackEvent::Controller(Controller::new(position, 14, (pan * 63.5 + 63.5) as i32));
+                                                push_recorded_automation_event(track.automation_mut(), controller_event, automation_discrete);
                                             }
                                             break;
                                         }
@@ -11048,6 +11077,86 @@ fn lane_events_or_envelope(automation: &mut Automation, lane: MidiAutomationLane
 
     automation.envelopes_mut().push(AutomationEnvelope::new(lane.prototype()));
     automation.envelopes_mut().iter_mut().find(|envelope| lane.matches_event(&envelope.event_details())).map(|envelope| envelope.events_mut())
+}
+
+/// Checks whether an automation envelope is the backing envelope for a recorded
+/// automation event - the event types must match and for indexed event types
+/// (plugin parameters, controllers) the index/controller number and plugin must
+/// match as well.
+fn envelope_matches_recorded_event(envelope: &AutomationEnvelope, event: &TrackEvent) -> bool {
+    match (&event, envelope.event_details()) {
+        (TrackEvent::AudioPluginParameter(param), TrackEvent::AudioPluginParameter(envelope_param)) => {
+            param.index == envelope_param.index && param.plugin_uuid() == envelope_param.plugin_uuid()
+        }
+        (TrackEvent::Controller(controller), TrackEvent::Controller(envelope_controller)) => {
+            controller.controller() == envelope_controller.controller()
+        }
+        (TrackEvent::PitchBend(_), TrackEvent::PitchBend(_)) |
+        (TrackEvent::AfterTouch(_), TrackEvent::AfterTouch(_)) |
+        (TrackEvent::KeyPressure(_), TrackEvent::KeyPressure(_)) |
+        (TrackEvent::ProgramChange(_), TrackEvent::ProgramChange(_)) |
+        (TrackEvent::ActiveSense(_), TrackEvent::ActiveSense(_)) => true,
+        _ => false,
+    }
+}
+
+/// The prototype event used when an envelope for a recorded event type has to be
+/// created - same type/index/plugin as the recorded event, at position 0.
+fn recorded_event_envelope_prototype(event: &TrackEvent) -> TrackEvent {
+    match event {
+        TrackEvent::AudioPluginParameter(param) => {
+            TrackEvent::AudioPluginParameter(PluginParameter {
+                id: Uuid::new_v4(),
+                plugin_uuid: param.plugin_uuid,
+                instrument: param.instrument,
+                position: 0.0,
+                index: param.index,
+                value: 0.0,
+            })
+        }
+        TrackEvent::Controller(controller) => {
+            TrackEvent::Controller(Controller::new(0.0, controller.controller(), 0))
+        }
+        TrackEvent::PitchBend(_) => TrackEvent::PitchBend(PitchBend::new(0.0, 0)),
+        TrackEvent::AfterTouch(_) => TrackEvent::AfterTouch(AfterTouch::new(0.0, 0)),
+        TrackEvent::KeyPressure(_) => TrackEvent::KeyPressure(KeyPressure::new(0.0, 0, 0)),
+        TrackEvent::ProgramChange(_) => TrackEvent::ProgramChange(ProgramChange::new(0.0, 0)),
+        TrackEvent::ActiveSense(_) => TrackEvent::ActiveSense(ActiveSense::new(0.0)),
+        _ => event.clone(),
+    }
+}
+
+/// Pushes a live recorded automation event into the automation storage that
+/// matches the current automation mode - the flat discrete events list when
+/// automation_discrete is set, otherwise the envelope backing the event type,
+/// creating the envelope when it does not exist yet.
+fn push_recorded_automation_event(automation: &mut Automation, event: TrackEvent, automation_discrete: bool) {
+    if automation_discrete {
+        let events = automation.events_mut();
+        events.push(event);
+        events.sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+        return;
+    }
+
+    let mut envelope_index: Option<usize> = None;
+    for (index, envelope) in automation.envelopes().iter().enumerate() {
+        if envelope_matches_recorded_event(envelope, &event) {
+            envelope_index = Some(index);
+            break;
+        }
+    }
+    let envelope_index = match envelope_index {
+        Some(index) => index,
+        None => {
+            let prototype = recorded_event_envelope_prototype(&event);
+            let envelopes = automation.envelopes_mut();
+            envelopes.push(AutomationEnvelope::new(prototype));
+            envelopes.len() - 1
+        }
+    };
+    let events = automation.envelopes_mut()[envelope_index].events_mut();
+    events.push(event);
+    events.sort_by(|a, b| DAWUtils::sort_by_daw_position(a, b));
 }
 
 /// Runs an operation on the event list backing a midi automation lane for the
@@ -17478,6 +17587,7 @@ fn create_jack_time_critical_event_processing_thread(
                                             };
                                             let playing = *state.playing_mut();
                                             let recording = state.recording();
+                                            let automation_discrete = state.automation_discrete();
 
                                             if playing && recording {
                                                 let play_mode = state.play_mode();
@@ -17489,6 +17599,9 @@ fn create_jack_time_critical_event_processing_thread(
                                                         match state.get_project().song_mut().tracks_mut().iter_mut().find(|track| track.uuid().to_string() == *track_uuid) {
                                                             Some(track_type) => match track_type {
                                                                 TrackType::InstrumentTrack(track) => {
+                                                                    // live recording only captures events for tracks armed for recording
+                                                                    let record_armed = track.record_armed();
+                                                                    if record_armed {
                                                                     match current_view {
                                                                         CurrentView::Track => {
                                                                             match selected_riff_uuid {
@@ -17537,43 +17650,48 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                 },
                                                                                 None => debug!("Jack midi receiver - no selected riff."),
                                                                             }
-                                                                            // add the controller events to the track automation
-                                                                            if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                                                                                debug!("Adding controller to track automation: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                track.automation_mut().events_mut().push(
-                                                                                    TrackEvent::Controller(
-                                                                                        Controller::new(
-                                                                                            tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                                                                                track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                             } else if (224..=239).contains(&midi_msg_type) {
-                                                                                 debug!("Adding pitch bend to track_automation: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                 track.automation_mut().events_mut().push(
-                                                                                     TrackEvent::PitchBend(
-                                                                                         PitchBend::new_from_midi_bytes(
-                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                             } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
-                                                                                 debug!("Adding after touch to track_automation: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
-                                                                                 track.automation_mut().events_mut().push(
-                                                                                     TrackEvent::AfterTouch(
-                                                                                         AfterTouch::new(
-                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
-                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                             } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
-                                                                                 debug!("Adding key pressure to track_automation: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                 track.automation_mut().events_mut().push(
-                                                                                     TrackEvent::KeyPressure(
-                                                                                         KeyPressure::new(
-                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                             } else if (192..=207).contains(&midi_msg_type) { // program change
-                                                                                 debug!("Adding program change to track_automation: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
-                                                                                 track.automation_mut().events_mut().push(
-                                                                                     TrackEvent::ProgramChange(
-                                                                                         ProgramChange::new(
-                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
-                                                                                 track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                             }
+                                                                             // add the controller events to the track automation
+                                                                             if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                 debug!("Adding controller to track automation: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                 push_recorded_automation_event(
+                                                                                     track.automation_mut(),
+                                                                                     TrackEvent::Controller(
+                                                                                         Controller::new(
+                                                                                             tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)),
+                                                                                     automation_discrete);
+                                                                              } else if (224..=239).contains(&midi_msg_type) {
+                                                                                  debug!("Adding pitch bend to track_automation: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                  push_recorded_automation_event(
+                                                                                      track.automation_mut(),
+                                                                                      TrackEvent::PitchBend(
+                                                                                          PitchBend::new_from_midi_bytes(
+                                                                                              tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])),
+                                                                                      automation_discrete);
+                                                                              } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
+                                                                                  debug!("Adding after touch to track_automation: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                  push_recorded_automation_event(
+                                                                                      track.automation_mut(),
+                                                                                      TrackEvent::AfterTouch(
+                                                                                          AfterTouch::new(
+                                                                                              tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)),
+                                                                                      automation_discrete);
+                                                                              } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
+                                                                                  debug!("Adding key pressure to track_automation: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                  push_recorded_automation_event(
+                                                                                      track.automation_mut(),
+                                                                                      TrackEvent::KeyPressure(
+                                                                                          KeyPressure::new(
+                                                                                              tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)),
+                                                                                      automation_discrete);
+                                                                              } else if (192..=207).contains(&midi_msg_type) { // program change
+                                                                                  debug!("Adding program change to track_automation: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                  push_recorded_automation_event(
+                                                                                      track.automation_mut(),
+                                                                                      TrackEvent::ProgramChange(
+                                                                                          ProgramChange::new(
+                                                                                              tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)),
+                                                                                      automation_discrete);
+                                                                              }
                                                                         }
                                                                         CurrentView::RiffSet => {
                                                                             match selected_riff_uuid {
@@ -17672,50 +17790,56 @@ fn create_jack_time_critical_event_processing_thread(
                                                                                         riff_arrangement.automation_mut(&track_uuid).unwrap()
                                                                                     };
 
-                                                                                    if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
-                                                                                        debug!("Adding controller to riff arrangement: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                        track_automation.events_mut().push(
-                                                                                            TrackEvent::Controller(
-                                                                                                Controller::new(
-                                                                                                    tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                                                                                        track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                     } else if (224..=239).contains(&midi_msg_type) {
-                                                                                         debug!("Adding pitch bend to riff arrangement: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
-                                                                                         track_automation.events_mut().push(
-                                                                                             TrackEvent::PitchBend(
-                                                                                                 PitchBend::new_from_midi_bytes(
-                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])));
-                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                     } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
-                                                                                         debug!("Adding after touch to riff arrangement: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
-                                                                                         track_automation.events_mut().push(
-                                                                                             TrackEvent::AfterTouch(
-                                                                                                 AfterTouch::new(
-                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
-                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                     } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
-                                                                                         debug!("Adding key pressure to riff arrangement: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
-                                                                                         track_automation.events_mut().push(
-                                                                                             TrackEvent::KeyPressure(
-                                                                                                 KeyPressure::new(
-                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)));
-                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                     } else if (192..=207).contains(&midi_msg_type) { // program change
-                                                                                         debug!("Adding program change to riff arrangement: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
-                                                                                         track_automation.events_mut().push(
-                                                                                             TrackEvent::ProgramChange(
-                                                                                                 ProgramChange::new(
-                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)));
-                                                                                         track_automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
-                                                                                     }
+                                                                                     if (176..=191).contains(&midi_msg_type) { // Controller - including modulation wheel
+                                                                                         debug!("Adding controller to riff arrangement: delta frames={}, controller={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                         push_recorded_automation_event(
+                                                                                             track_automation,
+                                                                                             TrackEvent::Controller(
+                                                                                                 Controller::new(
+                                                                                                     tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)),
+                                                                                             automation_discrete);
+                                                                                      } else if (224..=239).contains(&midi_msg_type) {
+                                                                                          debug!("Adding pitch bend to riff arrangement: delta frames={}, lsb={}, msb={}", jack_midi_event.delta_frames, jack_midi_event.data[1], jack_midi_event.data[2]);
+                                                                                          push_recorded_automation_event(
+                                                                                              track_automation,
+                                                                                              TrackEvent::PitchBend(
+                                                                                                  PitchBend::new_from_midi_bytes(
+                                                                                                      tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1], jack_midi_event.data[2])),
+                                                                                              automation_discrete);
+                                                                                      } else if (208..=223).contains(&midi_msg_type) { // channel pressure (after touch)
+                                                                                          debug!("Adding after touch to riff arrangement: delta frames={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                          push_recorded_automation_event(
+                                                                                              track_automation,
+                                                                                              TrackEvent::AfterTouch(
+                                                                                                  AfterTouch::new(
+                                                                                                      tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)),
+                                                                                              automation_discrete);
+                                                                                      } else if (160..=175).contains(&midi_msg_type) { // polyphonic key pressure
+                                                                                          debug!("Adding key pressure to riff arrangement: delta frames={}, key={}, value={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32);
+                                                                                          push_recorded_automation_event(
+                                                                                              track_automation,
+                                                                                              TrackEvent::KeyPressure(
+                                                                                                  KeyPressure::new(
+                                                                                                      tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32, jack_midi_event.data[2] as i32)),
+                                                                                              automation_discrete);
+                                                                                      } else if (192..=207).contains(&midi_msg_type) { // program change
+                                                                                          debug!("Adding program change to riff arrangement: delta frames={}, program={}", jack_midi_event.delta_frames, jack_midi_event.data[1] as i32);
+                                                                                          push_recorded_automation_event(
+                                                                                              track_automation,
+                                                                                              TrackEvent::ProgramChange(
+                                                                                                  ProgramChange::new(
+                                                                                                      tempo / 60.0 * jack_midi_event.delta_frames as f64 / sample_rate, jack_midi_event.data[1] as i32)),
+                                                                                              automation_discrete);
+                                                                                      }
                                                                                 }
                                                                             }
                                                                         }
-                                                                        CurrentView::RiffGrid => {
-                                                                            // not doing anything for riff grids at this point in time
-                                                                        }
+                                                                         CurrentView::RiffGrid => {
+                                                                             // not doing anything for riff grids at this point in time
+                                                                         }
+                                                                     }
                                                                     }
-                                                                },
+                                                                 },
                                                                 TrackType::AudioTrack(_) => (),
                                                                 TrackType::MidiTrack(_) => (),
                                                             },
@@ -17922,6 +18046,9 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
     // unbounded channel, so one event per 8ms tick lets a backlog grow while playing which
     // then keeps moving the meters/play position for seconds after transport stop.
     let mut jack_events_processed: u32 = 0;
+    // the newest transport position seen this drain - only this one drives the
+    // playhead/grid repaint pass below (see the coalesced update after the loop)
+    let mut latest_play_position_in_frames: Option<u32> = None;
     while jack_events_processed < 512 {
         let audio_layer_outward_event = match jack_midi_receiver.try_recv() {
             Ok(audio_layer_outward_event) => audio_layer_outward_event,
@@ -17930,109 +18057,15 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
         jack_events_processed += 1;
         match audio_layer_outward_event {
                 AudioLayerOutwardEvent::PlayPositionInFrames(play_position_in_frames) => {
-                    match state.lock() {
-                        Ok(mut state) => {
-                            let bpm = state.get_project().song().tempo();
-                            let time_signature_numerator = state.get_project().song().time_signature_numerator();
-                            let sample_rate = state.configuration.audio.sample_rate as f64;
-                            let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
-
-                            let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
-                            let current_beat_in_bar = play_position_in_beats as i32 % time_signature_numerator as i32 + 1;
-                            gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
-
-                            let time_in_secs = play_position_in_frames as f64 / sample_rate;
-                            let minutes = time_in_secs as i32 / 60;
-                            let seconds = time_in_secs as i32 % 60;
-                            let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
-                            gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
-
-                            // debug!("Play position in frames: {}", play_position_in_frames);
-                            state.set_play_position_in_frames(play_position_in_frames);
-                            if let Some(piano_roll_grid) = gui.piano_roll_grid() {
-                                match piano_roll_grid.lock() {
-                                    Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
-                                    Err(_) => (),
-                                }
-                            }
-                            if let Some(track_grid) = gui.track_grid() {
-                                match track_grid.lock() {
-                                    Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
-                                    Err(_) => (),
-                                }
-                            }
-                            if let Some(sample_roll_grid) = gui.sample_roll_grid() {
-                                match sample_roll_grid.lock() {
-                                    Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
-                                    Err(_) => (),
-                                }
-                            }
-                            if let Some(automation_grid) = gui.automation_grid() {
-                                match automation_grid.lock() {
-                                    Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
-                                    Err(_) => (),
-                                }
-                            }
-
-                            if state.track_grid_cursor_follow() {
-                                if let Some(track_grid_arc) = gui.track_grid() {
-                                    if let Ok(track_grid) = track_grid_arc.lock() {
-                                        let adjusted_beat_width_in_pixels = track_grid.beat_width_in_pixels() * track_grid.zoom_horizontal();
-                                        let play_position_in_pixels = play_position_in_beats * adjusted_beat_width_in_pixels;
-                                        let track_grid_width = gui.ui.track_drawing_area.width_request() as f64;
-                                        let track_grid_horiz_adj: Adjustment = gui.ui.track_grid_scrolled_window.hadjustment();
-                                        let range_max = track_grid_horiz_adj.upper();
-                                        let track_grid_horiz_scroll_position = play_position_in_pixels / track_grid_width * range_max;
-
-                                        track_grid_horiz_adj.set_value(track_grid_horiz_scroll_position - 300.0);
-                                    }
-                                    else {
-                                        debug!("Couldn't lock the track_grid");
-                                    }
-                                }
-                                else {
-                                    debug!("Couldn't get the track_grid");
-                                }
-                            }
-
-                            if let Some(riff_set_uuid) = state.playing_riff_set() {
-                                gui.repaint_riff_set_view_riff_set_active_drawing_areas(riff_set_uuid.as_str(), play_position_in_beats);
-                            }
-                            else if let Some(riff_sequence_uuid) = state.playing_riff_sequence() {
-                                if let Some(playing_riff_sequence_summary_data) = state.playing_riff_sequence_summary_data() {
-                                    gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(riff_sequence_uuid.as_str(), play_position_in_beats, playing_riff_sequence_summary_data);
-                                }
-                            }
-                            else if let Some(_) = state.playing_riff_grid() {
-                                gui.repaint_riff_grid_view_drawing_area(play_position_in_beats);
-                            }
-                            else if let Some(riff_arrangement_uuid) = state.playing_riff_arrangement() {
-                                if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
-                                    gui.repaint_riff_arrangement_view_active_drawing_areas(riff_arrangement_uuid.as_str(), play_position_in_beats, playing_riff_arrangement_summary_data);
-                                }
-                                if let Some(grid) = gui.riff_arrangement_overview_grid.clone() {
-                                    if let Ok(mut grid) = grid.lock() {
-                                        grid.set_track_cursor_time_in_beats(play_position_in_beats);
-                                    }
-                                }
-                            }
-                            // else {
-                            //     // debug!("Not playing riff set");
-                            // }
-                        },
-                        Err(_) => debug!("Main - rx_ui processing loop - play position - could not get lock on state"),
-                    }
-
-                    // should only repaint what is actively being viewed
-                    gui.ui.piano_roll_drawing_area.queue_draw();
-                    gui.ui.sample_roll_drawing_area.queue_draw();
-                    gui.ui.sample_roll_ruler_drawing_area.queue_draw();
-                    gui.ui.track_drawing_area.queue_draw();
-                    gui.ui.automation_drawing_area.queue_draw();
-                    gui.ui.piano_roll_ruler_drawing_area.queue_draw();
-                    gui.ui.track_ruler_drawing_area.queue_draw();
-                    gui.ui.automation_ruler_drawing_area.queue_draw();
-                    gui.ui.riff_arrangement_overview_drawing_area.queue_draw();
+                    // coalesced: applying every intermediate position would run the
+                    // full state/grid/cursor-follow/repaint pass once per audio cycle.
+                    // While the track grid is visible that pass repaints the whole
+                    // grid on every event, saturating the main thread - the pumps it
+                    // starves (clap rpc service, track processor events) stall the
+                    // track background producers, the engine drops their blocks and
+                    // playback drifts out of sync. Only the latest position of the
+                    // tick is applied after the drain loop.
+                    latest_play_position_in_frames = Some(play_position_in_frames);
                 }
                 AudioLayerOutwardEvent::GeneralMMCEvent(mmc_sysex_bytes) => {
                     debug!("Midi generic MMC event: ");
@@ -18163,6 +18196,110 @@ fn process_jack_events(tx_from_ui: &Sender<DAWEvents>,
                 },
             }
     }
+
+    // the coalesced transport position update - applied once per tick with the
+    // newest position drained above (see the PlayPositionInFrames arm)
+    if let Some(play_position_in_frames) = latest_play_position_in_frames {
+        match state.lock() {
+            Ok(mut state) => {
+                let bpm = state.get_project().song().tempo();
+                let time_signature_numerator = state.get_project().song().time_signature_numerator();
+                let sample_rate = state.configuration.audio.sample_rate as f64;
+                let play_position_in_beats = play_position_in_frames as f64 / sample_rate * bpm / 60.0;
+
+                let current_bar = play_position_in_beats as i32 / time_signature_numerator as i32 + 1;
+                let current_beat_in_bar = play_position_in_beats as i32 % time_signature_numerator as i32 + 1;
+                gui.ui.song_position_txt_ctrl.set_label(format!("{:03}:{:03}:000", current_bar, current_beat_in_bar).as_str());
+
+                let time_in_secs = play_position_in_frames as f64 / sample_rate;
+                let minutes = time_in_secs as i32 / 60;
+                let seconds = time_in_secs as i32 % 60;
+                let milli_seconds = ((time_in_secs - (time_in_secs as u64) as f64) * 1000.0) as u64;
+                gui.ui.song_time_txt_ctrl.set_label(format!("{:03}:{:02}:{:03}", minutes, seconds, milli_seconds).as_str());
+
+                state.set_play_position_in_frames(play_position_in_frames);
+                if let Some(piano_roll_grid) = gui.piano_roll_grid() {
+                    match piano_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
+                        Err(_) => (),
+                    }
+                }
+                if let Some(track_grid) = gui.track_grid() {
+                    match track_grid.lock() {
+                        Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
+                        Err(_) => (),
+                    }
+                }
+                if let Some(sample_roll_grid) = gui.sample_roll_grid() {
+                    match sample_roll_grid.lock() {
+                        Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
+                        Err(_) => (),
+                    }
+                }
+                if let Some(automation_grid) = gui.automation_grid() {
+                    match automation_grid.lock() {
+                        Ok(mut grid) => grid.set_track_cursor_time_in_beats(play_position_in_beats),
+                        Err(_) => (),
+                    }
+                }
+
+                if state.track_grid_cursor_follow() {
+                    if let Some(track_grid_arc) = gui.track_grid() {
+                        if let Ok(track_grid) = track_grid_arc.lock() {
+                            let adjusted_beat_width_in_pixels = track_grid.beat_width_in_pixels() * track_grid.zoom_horizontal();
+                            let play_position_in_pixels = play_position_in_beats * adjusted_beat_width_in_pixels;
+                            let track_grid_width = gui.ui.track_drawing_area.width_request() as f64;
+                            let track_grid_horiz_adj: Adjustment = gui.ui.track_grid_scrolled_window.hadjustment();
+                            let range_max = track_grid_horiz_adj.upper();
+                            let track_grid_horiz_scroll_position = play_position_in_pixels / track_grid_width * range_max;
+
+                            track_grid_horiz_adj.set_value(track_grid_horiz_scroll_position - 300.0);
+                        }
+                        else {
+                            debug!("Couldn't lock the track_grid");
+                        }
+                    }
+                    else {
+                        debug!("Couldn't get the track_grid");
+                    }
+                }
+
+                if let Some(riff_set_uuid) = state.playing_riff_set() {
+                    gui.repaint_riff_set_view_riff_set_active_drawing_areas(riff_set_uuid.as_str(), play_position_in_beats);
+                }
+                else if let Some(riff_sequence_uuid) = state.playing_riff_sequence() {
+                    if let Some(playing_riff_sequence_summary_data) = state.playing_riff_sequence_summary_data() {
+                        gui.repaint_riff_sequence_view_riff_sequence_active_drawing_areas(riff_sequence_uuid.as_str(), play_position_in_beats, playing_riff_sequence_summary_data);
+                    }
+                }
+                else if let Some(_) = state.playing_riff_grid() {
+                    gui.repaint_riff_grid_view_drawing_area(play_position_in_beats);
+                }
+                else if let Some(riff_arrangement_uuid) = state.playing_riff_arrangement() {
+                    if let Some(playing_riff_arrangement_summary_data) = state.playing_riff_arrangement_summary_data() {
+                        gui.repaint_riff_arrangement_view_active_drawing_areas(riff_arrangement_uuid.as_str(), play_position_in_beats, playing_riff_arrangement_summary_data);
+                    }
+                    if let Some(grid) = gui.riff_arrangement_overview_grid.clone() {
+                        if let Ok(mut grid) = grid.lock() {
+                            grid.set_track_cursor_time_in_beats(play_position_in_beats);
+                        }
+                    }
+                }
+            },
+            Err(_) => debug!("Main - rx_ui processing loop - play position - could not get lock on state"),
+        }
+
+        // should only repaint what is actively being viewed
+        gui.ui.piano_roll_drawing_area.queue_draw();
+        gui.ui.sample_roll_drawing_area.queue_draw();
+        gui.ui.sample_roll_ruler_drawing_area.queue_draw();
+        gui.ui.track_drawing_area.queue_draw();
+        gui.ui.automation_drawing_area.queue_draw();
+        gui.ui.piano_roll_ruler_drawing_area.queue_draw();
+        gui.ui.track_ruler_drawing_area.queue_draw();
+        gui.ui.automation_ruler_drawing_area.queue_draw();
+        gui.ui.riff_arrangement_overview_drawing_area.queue_draw();
+    }
 }
 
 fn process_track_background_processor_events(
@@ -18242,7 +18379,10 @@ fn process_track_background_processor_events(
                             }
                         },
                         TrackBackgroundProcessorOutwardEvent::Automation(track_uuid, plugin_uuid, is_instrument, param_index, param_value) => {
-                            automation_track_uuid.push_str(track_uuid.as_str());
+                            // last event wins (the recorded automation_event below is
+                            // also the last of the tick) - appending would concatenate
+                            // uuids when several drag steps arrive between two ticks
+                            automation_track_uuid = track_uuid;
                             let play_position_in_beats = state.play_position_in_frames() as f64 / state.configuration.audio.sample_rate as f64 * state.project().song().tempo() / 60.0;
                             automation_event = Some(TrackEvent::AudioPluginParameter(PluginParameter {
                                 id: Uuid::new_v4(),
@@ -18360,6 +18500,10 @@ fn process_track_background_processor_events(
             // if playing and recording add automation to the correct domain entity based on the current view.
             if state.playing() && state.recording() {
                 if let Some(event) = automation_event {
+                    // the plugin's owning track must be armed for recording for its
+                    // parameter changes to be captured
+                    if state.project().song().tracks().iter().any(|track| track.uuid().to_string() == automation_track_uuid && track.record_armed()) {
+                    let automation_discrete = state.automation_discrete();
                     let current_view = state.current_view().clone();
                     let selected_riff_arrangement_uuid = if let Some(selected_riff_arrangement_uuid) = state.selected_riff_arrangement_uuid() {
                         Some(selected_riff_arrangement_uuid.to_string())
@@ -18378,8 +18522,7 @@ fn process_track_background_processor_events(
                                     riff_arrangement.automation_mut(&automation_track_uuid).unwrap()
                                 };
 
-                                automation.events_mut().push(event);
-                                automation.events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                push_recorded_automation_event(automation, event, automation_discrete);
                             }
                         }
                     }
@@ -18387,16 +18530,15 @@ fn process_track_background_processor_events(
                         if let Some(track_type) = state.get_project().song_mut().tracks_mut().iter_mut().find(|track_type| track_type.uuid().to_string() == automation_track_uuid) {
                             match track_type {
                                 TrackType::InstrumentTrack(track) => {
-                                    track.automation_mut().events_mut().push(event);
-                                    track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                    push_recorded_automation_event(track.automation_mut(), event, automation_discrete);
                                 }
                                 TrackType::AudioTrack(track) => {
-                                    track.automation_mut().events_mut().push(event);
-                                    track.automation_mut().events_mut().sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                                    push_recorded_automation_event(track.automation_mut(), event, automation_discrete);
                                 }
                                 _ => {}
                             }
                         }
+                    }
                     }
                 }
             }

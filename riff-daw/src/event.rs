@@ -279,7 +279,11 @@ pub enum AudioLayerInwardEvent {
     Play(bool, i32, i32), // play - true/false, number of blocks, start at block
     Seek(i32), // move the transport position to a block (rewind/scrub) - keeps the
                // jack layer position in step with the track background processors
-    ExtentsChange(i32),
+    ExtentsChange(i32, i32), // loop extents in blocks (start, end) - the transport
+                             // cursor wraps back to the loop start, mirroring the
+                             // per track LoopExtents the background processors get
+    Loop(bool),              // engage/disengage looping in the audio layer so the
+                             // transport position wraps with the loop
     Stop,
     Tempo(f64),
     SampleRate(f64),

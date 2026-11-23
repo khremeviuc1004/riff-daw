@@ -1650,6 +1650,10 @@ impl DAWState {
             }
         }
 
+        // a fresh start (re)plays from the top; a mid play switch is an instant
+        // morph - the transport keeps rolling and each track's new riffs fall
+        // into the running grid (the transition itself pulls any track that fell
+        // out of step back onto the transport, see RiffBufferTrackEventProcessor)
         if !already_playing {
             for track in tracks {
                 self.send_to_track_background_processor(track.uuid().to_string(), TrackBackgroundProcessorInwardEvent::Play(start_block));

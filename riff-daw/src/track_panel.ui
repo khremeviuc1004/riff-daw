@@ -72,12 +72,12 @@ Click and drag to drag the track to a diferent position.</property>
         <child>
           <object class="GtkToggleButton" id="record_toggle_btn">
             <property name="visible">True</property>
-            <property name="sensitive">False</property>
+            <property name="sensitive">True</property>
             <property name="tooltip-text" translatable="yes">Arm for recording.</property>
             <property name="valign">start</property>
             <child>
               <object class="GtkImage">
-                <property name="icon-name">media-record</property>
+                <property name="icon-name">media-record-symbolic</property>
                 <property name="visible">True</property>
                 <property name="halign">center</property>
                 <property name="valign">end</property>

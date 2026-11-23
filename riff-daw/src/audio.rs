@@ -254,6 +254,9 @@ pub struct AudioEngine {
     play: bool,
     block: i32,
     blocks_total: i32,
+    play_loop_on: bool,
+    play_left_block_index: i32,
+    play_right_block_index: i32,
     play_position_in_frames: u32,
     sample_rate_in_frames: f64,
     tempo: f64,
@@ -276,6 +279,10 @@ pub struct AudioEngine {
     cycle_count: u64,
     slow_cycles: u64,
     last_cycle_start: Option<std::time::Instant>,
+    // throttle for the play position event published to the ui pump: the pump
+    // runs on an 8ms tick, publishing every cycle just floods it (the playhead
+    // handler repaints the whole track grid on every event)
+    last_position_publish: Option<std::time::Instant>,
     xruns: Arc<std::sync::atomic::AtomicUsize>,
     limiter_cycles: u32,
     limiter_cycles_window: u32,
@@ -304,6 +311,9 @@ impl AudioEngine {
             play: false,
             block: -1,
             blocks_total: 0,
+            play_loop_on: false,
+            play_left_block_index: -1,
+            play_right_block_index: -1,
             play_position_in_frames: 0,
             sample_rate_in_frames: sample_rate_in_frames as f64,
             tempo,
@@ -324,6 +334,7 @@ impl AudioEngine {
             cycle_count: 0,
             slow_cycles: 0,
             last_cycle_start: None,
+            last_position_publish: None,
             xruns,
             limiter_cycles: 0,
             limiter_cycles_window: 0,
@@ -354,6 +365,9 @@ impl AudioEngine {
             play: false,
             block: -1,
             blocks_total: 0,
+            play_loop_on: false,
+            play_left_block_index: -1,
+            play_right_block_index: -1,
             play_position_in_frames: 0,
             sample_rate_in_frames: sample_rate_in_frames as f64,
             tempo,
@@ -374,6 +388,7 @@ impl AudioEngine {
             cycle_count: 0,
             slow_cycles: 0,
             last_cycle_start: None,
+            last_position_publish: None,
             xruns,
             limiter_cycles: 0,
             limiter_cycles_window: 0,
@@ -468,6 +483,9 @@ impl AudioEngine {
                         transport.position_in_frames = self.play_position_in_frames;
                     }
                     self.reset_audio_watchdogs();
+                    // the ui must see the new start position on the next cycle,
+                    // never wait out the publish throttle
+                    self.last_position_publish = None;
                 }
                 AudioLayerInwardEvent::Seek(start_block) => {
                     // rewind/scrub from the UI - move the transport to the same
@@ -481,6 +499,7 @@ impl AudioEngine {
                         transport.position_in_frames = self.play_position_in_frames;
                     }
                     self.reset_audio_watchdogs();
+                    self.last_position_publish = None;
 
                     let ppq_pos = (self.play_position_in_frames as f64 * self.tempo) / (60.0 * self.sample_rate_in_frames);
                     if let Some(mut time_info) = self.vst_host_time_info.try_write() {
@@ -497,9 +516,20 @@ impl AudioEngine {
                     self.play_position_in_frames = 0;
                     self.reset_audio_watchdogs();
                 }
-                AudioLayerInwardEvent::ExtentsChange(number_of_blocks) => {
-                    // debug!(root_logger, "*************Jack extents change received: number_of_blocks={}", number_of_blocks);
-                    self.blocks_total = number_of_blocks;
+                AudioLayerInwardEvent::ExtentsChange(start_block, end_block) => {
+                    // debug!(root_logger, "*************Jack extents change received: start_block={}, end_block={}", start_block, end_block);
+                    self.play_left_block_index = start_block;
+                    self.play_right_block_index = end_block;
+                    // if the transport is outside the new extents snap it in, so the
+                    // cursor and the looped audio stay together
+                    if self.play_loop_on && self.play_right_block_index > self.play_left_block_index &&
+                        (self.block > self.play_right_block_index || self.block < self.play_left_block_index) {
+                        self.block = self.play_left_block_index;
+                        self.play_position_in_frames = self.block.max(0) as u32 * self.block_size as u32;
+                    }
+                }
+                AudioLayerInwardEvent::Loop(loop_on) => {
+                    self.play_loop_on = loop_on;
                 }
                 AudioLayerInwardEvent::Tempo(new_tempo) => {
                     // debug!(root_logger, "*************Jack tempo received: tempo={}", tempo);
@@ -1072,7 +1102,16 @@ impl AudioEngine {
 
     fn update_position_and_notify(&mut self) {
         if self.play && self.block > -1 {
-            if self.block >= self.blocks_total {
+            // mirroring the per track background processors (domain.rs TrackEventProcessor),
+            // when looping is engaged the transport wraps between the loop's left and
+            // right block indexes - without this the riffs/notes loop but the play
+            // cursor keeps running along the whole song timeline
+            if self.play_loop_on && self.play_right_block_index > self.play_left_block_index &&
+                (self.block > self.play_right_block_index || self.block < self.play_left_block_index) {
+                self.block = self.play_left_block_index;
+                self.play_position_in_frames = self.block.max(0) as u32 * self.block_size as u32;
+            }
+            else if self.block >= self.blocks_total {
                 self.block = 0;
                 self.play_position_in_frames = 0;
             } else {
@@ -1106,7 +1145,22 @@ impl AudioEngine {
                 }
             }
 
-            if self.play_position_in_frames % self.frames_per_beat < self.block_size as u32 {
+            // publish the position at the ui pump's tick rate (~8ms), NOT every
+            // cycle: gating to beat boundaries made the ui playhead lag and quantised
+            // live-recorded automation onto the beat grid, but publishing every cycle
+            // floods the 8ms ui tick - while the track grid is visible every position
+            // event repaints the whole grid (and the cursor-follow scroll queues two
+            // more repaints), saturating the main thread. The pumps it starves include
+            // the clap rpc pump the track background processors block on, so producers
+            // miss cycles, the engine drops their blocks and the playback drifts out of
+            // sync. 8ms keeps the playhead smooth and the recorded automation position
+            // continuously updated without the flood.
+            let publish_now = match self.last_position_publish {
+                None => true,
+                Some(last_publish) => last_publish.elapsed().as_millis() >= 8,
+            };
+            if publish_now {
+                self.last_position_publish = Some(std::time::Instant::now());
                 let _ = self.jack_midi_sender_ui.try_send(AudioLayerOutwardEvent::PlayPositionInFrames(self.play_position_in_frames));
             }
         }
